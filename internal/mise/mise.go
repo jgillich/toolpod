@@ -9,24 +9,37 @@ import (
 	"strings"
 
 	"github.com/gofrs/flock"
-	"github.com/jgillich/toolpod/internal/runtime"
 )
 
-// EnsureTools acquires an exclusive flock on a sentinel file inside the mise
-// volume (cross-process safety), then batches all tool installs into a single
-// throwaway container. Spec §6.3 + concurrent-install lock.
-func EnsureTools(ctx context.Context, runner runtime.ContainerRunner, spec runtime.Spec, runtimeHome string, w runtime.ProgressWriter) error {
+// ContainerRunner runs a command in a throwaway container (auto-removed)
+// with named volumes mounted. Implemented by DockerRuntime; accepted by
+// EnsureTools to avoid an import cycle between runtime and mise.
+type ContainerRunner interface {
+	RunInContainer(ctx context.Context, image string, volumes []VolumeMount, env []string, cmd []string) (int, error)
+}
+
+// VolumeMount is a named volume to mount in a ContainerRunner execution.
+type VolumeMount struct {
+	Name   string
+	Target string
+}
+
+// ToolsSpec is the subset of the container spec needed for tool installation.
+type ToolsSpec struct {
+	Image string
+	Tools map[string]string
+}
+
+// EnsureTools acquires an exclusive flock on a sentinel file (cross-process
+// safety), then batches all tool installs into a single throwaway container.
+// Spec §6.3 + concurrent-install lock.
+func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, runtimeHome string, w ProgressWriter) error {
 	if len(spec.Tools) == 0 {
 		return nil
 	}
 
 	miseVol := MiseVolume(runtimeHome)
 
-	// Acquire flock on a sentinel file. The file lives inside the mise volume
-	// (which is a Docker named volume), so we can't flock it directly from the
-	// host. Instead, we flock a local file keyed by the volume name — this
-	// serializes across toolpod processes on the same host. Include the UID
-	// in the filename so multiple users on the same host don't contend.
 	lockFile := filepath.Join(os.TempDir(), fmt.Sprintf("toolpod-mise-%d.lock", os.Getuid()))
 	fl := flock.New(lockFile)
 	locked, err := fl.TryLockContext(ctx, 0)
@@ -44,7 +57,7 @@ func EnsureTools(ctx context.Context, runner runtime.ContainerRunner, spec runti
 	w.WriteProgress(fmt.Sprintf("mise: installing %d tools", len(spec.Tools)))
 
 	cmd := batchInstallCommand(spec.Tools)
-	volumes := []runtime.VolumeMount{
+	volumes := []VolumeMount{
 		{Name: miseVol.Name, Target: miseVol.Target},
 	}
 	env := []string{"HOME=" + runtimeHome, "PATH=" + runtimeHome + "/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
@@ -59,6 +72,11 @@ func EnsureTools(ctx context.Context, runner runtime.ContainerRunner, spec runti
 
 	w.WriteProgress("mise: tools ready")
 	return nil
+}
+
+// ProgressWriter reports progress lines during Prepare/Run.
+type ProgressWriter interface {
+	WriteProgress(line string)
 }
 
 // ActivateCommand returns the shell command string that activates mise for

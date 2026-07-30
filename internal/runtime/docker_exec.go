@@ -7,11 +7,10 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/jgillich/toolpod/internal/mise"
 )
 
-// RunInContainer runs a command in a throwaway container (auto-removed on
-// exit) with the given named volumes mounted. Returns the exit code.
-func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volumes []VolumeMount, env []string, cmd []string) (int, error) {
+func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volumes []mise.VolumeMount, env []string, cmd []string) (int, error) {
 	mounts := make([]mount.Mount, len(volumes))
 	for i, v := range volumes {
 		mounts[i] = mount.Mount{
