@@ -56,7 +56,7 @@ func TestLaunchProfileNotFound(t *testing.T) {
 		t.Fatal("expected error for missing profile")
 	}
 	if res.ExitCode != 2 {
-		t.Errorf("ExitCode = %d, want 2 (config error)", res.ExitCode)
+		t.Errorf("ExitCode = %d, want 2 (profile error)", res.ExitCode)
 	}
 }
 

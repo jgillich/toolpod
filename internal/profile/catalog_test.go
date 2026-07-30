@@ -36,7 +36,7 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 		t.Errorf("shadow image = %q, want my/custom:latest", rc.Image)
 	}
 	if rc.Path == "" {
-		t.Error("shadow RawConfig has empty Path (should point to user file)")
+		t.Error("shadow RawProfile has empty Path (should point to user file)")
 	}
 }
 

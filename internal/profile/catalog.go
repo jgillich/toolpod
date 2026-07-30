@@ -12,12 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Catalog is the merged set of built-in + user raw configs, keyed by profile name.
+// Catalog is the merged set of built-in + user raw profiles, keyed by profile name.
 type Catalog struct {
 	entries map[string]RawProfile
 }
 
-// Get returns the raw config for a profile name, plus whether it was found.
+// Get returns the raw profile for a profile name, plus whether it was found.
 func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok
@@ -33,7 +33,7 @@ func (c Catalog) Names() []string {
 	return names
 }
 
-// LoadCatalog loads embedded built-ins, then user configs from userDir (if non-empty),
+// LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
 func LoadProfiles(userDir string) (Catalog, error) {
 	entries := map[string]RawProfile{}
@@ -52,15 +52,15 @@ func LoadProfiles(userDir string) (Catalog, error) {
 }
 
 func loadBuiltins(entries map[string]RawProfile) error {
-	root := "configs"
-	return fs.WalkDir(catalog.Configs, root, func(path string, d fs.DirEntry, err error) error {
+	root := "profiles"
+	return fs.WalkDir(catalog.Profiles, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
-		data, err := catalog.Configs.ReadFile(path)
+		data, err := catalog.Profiles.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 }
 
 // DefaultProfileDir returns the default user profile directory for the current OS.
-// Used by the CLI when --config-dir is not set.
+// Used by the CLI when --profile-dir is not set.
 func DefaultProfileDir() string {
 	if dir := os.Getenv("TOOLPOD_CONFIG_DIR"); dir != "" {
 		return dir

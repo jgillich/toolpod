@@ -73,7 +73,7 @@ func runDoctor(args []string) int {
 	opts := doctor.Options{}
 	fs := pflag.NewFlagSet("doctor", pflag.ContinueOnError)
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace to check")
-	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user config dir")
+	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user profile dir")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

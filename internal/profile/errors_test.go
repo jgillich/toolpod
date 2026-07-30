@@ -2,7 +2,7 @@ package profile
 
 import "testing"
 
-func TestConfigErrorFormat(t *testing.T) {
+func TestProfileErrorFormat(t *testing.T) {
 	err := ProfileError{Path: "/home/me/.config/toolpod/opencode.yaml", Line: 5, Message: "extends: cycle detected"}
 	want := "/home/me/.config/toolpod/opencode.yaml:5: extends: cycle detected"
 	if err.Error() != want {
@@ -10,7 +10,7 @@ func TestConfigErrorFormat(t *testing.T) {
 	}
 }
 
-func TestConfigErrorNoLine(t *testing.T) {
+func TestProfileErrorNoLine(t *testing.T) {
 	err := ProfileError{Path: "/home/me/.config/toolpod/opencode.yaml", Message: "missing required field: command"}
 	want := "/home/me/.config/toolpod/opencode.yaml: missing required field: command"
 	if err.Error() != want {
@@ -18,7 +18,7 @@ func TestConfigErrorNoLine(t *testing.T) {
 	}
 }
 
-func TestConfigErrorExitCode(t *testing.T) {
+func TestProfileErrorExitCode(t *testing.T) {
 	err := ProfileError{Message: "boom"}
 	if err.ExitCode() != 2 {
 		t.Errorf("ExitCode() = %d, want 2", err.ExitCode())

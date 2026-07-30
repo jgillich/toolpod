@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func mustWriteConfig(t *testing.T, dir, name, content string) {
+func mustWriteProfile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -16,8 +16,8 @@ func mustWriteConfig(t *testing.T, dir, name, content string) {
 
 func TestResolveScalarOverride(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteConfig(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nnetwork: bridge\n")
-	mustWriteConfig(t, dir, "child.yaml", "version: 1\nextends: base\nnetwork: host\n")
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nnetwork: bridge\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nnetwork: host\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -36,8 +36,8 @@ func TestResolveScalarOverride(t *testing.T) {
 
 func TestResolveMapMergeAndNullDelete(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteConfig(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\ntools:\n  node: \"20\"\n  rust: \"1.74\"\n")
-	mustWriteConfig(t, dir, "child.yaml", "version: 1\nextends: base\ntools:\n  node: \"22\"\n  rust: null\n")
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\ntools:\n  node: \"20\"\n  rust: \"1.74\"\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\ntools:\n  node: \"22\"\n  rust: null\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +56,8 @@ func TestResolveMapMergeAndNullDelete(t *testing.T) {
 
 func TestResolveListReplaced(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteConfig(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"a\"]\nargs_if_none: [\"--x\"]\n")
-	mustWriteConfig(t, dir, "child.yaml", "version: 1\nextends: base\nargs_if_none: [\"--y\"]\n")
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"a\"]\nargs_if_none: [\"--x\"]\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nargs_if_none: [\"--y\"]\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestResolveListReplaced(t *testing.T) {
 
 func TestResolveCycle(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteConfig(t, dir, "a.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: b\n")
-	mustWriteConfig(t, dir, "b.yaml", "version: 1\nimage: y\ncommand: [\"y\"]\nextends: a\n")
+	mustWriteProfile(t, dir, "a.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: b\n")
+	mustWriteProfile(t, dir, "b.yaml", "version: 1\nimage: y\ncommand: [\"y\"]\nextends: a\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)

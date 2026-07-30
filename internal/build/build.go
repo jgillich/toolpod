@@ -83,7 +83,7 @@ func ensurePull(ctx context.Context, cli *client.Client, ref string, w ProgressW
 	return ref, nil
 }
 
-// buildImage builds a Docker image from the spec's build config and tags it
+// buildImage builds a Docker image from the spec's build spec and tags it
 // with the local tag. Spec §3.4.
 func buildImage(ctx context.Context, cli *client.Client, spec Spec, w ProgressWriter) error {
 	dockerfilePath := spec.Build.Dockerfile

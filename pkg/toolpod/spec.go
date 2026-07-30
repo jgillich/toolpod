@@ -4,7 +4,7 @@ import (
 	"github.com/jgillich/toolpod/internal/profile"
 )
 
-// buildSpec assembles a container Spec from a resolved config and launch opts.
+// buildSpec assembles a container Spec from a resolved profile and launch opts.
 // mode is "A" (rootless podman) or "B" (fallback). hostHome is the host user's
 // $HOME; runtimeHome is the in-container user's home (/home/<user> in Mode A,
 // /root in Mode B).
@@ -43,13 +43,13 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		labels = map[string]string{}
 	}
 
-	// Workspace mount (CLI, not config) per spec §4.2
+	// Workspace mount (CLI, not profile) per spec §4.2
 	wsTarget := opts.Workspace
 	if mode == "B" {
 		wsTarget = "/workspace"
 	}
 
-	// Command = config.Command + passthrough args (or args_if_none if no args)
+	// Command = profile.Command + passthrough args (or args_if_none if no args)
 	cmd := append([]string{}, cfg.Command...)
 	if len(opts.Args) > 0 {
 		cmd = append(cmd, opts.Args...)

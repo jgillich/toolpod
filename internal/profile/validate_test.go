@@ -38,7 +38,7 @@ func TestValidateNeitherImageNorBuild(t *testing.T) {
 }
 
 func TestValidateReservedName(t *testing.T) {
-	for _, name := range []string{"config", "doctor", "help", "version", "completion", "prune"} {
+	for _, name := range []string{"doctor", "help", "version", "completion", "prune"} {
 		rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
 		rc.Path = "/home/me/.config/toolpod/" + name + ".yaml"
 		err := validateReservedName(rc, name)

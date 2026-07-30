@@ -1,6 +1,6 @@
 package profile
 
-// Resolve walks the extends chain for name and produces a fully merged Config.
+// Resolve walks the extends chain for name and produces a fully merged Profile.
 // Cycles are detected and rejected. Validation runs on the result.
 func ResolveProfile(cat Catalog, name string) (Profile, error) {
 	rc, ok := cat.Get(name)
@@ -36,15 +36,15 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	if err != nil {
 		return RawProfile{}, err
 	}
-	merged := mergeConfigs(parent, rc)
+	merged := mergeProfiles(parent, rc)
 	merged.Path = rc.Path
 	return merged, nil
 }
 
-// mergeConfigs merges child on top of parent per spec §4.3:
+// mergeProfiles merges child on top of parent per spec §4.3:
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace,
 // image/build treated as a single slot.
-func mergeConfigs(parent, child RawProfile) RawProfile {
+func mergeProfiles(parent, child RawProfile) RawProfile {
 	out := parent
 
 	if child.Version != 0 {

@@ -3,7 +3,6 @@ package profile
 import "strings"
 
 var reservedNames = map[string]bool{
-	"config":     true,
 	"doctor":     true,
 	"help":       true,
 	"version":    true,
@@ -11,7 +10,7 @@ var reservedNames = map[string]bool{
 	"prune":      true,
 }
 
-// validate checks a resolved config for required fields and invariants.
+// validate checks a resolved profile for required fields and invariants.
 // It runs on the merged result (after extends resolution).
 func validate(rc RawProfile) error {
 	if rc.Version == 0 {
@@ -32,7 +31,7 @@ func validate(rc RawProfile) error {
 }
 
 // validateReservedName rejects profile names that collide with subcommands.
-// Called during catalog load, not on the merged config.
+// Called during catalog load, not on the merged profile.
 func validateReservedName(rc RawProfile, name string) error {
 	if reservedNames[name] {
 		return ProfileError{Path: rc.Path, Message: "profile name " + name + " is reserved (collides with a subcommand)"}
@@ -40,7 +39,7 @@ func validateReservedName(rc RawProfile, name string) error {
 	return nil
 }
 
-// ProfileNameFromPath extracts the profile name from a config file path.
+// ProfileNameFromPath extracts the profile name from a profile file path.
 func ProfileNameFromPath(path string) string {
 	base := path
 	if idx := strings.LastIndex(base, "/"); idx >= 0 {
