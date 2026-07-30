@@ -1,0 +1,46 @@
+package config
+
+// Config is a resolved toolpod profile config (after extends-merge and validation).
+// YAML tags match the schema in the design doc §4.1.
+type Config struct {
+	Version    int               `yaml:"version"`
+	Extends    string            `yaml:"extends,omitempty"`
+	Image      string            `yaml:"image,omitempty"`
+	Build      *Build            `yaml:"build,omitempty"`
+	Command    []string          `yaml:"command"`
+	ArgsIfNone []string          `yaml:"args_if_none,omitempty"`
+	Mounts     map[string]Mount  `yaml:"mounts,omitempty"`
+	Env        map[string]string `yaml:"environment,omitempty"`
+	Caches     map[string]string `yaml:"caches,omitempty"`
+	Labels     map[string]string `yaml:"labels,omitempty"`
+	Network    string            `yaml:"network,omitempty"`
+	Resources  *Resources        `yaml:"resources,omitempty"`
+	TTY        string            `yaml:"tty,omitempty"`
+	Tools      map[string]string `yaml:"tools,omitempty"`
+}
+
+// Build is the escape-hatch image source: a Dockerfile + optional depends_on.
+type Build struct {
+	Dockerfile string   `yaml:"dockerfile"`
+	Context    string   `yaml:"context,omitempty"`
+	DependsOn  []string `yaml:"depends_on,omitempty"`
+}
+
+// Mount is a single bind mount, keyed by container target path.
+type Mount struct {
+	Source   string `yaml:"source"`
+	ReadOnly bool   `yaml:"read_only"`
+}
+
+// Resources are optional resource hints (best-effort; runtime may ignore).
+type Resources struct {
+	Memory string `yaml:"memory,omitempty"`
+	CPUs   string `yaml:"cpus,omitempty"`
+}
+
+// RawConfig is a config as loaded from disk, before extends-merge.
+// It carries the source file path for error reporting.
+type RawConfig struct {
+	Config
+	Path string `yaml:"-"` // file path for error reporting
+}
