@@ -1,8 +1,8 @@
-package config
+package profile
 
-// Config is a resolved toolpod profile config (after extends-merge and validation).
+// Profile is a resolved toolpod profile (after extends-merge and validation).
 // YAML tags match the schema in the design doc §4.1.
-type Config struct {
+type Profile struct {
 	Version    int               `yaml:"version"`
 	Extends    string            `yaml:"extends,omitempty"`
 	Image      string            `yaml:"image,omitempty"`
@@ -38,10 +38,10 @@ type Resources struct {
 	CPUs   string `yaml:"cpus,omitempty"`
 }
 
-// RawConfig is a config as loaded from disk, before extends-merge.
+// RawProfile is a profile as loaded from disk, before extends-merge.
 // It carries the source file path for error reporting.
-type RawConfig struct {
-	Config
+type RawProfile struct {
+	Profile
 	Path     string                     `yaml:"-"` // file path for error reporting
 	NullKeys map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
 }

@@ -3,16 +3,16 @@ package toolpod
 import (
 	"testing"
 
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 )
 
 func TestBuildSpecBasic(t *testing.T) {
-	cfg := config.Config{
+	cfg := profile.Profile{
 		Version: 1,
 		Image:   "myimage:latest",
 		Command: []string{"opencode"},
 		Tools:   map[string]string{"opencode": "latest", "node": "20"},
-		Mounts: map[string]config.Mount{
+		Mounts: map[string]profile.Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
 		Caches:  map[string]string{"npm": "~/.npm"},
@@ -55,7 +55,7 @@ func TestBuildSpecBasic(t *testing.T) {
 }
 
 func TestBuildSpecModeBWorkspace(t *testing.T) {
-	cfg := config.Config{Version: 1, Image: "x", Command: []string{"sh"}}
+	cfg := profile.Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	opts := LaunchOpts{Workspace: "/home/me/proj"}
 	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
 	if spec.Workspace.Target != "/workspace" {

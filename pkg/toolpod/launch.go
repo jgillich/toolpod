@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 	"github.com/jgillich/toolpod/internal/runtime"
 )
 
@@ -15,15 +15,15 @@ func Launch(ctx context.Context, opts LaunchOpts) Result {
 }
 
 func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result {
-	userDir := opts.ConfigDir
+	userDir := opts.ProfileDir
 	if userDir == "" {
-		userDir = config.DefaultUserConfigDir()
+		userDir = profile.DefaultProfileDir()
 	}
-	cat, err := config.LoadCatalog(userDir)
+	cat, err := profile.LoadProfiles(userDir)
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
 	}
-	cfg, err := config.Resolve(cat, opts.ProfileName)
+	cfg, err := profile.ResolveProfile(cat, opts.ProfileName)
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
 	}

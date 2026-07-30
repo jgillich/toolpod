@@ -44,7 +44,7 @@ func runShell(args []string) int {
 	fs.StringVarP(&cmd, "command", "c", "", "command to run in the shell profile")
 	fs.StringSliceVar(&opts.Args, "args", nil, "arguments to pass to the profile command")
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace directory to mount")
-	fs.StringVar(&opts.ConfigDir, "config-dir", "", "override user config dir")
+	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user config dir")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the spec without launching")
 	fs.BoolVar(&opts.Verbose, "verbose", false, "print the spec before launching")
 	fs.BoolVar(&opts.Rebuild, "rebuild", false, "rebuild the image even if cached")
@@ -71,7 +71,7 @@ func runDoctor(args []string) int {
 	opts := doctor.Options{}
 	fs := pflag.NewFlagSet("doctor", pflag.ContinueOnError)
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace to check")
-	fs.StringVar(&opts.ConfigDir, "config-dir", "", "override user config dir")
+	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user config dir")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -152,12 +152,12 @@ Usage:
 
 Commands:
   shell                          Launch the built-in "shell" profile
-  doctor                         Check runtime, configs, workspace, and project tools
+  doctor                         Check runtime, profiles, workspace, and project tools
   prune                          Remove toolpod-prefixed volumes and images
 
 Flags:
   --workspace string             Workspace directory to mount
-  --config-dir string            Override user config dir
+  --profile-dir string           Override user profile directory
   --dry-run                      Print the spec without launching
   --verbose                      Print the spec before launching
   --rebuild                      Rebuild the image even if cached

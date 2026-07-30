@@ -1,20 +1,20 @@
-package config
+package profile
 
 import "testing"
 
 func TestValidateMissingVersion(t *testing.T) {
-	rc := RawConfig{Config: Config{Image: "x", Command: []string{"sh"}}}
+	rc := RawProfile{Profile: Profile{Image: "x", Command: []string{"sh"}}}
 	err := validate(rc)
 	if err == nil {
 		t.Fatal("expected error for missing version")
 	}
-	if _, ok := err.(ConfigError); !ok {
-		t.Fatalf("expected ConfigError, got %T", err)
+	if _, ok := err.(ProfileError); !ok {
+		t.Fatalf("expected ProfileError, got %T", err)
 	}
 }
 
 func TestValidateMissingCommand(t *testing.T) {
-	rc := RawConfig{Config: Config{Version: 1, Image: "x"}}
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x"}}
 	err := validate(rc)
 	if err == nil {
 		t.Fatal("expected error for missing command")
@@ -22,7 +22,7 @@ func TestValidateMissingCommand(t *testing.T) {
 }
 
 func TestValidateBothImageAndBuild(t *testing.T) {
-	rc := RawConfig{Config: Config{Version: 1, Image: "x", Build: &Build{Dockerfile: "Dockerfile"}, Command: []string{"sh"}}}
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Build: &Build{Dockerfile: "Dockerfile"}, Command: []string{"sh"}}}
 	err := validate(rc)
 	if err == nil {
 		t.Fatal("expected error for both image and build")
@@ -30,7 +30,7 @@ func TestValidateBothImageAndBuild(t *testing.T) {
 }
 
 func TestValidateNeitherImageNorBuild(t *testing.T) {
-	rc := RawConfig{Config: Config{Version: 1, Command: []string{"sh"}}}
+	rc := RawProfile{Profile: Profile{Version: 1, Command: []string{"sh"}}}
 	err := validate(rc)
 	if err == nil {
 		t.Fatal("expected error for neither image nor build")
@@ -39,7 +39,7 @@ func TestValidateNeitherImageNorBuild(t *testing.T) {
 
 func TestValidateReservedName(t *testing.T) {
 	for _, name := range []string{"config", "doctor", "help", "version", "completion", "prune"} {
-		rc := RawConfig{Config: Config{Version: 1, Image: "x", Command: []string{"sh"}}}
+		rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
 		rc.Path = "/home/me/.config/toolpod/" + name + ".yaml"
 		err := validateReservedName(rc, name)
 		if err == nil {
@@ -49,7 +49,7 @@ func TestValidateReservedName(t *testing.T) {
 }
 
 func TestValidateValid(t *testing.T) {
-	rc := RawConfig{Config: Config{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
 	if err := validate(rc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

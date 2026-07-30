@@ -1,30 +1,30 @@
-package config
+package profile
 
 // Resolve walks the extends chain for name and produces a fully merged Config.
 // Cycles are detected and rejected. Validation runs on the result.
-func Resolve(cat Catalog, name string) (Config, error) {
+func ResolveProfile(cat Catalog, name string) (Profile, error) {
 	rc, ok := cat.Get(name)
 	if !ok {
-		return Config{}, ConfigError{Message: "profile not found: " + name}
+		return Profile{}, ProfileError{Message: "profile not found: " + name}
 	}
 	merged, err := resolveChain(cat, name, map[string]bool{})
 	if err != nil {
-		return Config{}, err
+		return Profile{}, err
 	}
 	merged.Path = rc.Path
 	if err := validate(merged); err != nil {
-		return Config{}, err
+		return Profile{}, err
 	}
-	return merged.Config, nil
+	return merged.Profile, nil
 }
 
-func resolveChain(cat Catalog, name string, seen map[string]bool) (RawConfig, error) {
+func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, error) {
 	rc, ok := cat.Get(name)
 	if !ok {
-		return RawConfig{}, ConfigError{Message: "profile not found: " + name}
+		return RawProfile{}, ProfileError{Message: "profile not found: " + name}
 	}
 	if seen[name] {
-		return RawConfig{}, ConfigError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
 	}
 	if rc.Extends == "" {
 		return rc, nil
@@ -34,7 +34,7 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawConfig, er
 
 	parent, err := resolveChain(cat, rc.Extends, seen)
 	if err != nil {
-		return RawConfig{}, err
+		return RawProfile{}, err
 	}
 	merged := mergeConfigs(parent, rc)
 	merged.Path = rc.Path
@@ -44,7 +44,7 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawConfig, er
 // mergeConfigs merges child on top of parent per spec §4.3:
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace,
 // image/build treated as a single slot.
-func mergeConfigs(parent, child RawConfig) RawConfig {
+func mergeConfigs(parent, child RawProfile) RawProfile {
 	out := parent
 
 	if child.Version != 0 {

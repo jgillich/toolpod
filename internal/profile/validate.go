@@ -1,4 +1,4 @@
-package config
+package profile
 
 import "strings"
 
@@ -13,29 +13,29 @@ var reservedNames = map[string]bool{
 
 // validate checks a resolved config for required fields and invariants.
 // It runs on the merged result (after extends resolution).
-func validate(rc RawConfig) error {
+func validate(rc RawProfile) error {
 	if rc.Version == 0 {
-		return ConfigError{Path: rc.Path, Message: "missing required field: version"}
+		return ProfileError{Path: rc.Path, Message: "missing required field: version"}
 	}
 	if len(rc.Command) == 0 {
-		return ConfigError{Path: rc.Path, Message: "missing required field: command"}
+		return ProfileError{Path: rc.Path, Message: "missing required field: command"}
 	}
 	hasImage := rc.Image != ""
 	hasBuild := rc.Build != nil
 	if hasImage && hasBuild {
-		return ConfigError{Path: rc.Path, Message: "exactly one of image or build is required (both set)"}
+		return ProfileError{Path: rc.Path, Message: "exactly one of image or build is required (both set)"}
 	}
 	if !hasImage && !hasBuild {
-		return ConfigError{Path: rc.Path, Message: "exactly one of image or build is required (neither set)"}
+		return ProfileError{Path: rc.Path, Message: "exactly one of image or build is required (neither set)"}
 	}
 	return nil
 }
 
 // validateReservedName rejects profile names that collide with subcommands.
 // Called during catalog load, not on the merged config.
-func validateReservedName(rc RawConfig, name string) error {
+func validateReservedName(rc RawProfile, name string) error {
 	if reservedNames[name] {
-		return ConfigError{Path: rc.Path, Message: "profile name " + name + " is reserved (collides with a subcommand)"}
+		return ProfileError{Path: rc.Path, Message: "profile name " + name + " is reserved (collides with a subcommand)"}
 	}
 	return nil
 }

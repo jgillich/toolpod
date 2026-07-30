@@ -14,7 +14,7 @@ type LaunchOpts struct {
 	ProfileName string
 	Args        []string
 	Workspace   string
-	ConfigDir   string
+	ProfileDir   string
 	ExtraTools  []string
 	Rebuild     bool
 	DryRun      bool

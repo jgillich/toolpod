@@ -1,4 +1,4 @@
-package config
+package profile
 
 import (
 	"fmt"
@@ -14,11 +14,11 @@ import (
 
 // Catalog is the merged set of built-in + user raw configs, keyed by profile name.
 type Catalog struct {
-	entries map[string]RawConfig
+	entries map[string]RawProfile
 }
 
 // Get returns the raw config for a profile name, plus whether it was found.
-func (c Catalog) Get(name string) (RawConfig, bool) {
+func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok
 }
@@ -35,8 +35,8 @@ func (c Catalog) Names() []string {
 
 // LoadCatalog loads embedded built-ins, then user configs from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
-func LoadCatalog(userDir string) (Catalog, error) {
-	entries := map[string]RawConfig{}
+func LoadProfiles(userDir string) (Catalog, error) {
+	entries := map[string]RawProfile{}
 
 	if err := loadBuiltins(entries); err != nil {
 		return Catalog{}, err
@@ -51,7 +51,7 @@ func LoadCatalog(userDir string) (Catalog, error) {
 	return Catalog{entries: entries}, nil
 }
 
-func loadBuiltins(entries map[string]RawConfig) error {
+func loadBuiltins(entries map[string]RawProfile) error {
 	root := "configs"
 	return fs.WalkDir(catalog.Configs, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -77,7 +77,7 @@ func loadBuiltins(entries map[string]RawConfig) error {
 	})
 }
 
-func loadUserDir(dir string, entries map[string]RawConfig) error {
+func loadUserDir(dir string, entries map[string]RawProfile) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil
 	}
@@ -105,21 +105,21 @@ func loadUserDir(dir string, entries map[string]RawConfig) error {
 	})
 }
 
-// parseRaw parses YAML bytes into a RawConfig with the given source path.
+// parseRaw parses YAML bytes into a RawProfile with the given source path.
 // It also captures explicit-null keys (for null-to-delete in merge) via
 // a parallel yaml.Node parse of the map fields.
-func parseRaw(data []byte, path string) (RawConfig, error) {
-	var rc RawConfig
+func parseRaw(data []byte, path string) (RawProfile, error) {
+	var rc RawProfile
 	rc.Path = path
-	if err := yaml.Unmarshal(data, &rc.Config); err != nil {
-		return RawConfig{}, ConfigError{
+	if err := yaml.Unmarshal(data, &rc.Profile); err != nil {
+		return RawProfile{}, ProfileError{
 			Path:    path,
 			Message: fmt.Sprintf("YAML parse error: %v", err),
 		}
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return RawConfig{}, ConfigError{Path: path, Message: fmt.Sprintf("YAML parse error: %v", err)}
+		return RawProfile{}, ProfileError{Path: path, Message: fmt.Sprintf("YAML parse error: %v", err)}
 	}
 	rc.NullKeys = collectNullKeys(&root)
 	return rc, nil
@@ -175,18 +175,18 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 
 // NewCatalogForTest creates a Catalog from a raw map. For test use only;
 // production code uses LoadCatalog.
-func NewCatalogForTest(entries map[string]RawConfig) Catalog {
+func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 	return Catalog{entries: entries}
 }
 
-// DefaultUserConfigDir returns the default user config dir for the current OS.
+// DefaultProfileDir returns the default user profile directory for the current OS.
 // Used by the CLI when --config-dir is not set.
-func DefaultUserConfigDir() string {
+func DefaultProfileDir() string {
 	if dir := os.Getenv("TOOLPOD_CONFIG_DIR"); dir != "" {
 		return dir
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "toolpod")
+		return filepath.Join(home, ".config", "toolpod", "profiles")
 	}
 	return ""
 }

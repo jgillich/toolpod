@@ -73,7 +73,7 @@ func TestE2EShellLaunch(t *testing.T) {
 		t.Skip("DOCKER_HOST not set")
 	}
 	configDir := writeShellProfile(t)
-	out, err := runToolpod(t, "shell", "--config-dir", configDir, "-c", "echo hello-from-toolpod")
+	out, err := runToolpod(t, "shell", "--profile-dir", configDir, "-c", "echo hello-from-toolpod")
 	if err != nil {
 		t.Fatalf("shell launch: %v\n%s", err, out)
 	}

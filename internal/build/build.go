@@ -11,7 +11,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 )
 
 // Spec is the subset of the container spec needed for image preparation.
@@ -158,7 +158,7 @@ func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, err
 // ResolveDependencies returns the build order (topological sort) of the
 // depends_on entries reachable from name — i.e. the dependencies that must be
 // built before name's own image. The target itself is excluded.
-func ResolveDependencies(cat config.Catalog, name string) ([]string, error) {
+func ResolveDependencies(cat profile.Catalog, name string) ([]string, error) {
 	visited := map[string]bool{}
 	inProgress := map[string]bool{}
 	var order []string

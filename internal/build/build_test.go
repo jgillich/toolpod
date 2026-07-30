@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 )
 
 func TestResolveDependenciesNoDeps(t *testing.T) {
-	cat := config.NewCatalogForTest(map[string]config.RawConfig{
-		"a": {Config: config.Config{Image: "a:1", Command: []string{"x"}}},
+	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
+		"a": {Profile: profile.Profile{Image: "a:1", Command: []string{"x"}}},
 	})
 	deps, err := ResolveDependencies(cat, "a")
 	if err != nil {
@@ -24,10 +24,10 @@ func TestResolveDependenciesNoDeps(t *testing.T) {
 }
 
 func TestResolveDependenciesChain(t *testing.T) {
-	cat := config.NewCatalogForTest(map[string]config.RawConfig{
-		"a": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"b"}}}},
-		"b": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"c"}}}},
-		"c": {Config: config.Config{Image: "c:1", Command: []string{"x"}}},
+	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
+		"a": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"b"}}}},
+		"b": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"c"}}}},
+		"c": {Profile: profile.Profile{Image: "c:1", Command: []string{"x"}}},
 	})
 	deps, err := ResolveDependencies(cat, "a")
 	if err != nil {
@@ -39,11 +39,11 @@ func TestResolveDependenciesChain(t *testing.T) {
 }
 
 func TestResolveDependenciesDiamond(t *testing.T) {
-	cat := config.NewCatalogForTest(map[string]config.RawConfig{
-		"a": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"b", "c"}}}},
-		"b": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"d"}}}},
-		"c": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"d"}}}},
-		"d": {Config: config.Config{Image: "d:1", Command: []string{"x"}}},
+	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
+		"a": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"b", "c"}}}},
+		"b": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"d"}}}},
+		"c": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"d"}}}},
+		"d": {Profile: profile.Profile{Image: "d:1", Command: []string{"x"}}},
 	})
 	deps, err := ResolveDependencies(cat, "a")
 	if err != nil {
@@ -66,9 +66,9 @@ func TestResolveDependenciesDiamond(t *testing.T) {
 }
 
 func TestResolveDependenciesCycle(t *testing.T) {
-	cat := config.NewCatalogForTest(map[string]config.RawConfig{
-		"a": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"b"}}}},
-		"b": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"a"}}}},
+	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
+		"a": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"b"}}}},
+		"b": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"a"}}}},
 	})
 	_, err := ResolveDependencies(cat, "a")
 	if err == nil {
@@ -77,8 +77,8 @@ func TestResolveDependenciesCycle(t *testing.T) {
 }
 
 func TestResolveDependenciesMissing(t *testing.T) {
-	cat := config.NewCatalogForTest(map[string]config.RawConfig{
-		"a": {Config: config.Config{Build: &config.Build{Dockerfile: "D", DependsOn: []string{"nope"}}}},
+	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
+		"a": {Profile: profile.Profile{Build: &profile.Build{Dockerfile: "D", DependsOn: []string{"nope"}}}},
 	})
 	_, err := ResolveDependencies(cat, "a")
 	if err == nil {

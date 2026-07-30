@@ -1,4 +1,4 @@
-package config
+package profile
 
 import (
 	"os"
@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestLoadCatalogBuiltinsOnly(t *testing.T) {
-	cat, err := LoadCatalog("")
+func TestLoadProfilesBuiltinsOnly(t *testing.T) {
+	cat, err := LoadProfiles("")
 	if err != nil {
-		t.Fatalf("LoadCatalog(\"\"): %v", err)
+		t.Fatalf("LoadProfiles(\"\"): %v", err)
 	}
 	for _, name := range []string{"opencode", "codex", "shell"} {
 		if _, ok := cat.Get(name); !ok {
@@ -18,15 +18,15 @@ func TestLoadCatalogBuiltinsOnly(t *testing.T) {
 	}
 }
 
-func TestLoadCatalogUserShadowsBuiltin(t *testing.T) {
+func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadCatalog(dir)
+	cat, err := LoadProfiles(dir)
 	if err != nil {
-		t.Fatalf("LoadCatalog(%q): %v", dir, err)
+		t.Fatalf("LoadProfiles(%q): %v", dir, err)
 	}
 	rc, ok := cat.Get("shell")
 	if !ok {
@@ -40,28 +40,28 @@ func TestLoadCatalogUserShadowsBuiltin(t *testing.T) {
 	}
 }
 
-func TestLoadCatalogUserAddsProfile(t *testing.T) {
+func TestLoadProfilesUserAddsProfile(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadCatalog(dir)
+	cat, err := LoadProfiles(dir)
 	if err != nil {
-		t.Fatalf("LoadCatalog(%q): %v", dir, err)
+		t.Fatalf("LoadProfiles(%q): %v", dir, err)
 	}
 	if _, ok := cat.Get("rustdev"); !ok {
 		t.Error("user profile rustdev not in catalog")
 	}
 }
 
-func TestLoadCatalogRejectsReservedName(t *testing.T) {
+func TestLoadProfilesRejectsReservedName(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "doctor.yaml"), []byte("version: 1\nimage: x\ncommand: [\"sh\"]\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = LoadCatalog(dir)
+	_, err = LoadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected reserved-name rejection, got nil")
 	}

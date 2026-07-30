@@ -82,7 +82,7 @@ func (r Result) HasFailure() bool {
 
 type Options struct {
 	Workspace string
-	ConfigDir string
+	ProfileDir string
 }
 
 func Run(ctx context.Context, opts Options) Result {

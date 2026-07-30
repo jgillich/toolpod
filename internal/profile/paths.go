@@ -1,4 +1,4 @@
-package config
+package profile
 
 import "strings"
 
@@ -6,7 +6,7 @@ import "strings"
 // mount/cache targets (→ runtimeHome) per spec §5.6. Absolute paths are
 // left as-is. The mode ("A" or "B") is informational only here; the caller
 // has already determined runtimeHome based on the mode.
-func ResolveTildes(cfg Config, mode, hostHome, runtimeHome string) Config {
+func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string) Profile {
 	out := cfg
 
 	if out.Mounts != nil {

@@ -1,9 +1,9 @@
-package config
+package profile
 
 import "testing"
 
 func TestResolveTildesMountSourceAndTarget(t *testing.T) {
-	cfg := Config{
+	cfg := Profile{
 		Mounts: map[string]Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 			"/etc/hosts":         {Source: "/etc/hosts", ReadOnly: true},
@@ -29,7 +29,7 @@ func TestResolveTildesMountSourceAndTarget(t *testing.T) {
 }
 
 func TestResolveTildesModeB(t *testing.T) {
-	cfg := Config{
+	cfg := Profile{
 		Mounts: map[string]Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
@@ -45,7 +45,7 @@ func TestResolveTildesModeB(t *testing.T) {
 }
 
 func TestResolveTildesNoHomeSubstitution(t *testing.T) {
-	cfg := Config{
+	cfg := Profile{
 		Mounts: map[string]Mount{
 			"/data": {Source: "/data", ReadOnly: false},
 		},

@@ -1,15 +1,15 @@
 package toolpod
 
 import (
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 )
 
 // buildSpec assembles a container Spec from a resolved config and launch opts.
 // mode is "A" (rootless podman) or "B" (fallback). hostHome is the host user's
 // $HOME; runtimeHome is the in-container user's home (/home/<user> in Mode A,
 // /root in Mode B).
-func buildSpec(opts LaunchOpts, cfg config.Config, mode, hostHome, runtimeHome string) Spec {
-	cfg = config.ResolveTildes(cfg, mode, hostHome, runtimeHome)
+func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) Spec {
+	cfg = profile.ResolveTildes(cfg, mode, hostHome, runtimeHome)
 
 	mounts := make([]MountSpec, 0, len(cfg.Mounts))
 	for target, m := range cfg.Mounts {

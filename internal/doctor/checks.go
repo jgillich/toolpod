@@ -12,7 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/profile"
 	"github.com/jgillich/toolpod/internal/runtime"
 )
 
@@ -26,11 +26,11 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 	checks = append(checks, checkVolumes(ctx, rt))
 	checks = append(checks, checkPermissions(ctx, rt))
 
-	userDir := opts.ConfigDir
+	userDir := opts.ProfileDir
 	if userDir == "" {
-		userDir = config.DefaultUserConfigDir()
+		userDir = profile.DefaultProfileDir()
 	}
-	checks = append(checks, checkConfigValidity(userDir))
+	checks = append(checks, checkProfileValidity(userDir))
 
 	ws := opts.Workspace
 	if ws == "" {
@@ -124,21 +124,21 @@ func checkPermissions(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "permissions", Status: Pass, Message: "can create containers and volumes"}
 }
 
-func checkConfigValidity(userDir string) Check {
-	cat, err := config.LoadCatalog(userDir)
+func checkProfileValidity(userDir string) Check {
+	cat, err := profile.LoadProfiles(userDir)
 	if err != nil {
-		return Check{Name: "configs", Status: Fail, Message: err.Error()}
+		return Check{Name: "profiles", Status: Fail, Message: err.Error()}
 	}
 	hadErr := false
 	for _, name := range cat.Names() {
-		if _, err := config.Resolve(cat, name); err != nil {
+		if _, err := profile.ResolveProfile(cat, name); err != nil {
 			hadErr = true
 		}
 	}
 	if hadErr {
-		return Check{Name: "configs", Status: Fail, Message: "some configs invalid"}
+		return Check{Name: "profiles", Status: Fail, Message: "some configs invalid"}
 	}
-	return Check{Name: "configs", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", len(cat.Names()))}
+	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", len(cat.Names()))}
 }
 
 func checkProjectTools(ctx context.Context, workspace string) Check {
