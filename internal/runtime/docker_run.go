@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,10 +25,26 @@ import (
 func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	runtimeHome := spec.RuntimeHome
 
-	// Wrap the command with mise activation so installed tools are on PATH.
-	// Spec §6.3: writes profile tools to mise global config, then activates.
+	// Build the container entrypoint:
+	// 1. Write profile tools to mise global config + activate (sets up shims on PATH)
+	// 2. Install project tools (mise auto-detects mise.toml/.tool-versions in CWD)
+	// 3. Evaluate project environment (adds project tools to PATH immediately)
+	// 4. If shell command, inject activate hooks into .bashrc for interactive cd-switching
+	// 5. exec the profile command
 	activateCmd := mise.ActivateCommand(runtimeHome, spec.Tools)
-	shellCmd := activateCmd + " && exec " + shellQuote(spec.Command)
+	installCmd := "mise install 2>/dev/null || true"
+	hookEnvCmd := `eval "$(mise hook-env 2>/dev/null)" || true`
+
+	var parts []string
+	parts = append(parts, activateCmd, installCmd, hookEnvCmd)
+
+	if isShellCommand(spec.Command) {
+		miseBin := "/usr/local/bin/mise"
+		parts = append(parts, fmt.Sprintf("echo 'eval \"$(%s activate sh)\"' >> /root/.bashrc", miseBin))
+	}
+
+	parts = append(parts, "exec "+shellQuote(spec.Command))
+	shellCmd := strings.Join(parts, " && ")
 	cmd := []string{"sh", "-c", shellCmd}
 
 	mounts := buildMounts(spec, runtimeHome)
@@ -223,4 +240,12 @@ func randomID(n int) string {
 		return strconv.Itoa(os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+func isShellCommand(cmd []string) bool {
+	if len(cmd) == 0 {
+		return false
+	}
+	base := filepath.Base(cmd[0])
+	return base == "sh" || base == "bash" || base == "zsh" || base == "fish"
 }
