@@ -42,6 +42,6 @@ type Resources struct {
 // It carries the source file path for error reporting.
 type RawConfig struct {
 	Config
-	Path     string                       `yaml:"-"` // file path for error reporting
-	NullKeys map[string]map[string]bool   `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+	Path     string                     `yaml:"-"` // file path for error reporting
+	NullKeys map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
 }
