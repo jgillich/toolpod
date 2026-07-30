@@ -1,0 +1,24 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+command: ["opencode"]
+tools:
+  opencode: latest
+mounts:
+  ~/.config/opencode:
+    source: ~/.config/opencode
+    read_only: true
+  ~/.cache/opencode:
+    source: ~/.cache/opencode
+    read_only: false
+  ~/.gitconfig:
+    source: ~/.gitconfig
+    read_only: true
+caches:
+  npm: ~/.npm
+  cargo: ~/.cargo
+  pip: ~/.cache/pip
+  go: ~/go
+labels:
+  profile: opencode
+network: bridge
+tty: auto

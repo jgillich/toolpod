@@ -1,0 +1,8 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+command: ["sh"]
+caches:
+  npm: ~/.npm
+  cargo: ~/.cargo
+  pip: ~/.cache/pip
+  go: ~/go
