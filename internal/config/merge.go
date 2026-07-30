@@ -19,12 +19,12 @@ func Resolve(cat Catalog, name string) (Config, error) {
 }
 
 func resolveChain(cat Catalog, name string, seen map[string]bool) (RawConfig, error) {
-	if seen[name] {
-		return RawConfig{}, ConfigError{Message: "extends cycle detected at: " + name}
-	}
 	rc, ok := cat.Get(name)
 	if !ok {
-		return RawConfig{}, ConfigError{Message: "extends references unknown profile: " + name}
+		return RawConfig{}, ConfigError{Message: "profile not found: " + name}
+	}
+	if seen[name] {
+		return RawConfig{}, ConfigError{Path: rc.Path, Message: "extends cycle detected at: " + name}
 	}
 	if rc.Extends == "" {
 		return rc, nil
@@ -36,7 +36,9 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawConfig, er
 	if err != nil {
 		return RawConfig{}, err
 	}
-	return mergeConfigs(parent, rc), nil
+	merged := mergeConfigs(parent, rc)
+	merged.Path = rc.Path
+	return merged, nil
 }
 
 // mergeConfigs merges child on top of parent per spec §4.3:
