@@ -97,6 +97,8 @@ func loadUserDir(dir string, entries map[string]RawConfig) error {
 }
 
 // parseRaw parses YAML bytes into a RawConfig with the given source path.
+// It also captures explicit-null keys (for null-to-delete in merge) via
+// a parallel yaml.Node parse of the map fields.
 func parseRaw(data []byte, path string) (RawConfig, error) {
 	var rc RawConfig
 	rc.Path = path
@@ -106,7 +108,60 @@ func parseRaw(data []byte, path string) (RawConfig, error) {
 			Message: fmt.Sprintf("YAML parse error: %v", err),
 		}
 	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return RawConfig{}, ConfigError{Path: path, Message: fmt.Sprintf("YAML parse error: %v", err)}
+	}
+	rc.NullKeys = collectNullKeys(&root)
 	return rc, nil
+}
+
+// collectNullKeys returns the set of map keys whose value is explicitly null
+// in the top-level or nested-map fields that support null-to-delete.
+// Returns a map of field-name → null-key info. A map containing the "*"
+// sentinel means the entire field is null (delete the whole field). Otherwise
+// the listed keys are deleted within that field's nested map.
+func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
+	nulls := map[string]map[string]bool{
+		"mounts":      {},
+		"environment": {},
+		"tools":       {},
+		"caches":      {},
+		"labels":      {},
+	}
+	if root == nil || root.Kind != yaml.DocumentNode {
+		return nulls
+	}
+	body := root.Content[0]
+	if body == nil || body.Kind != yaml.MappingNode {
+		return nulls
+	}
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		keyNode := body.Content[i]
+		valNode := body.Content[i+1]
+		tracked, ok := nulls[keyNode.Value]
+		if !ok {
+			continue
+		}
+		if valNode.Tag == "!!null" {
+			nulls[keyNode.Value] = map[string]bool{"*": true}
+			continue
+		}
+		if valNode.Kind == yaml.MappingNode {
+			keys := map[string]bool{}
+			for j := 0; j+1 < len(valNode.Content); j += 2 {
+				if valNode.Content[j+1].Tag == "!!null" {
+					keys[valNode.Content[j].Value] = true
+				}
+			}
+			if len(keys) > 0 {
+				nulls[keyNode.Value] = keys
+			} else {
+				nulls[keyNode.Value] = tracked
+			}
+		}
+	}
+	return nulls
 }
 
 // DefaultUserConfigDir returns the default user config dir for the current OS.
