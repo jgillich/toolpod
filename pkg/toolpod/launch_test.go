@@ -2,16 +2,18 @@ package toolpod
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jgillich/toolpod/internal/runtime"
 )
 
 func writeBuiltinShell(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// Use a user config dir with a valid profile so LoadCatalog succeeds.
 	err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: myimg:latest\ncommand: [\"sh\"]\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -58,15 +60,77 @@ func TestLaunchProfileNotFound(t *testing.T) {
 	}
 }
 
-func TestLaunchNoRuntimeReturnsError(t *testing.T) {
+func TestLaunchWithFakeRuntime(t *testing.T) {
 	dir := writeBuiltinShell(t)
+	fr := &runtime.FakeRuntime{ExitCode: 0}
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      false,
 		ConfigDir:   dir,
+		Runtime:     fr,
 	}, &strings.Builder{})
-	// Plan 1 has no runtime; non-dry-run should error.
+	if res.Err != nil {
+		t.Fatalf("Launch: %v", res.Err)
+	}
+	if fr.PreparedSpec == nil {
+		t.Error("Prepare was not called")
+	}
+	if fr.RanSpec == nil {
+		t.Error("Run was not called")
+	}
+}
+
+func TestLaunchPrepareFails(t *testing.T) {
+	dir := writeBuiltinShell(t)
+	fr := &runtime.FakeRuntime{
+		PrepareErr: fmt.Errorf("image pull failed"),
+	}
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		DryRun:      false,
+		ConfigDir:   dir,
+		Runtime:     fr,
+	}, &strings.Builder{})
 	if res.Err == nil {
-		t.Fatal("expected error (runtime not implemented in Plan 1)")
+		t.Fatal("expected error from failed Prepare")
+	}
+	if res.ExitCode != 3 {
+		t.Errorf("ExitCode = %d, want 3 (runtime error)", res.ExitCode)
+	}
+}
+
+func TestLaunchRunFails(t *testing.T) {
+	dir := writeBuiltinShell(t)
+	fr := &runtime.FakeRuntime{
+		RunErr: fmt.Errorf("container crashed"),
+	}
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		DryRun:      false,
+		ConfigDir:   dir,
+		Runtime:     fr,
+	}, &strings.Builder{})
+	if res.Err == nil {
+		t.Fatal("expected error from failed Run")
+	}
+	if res.ExitCode != 3 {
+		t.Errorf("ExitCode = %d, want 3", res.ExitCode)
+	}
+}
+
+func TestLaunchPropagatesExitCode(t *testing.T) {
+	dir := writeBuiltinShell(t)
+	fr := &runtime.FakeRuntime{ExitCode: 42}
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		DryRun:      false,
+		ConfigDir:   dir,
+		Runtime:     fr,
+	}, &strings.Builder{})
+	if res.Err != nil {
+		t.Fatalf("unexpected error: %v", res.Err)
+	}
+	if res.ExitCode != 42 {
+		t.Errorf("ExitCode = %d, want 42 (profile exit code)", res.ExitCode)
 	}
 }

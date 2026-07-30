@@ -7,16 +7,13 @@ import (
 	"os"
 
 	"github.com/jgillich/toolpod/internal/config"
+	"github.com/jgillich/toolpod/internal/runtime"
 )
 
-// Launch orchestrates: resolve config → (Plan 2: Prepare + Run) → result.
-// In Plan 1, this resolves the config and renders the Spec for --dry-run.
-// Non-dry-run returns an error (runtime added in Plan 2).
 func Launch(ctx context.Context, opts LaunchOpts) Result {
 	return LaunchWithWriter(ctx, opts, os.Stdout)
 }
 
-// LaunchWithWriter is like Launch but takes an explicit writer for testability.
 func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result {
 	userDir := opts.ConfigDir
 	if userDir == "" {
@@ -31,7 +28,6 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		return Result{ExitCode: 2, Err: err}
 	}
 
-	// Merge --tool flags into cfg.Tools
 	if len(opts.ExtraTools) > 0 {
 		if cfg.Tools == nil {
 			cfg.Tools = map[string]string{}
@@ -42,29 +38,67 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		}
 	}
 
-	// Determine mode + homes. Plan 1 defaults to Mode B (no runtime detection yet).
-	// Plan 2 replaces this with real rootless-Podman detection.
-	mode := "B"
-	hostHome := os.Getenv("HOME")
-	if hostHome == "" {
-		hostHome = "/root"
-	}
+	hostHome, _ := os.UserHomeDir()
 	runtimeHome := "/root"
-	if mode == "A" {
-		runtimeHome = hostHome
+	mode := "B"
+
+	if !opts.DryRun {
+		rt := opts.Runtime
+		if rt == nil {
+			constructed, err := runtime.NewDockerRuntime()
+			if err != nil {
+				return Result{ExitCode: 3, Err: fmt.Errorf("runtime unavailable: %w (is Docker running?)", err)}
+			}
+			constructed.Rebuild = opts.Rebuild
+			rt = constructed
+		}
+
+		if dr, ok := rt.(*runtime.DockerRuntime); ok {
+			detected, err := dr.DetectMode(ctx)
+			if err == nil {
+				mode = detected
+			}
+			if mode == "A" {
+				runtimeHome = hostHome
+			}
+		}
+
+		spec := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
+
+		if opts.Verbose {
+			RenderSpec(w, spec)
+		}
+
+		progress := &stdoutProgress{w: w}
+		imageRef, err := rt.Prepare(ctx, spec, progress)
+		if err != nil {
+			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
+		}
+		runSpec := spec
+		if imageRef != "" {
+			runSpec.Image = imageRef
+		}
+
+		code, err := rt.Run(ctx, runSpec)
+		if err != nil {
+			return Result{ExitCode: 3, Err: fmt.Errorf("run: %w", err)}
+		}
+		return Result{ExitCode: code}
 	}
 
 	spec := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
-
-	if opts.DryRun {
-		if err := RenderSpec(w, spec); err != nil {
-			return Result{ExitCode: 3, Err: err}
-		}
-		return Result{ExitCode: 0}
+	if err := RenderSpec(w, spec); err != nil {
+		return Result{ExitCode: 3, Err: err}
 	}
+	return Result{ExitCode: 0}
+}
 
-	// Plan 2: invoke Runtime.Prepare + Runtime.Run here.
-	return Result{ExitCode: 3, Err: fmt.Errorf("runtime not yet implemented (Plan 2)")}
+type stdoutProgress struct {
+	w io.Writer
+}
+
+func (s *stdoutProgress) WriteProgress(line string) {
+	fmt.Fprintln(s.w, line)
 }
 
 func parseToolFlag(s string) (string, string) {
