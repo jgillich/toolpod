@@ -36,6 +36,16 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 
 	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
 
+	var oldState *term.State
+	var err error
+	if tty && term.IsTerminal(int(os.Stdin.Fd())) {
+		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return 3, fmt.Errorf("set raw mode: %w", err)
+		}
+		defer term.Restore(int(os.Stdin.Fd()), oldState)
+	}
+
 	resp, err := d.cli.ContainerCreate(ctx, &container.Config{
 		Image:        spec.Image,
 		Cmd:          cmd,
@@ -77,6 +87,16 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		return 3, fmt.Errorf("attach: %w", err)
 	}
 	defer hijacked.Close()
+
+	if tty {
+		rows, cols := terminalSize()
+		if rows > 0 && cols > 0 {
+			_ = d.cli.ContainerResize(ctx, resp.ID, container.ResizeOptions{
+				Height: rows,
+				Width:  cols,
+			})
+		}
+	}
 
 	// Signal forwarding with cleanup
 	sigCh := make(chan os.Signal, 1)

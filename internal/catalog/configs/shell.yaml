@@ -1,6 +1,7 @@
 version: 1
 image: ghcr.io/jdx/mise:latest
-command: ["sh"]
+command: ["bash"]
+tty: auto
 caches:
   npm: ~/.npm
   cargo: ~/.cargo
