@@ -6,7 +6,7 @@ func TestResolveTildesMountSourceAndTarget(t *testing.T) {
 	cfg := Config{
 		Mounts: map[string]Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
-			"/etc/hosts":          {Source: "/etc/hosts", ReadOnly: true},
+			"/etc/hosts":         {Source: "/etc/hosts", ReadOnly: true},
 		},
 		Caches: map[string]string{
 			"npm": "~/.npm",

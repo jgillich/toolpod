@@ -120,5 +120,3 @@ func mergeStringMap(parent, child map[string]string, nullKeys map[string]bool) m
 	}
 	return out
 }
-
-
