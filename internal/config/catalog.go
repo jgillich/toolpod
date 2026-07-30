@@ -170,6 +170,12 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 	return nulls
 }
 
+// NewCatalogForTest creates a Catalog from a raw map. For test use only;
+// production code uses LoadCatalog.
+func NewCatalogForTest(entries map[string]RawConfig) Catalog {
+	return Catalog{entries: entries}
+}
+
 // DefaultUserConfigDir returns the default user config dir for the current OS.
 // Used by the CLI when --config-dir is not set.
 func DefaultUserConfigDir() string {
