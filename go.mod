@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/docker/docker v27.1.0+incompatible
+	github.com/gofrs/flock v0.13.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -18,7 +19,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
