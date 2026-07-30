@@ -7,7 +7,7 @@ func TestMiseVolume(t *testing.T) {
 	if v.Name != "toolpod-mise" {
 		t.Errorf("name = %q, want toolpod-mise", v.Name)
 	}
-	if v.Target != "/root/.local/share/mise" {
+	if v.Target != "/mise" {
 		t.Errorf("target = %q, want /root/.local/share/mise", v.Target)
 	}
 }

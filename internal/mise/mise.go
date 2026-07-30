@@ -60,7 +60,7 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 	volumes := []VolumeMount{
 		{Name: miseVol.Name, Target: miseVol.Target},
 	}
-	env := []string{"HOME=" + runtimeHome, "PATH=" + runtimeHome + "/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+	env := []string{"HOME=" + runtimeHome, "MISE_DATA_DIR=/mise", "PATH=/mise/shims:" + runtimeHome + "/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 
 	exitCode, err := runner.RunInContainer(ctx, spec.Image, volumes, env, []string{"sh", "-c", cmd})
 	if err != nil {

@@ -16,7 +16,7 @@ type NamedVolume struct {
 func MiseVolume(runtimeHome string) NamedVolume {
 	return NamedVolume{
 		Name:   "toolpod-mise",
-		Target: runtimeHome + "/.local/share/mise",
+		Target: "/mise",
 	}
 }
 

@@ -172,7 +172,7 @@ func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
 	m = append(m, mount.Mount{
 		Type:   mount.TypeVolume,
 		Source: "toolpod-mise",
-		Target: runtimeHome + "/.local/share/mise",
+		Target: "/mise",
 	})
 	for _, c := range spec.Caches {
 		m = append(m, mount.Mount{

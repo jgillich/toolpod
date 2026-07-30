@@ -4,7 +4,7 @@ import "testing"
 
 func TestActivateCommand(t *testing.T) {
 	cmd := ActivateCommand("/root")
-	want := "eval \"$(mise hook-env)\""
+	want := `eval "$(mise hook-env)"`
 	if cmd != want {
 		t.Errorf("ActivateCommand(/root) = %q, want %q", cmd, want)
 	}
