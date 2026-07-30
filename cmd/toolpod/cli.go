@@ -31,20 +31,22 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
-		usage()
-		os.Exit(2)
+		os.Exit(runProfile(cmd, args))
 	}
 }
 
 func runShell(args []string) int {
-	fs := pflag.NewFlagSet("shell", pflag.ContinueOnError)
-	opts := toolpod.LaunchOpts{ProfileName: "shell"}
+	return runProfile("shell", args)
+}
+
+func runProfile(profileName string, args []string) int {
+	opts := toolpod.LaunchOpts{ProfileName: profileName}
 	var cmd string
-	fs.StringVarP(&cmd, "command", "c", "", "command to run in the shell profile")
+	fs := pflag.NewFlagSet(profileName, pflag.ContinueOnError)
+	fs.StringVarP(&cmd, "command", "c", "", "command to run in the profile")
 	fs.StringSliceVar(&opts.Args, "args", nil, "arguments to pass to the profile command")
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace directory to mount")
-	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user config dir")
+	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user profile directory")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the spec without launching")
 	fs.BoolVar(&opts.Verbose, "verbose", false, "print the spec before launching")
 	fs.BoolVar(&opts.Rebuild, "rebuild", false, "rebuild the image even if cached")
