@@ -57,6 +57,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		AttachStderr: true,
 		WorkingDir:   spec.Workspace.Target,
 		Labels:       spec.Labels,
+		Hostname:     "toolpod",
 		Entrypoint:   []string{},
 	}, &container.HostConfig{
 		Mounts:      mounts,
