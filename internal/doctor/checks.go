@@ -76,9 +76,10 @@ func checkBuildKit(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "buildkit", Status: Warn, Message: "not detected (build: profiles require it)"}
 }
 
+const miseBaseImage = "ghcr.io/jdx/mise:latest"
+
 func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
-	imageRef := "ghcr.io/jdx/mise:latest"
-	_, _, err := rt.cli.ImageInspectWithRaw(ctx, imageRef)
+	_, _, err := rt.cli.ImageInspectWithRaw(ctx, miseBaseImage)
 	if err != nil {
 		if client.IsErrNotFound(err) {
 			return Check{Name: "mise base image", Status: Info, Message: "not present (will pull on first launch)"}

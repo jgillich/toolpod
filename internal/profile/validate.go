@@ -3,6 +3,7 @@ package profile
 import "strings"
 
 var reservedNames = map[string]bool{
+	"config":     true,
 	"doctor":     true,
 	"help":       true,
 	"version":    true,

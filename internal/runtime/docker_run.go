@@ -135,24 +135,34 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	go func() {
 		defer close(pumpDone)
 		if tty {
-			io.Copy(os.Stdout, hijacked.Reader)
+			if _, err := io.Copy(os.Stdout, hijacked.Reader); err != nil {
+				fmt.Fprintf(os.Stderr, "stdout pump: %v\n", err)
+			}
 		} else {
-			// Non-TTY: Docker multiplexes stdout/stderr with 8-byte headers.
-			// Use stdcopy to demultiplex; raw io.Copy would dump header bytes.
-			stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader)
+			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader); err != nil {
+				fmt.Fprintf(os.Stderr, "stdout pump: %v\n", err)
+			}
 		}
 	}()
+	stdinDone := make(chan struct{})
 	go func() {
-		io.Copy(hijacked.Conn, os.Stdin)
+		defer close(stdinDone)
+		if _, err := io.Copy(hijacked.Conn, os.Stdin); err != nil {
+			fmt.Fprintf(os.Stderr, "stdin pump: %v\n", err)
+		}
 	}()
 
 	statusCh, errCh := d.cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
-		<-pumpDone // drain remaining output before returning
+		<-pumpDone
+		hijacked.Close()
+		<-stdinDone
 		return 3, fmt.Errorf("container wait: %w", err)
 	case status := <-statusCh:
-		<-pumpDone // drain remaining output before returning
+		<-pumpDone
+		hijacked.Close()
+		<-stdinDone
 		return int(status.StatusCode), nil
 	}
 }

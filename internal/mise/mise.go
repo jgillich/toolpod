@@ -40,7 +40,11 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 
 	miseVol := MiseVolume(runtimeHome)
 
-	lockFile := filepath.Join(os.TempDir(), fmt.Sprintf("toolpod-mise-%d.lock", os.Getuid()))
+	lockDir := os.Getenv("XDG_RUNTIME_DIR")
+	if lockDir == "" {
+		lockDir = filepath.Join(os.TempDir(), fmt.Sprintf("toolpod-%d", os.Getuid()))
+	}
+	lockFile := filepath.Join(lockDir, fmt.Sprintf("mise-%d.lock", os.Getuid()))
 	fl := flock.New(lockFile)
 	locked, err := fl.TryLockContext(ctx, 0)
 	if err != nil {
@@ -79,9 +83,9 @@ type ProgressWriter interface {
 	WriteProgress(line string)
 }
 
-// ActivateCommand returns the shell command string that activates mise for
-// the given runtime home. Injected into the container's entrypoint so the
-// profile command runs with mise-activated PATH.
+// ActivateCommand returns the shell command string that sets up the PATH
+// for mise-installed tools. Uses mise hook-env (POSIX-compatible) instead of
+// mise activate (which requires bash/zsh/etc).
 func ActivateCommand(runtimeHome string) string {
 	return `eval "$(mise hook-env)"`
 }

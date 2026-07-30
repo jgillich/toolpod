@@ -79,7 +79,9 @@ func ensurePull(ctx context.Context, cli *client.Client, ref string, w ProgressW
 		return "", fmt.Errorf("pull %s: %w", ref, err)
 	}
 	defer reader.Close()
-	io.Copy(io.Discard, reader)
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		return "", fmt.Errorf("drain pull response: %w", err)
+	}
 	return ref, nil
 }
 
@@ -112,7 +114,9 @@ func buildImage(ctx context.Context, cli *client.Client, spec Spec, w ProgressWr
 	}
 	defer resp.Body.Close()
 
-	io.Copy(io.Discard, resp.Body)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return fmt.Errorf("drain build response: %w", err)
+	}
 
 	exists, err := imageExists(ctx, cli, tag)
 	if err != nil {

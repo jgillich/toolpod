@@ -36,17 +36,12 @@ func (d *DockerRuntime) DetectMode(ctx context.Context) (string, error) {
 		return "B", fmt.Errorf("docker info: %w", err)
 	}
 
-	// Try the raw /info endpoint for Podman's rootless field.
-	// The Docker SDK doesn't expose it, so we parse the JSON directly.
 	rootless, err := QueryRootless(ctx, d.cli)
 	if err != nil {
-		// If the raw query fails, fall back to checking the socket path
-		// for known rootless Podman locations.
 		rootless = isLikelyRootlessSocket(d.cli.DaemonHost())
 	}
 
-	_ = info
-	if rootless {
+	if rootless || strings.Contains(info.Name, "podman") {
 		return "A", nil
 	}
 	return "B", nil

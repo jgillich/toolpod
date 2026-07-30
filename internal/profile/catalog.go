@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jgillich/toolpod/internal/catalog"
@@ -111,18 +112,51 @@ func loadUserDir(dir string, entries map[string]RawProfile) error {
 func parseRaw(data []byte, path string) (RawProfile, error) {
 	var rc RawProfile
 	rc.Path = path
-	if err := yaml.Unmarshal(data, &rc.Profile); err != nil {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
 		return RawProfile{}, ProfileError{
 			Path:    path,
+			Line:    lineFromError(err),
 			Message: fmt.Sprintf("YAML parse error: %v", err),
 		}
 	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return RawProfile{}, ProfileError{Path: path, Message: fmt.Sprintf("YAML parse error: %v", err)}
+	if err := yaml.Unmarshal(data, &rc.Profile); err != nil {
+		return RawProfile{}, ProfileError{
+			Path:    path,
+			Line:    lineFromError(err),
+			Message: fmt.Sprintf("YAML parse error: %v", err),
+		}
 	}
 	rc.NullKeys = collectNullKeys(&root)
 	return rc, nil
+}
+
+func lineFromError(err error) int {
+	if te, ok := err.(*yaml.TypeError); ok {
+		for _, e := range te.Errors {
+			if line := extractLine(e); line > 0 {
+				return line
+			}
+		}
+	}
+	return 0
+}
+
+func extractLine(s string) int {
+	idx := strings.Index(s, "line ")
+	if idx < 0 {
+		return 0
+	}
+	rest := s[idx+5:]
+	end := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
+	if end < 0 {
+		end = len(rest)
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // collectNullKeys returns the set of map keys whose value is explicitly null
@@ -182,9 +216,6 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 // DefaultProfileDir returns the default user profile directory for the current OS.
 // Used by the CLI when --profile-dir is not set.
 func DefaultProfileDir() string {
-	if dir := os.Getenv("TOOLPOD_CONFIG_DIR"); dir != "" {
-		return dir
-	}
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".config", "toolpod", "profiles")
 	}
