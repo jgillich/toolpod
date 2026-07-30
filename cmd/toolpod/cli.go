@@ -40,6 +40,8 @@ func main() {
 func runShell(args []string) int {
 	fs := pflag.NewFlagSet("shell", pflag.ContinueOnError)
 	opts := toolpod.LaunchOpts{ProfileName: "shell"}
+	var cmd string
+	fs.StringVarP(&cmd, "command", "c", "", "command to run in the shell profile")
 	fs.StringSliceVar(&opts.Args, "args", nil, "arguments to pass to the profile command")
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace directory to mount")
 	fs.StringVar(&opts.ConfigDir, "config-dir", "", "override user config dir")
@@ -53,6 +55,9 @@ func runShell(args []string) int {
 	if opts.Workspace == "" {
 		wd, _ := os.Getwd()
 		opts.Workspace = wd
+	}
+	if cmd != "" {
+		opts.Args = []string{cmd}
 	}
 
 	result := toolpod.Launch(context.Background(), opts)
