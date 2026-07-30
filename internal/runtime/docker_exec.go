@@ -20,13 +20,14 @@ func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volume
 		}
 	}
 	resp, err := d.cli.ContainerCreate(ctx, &container.Config{
-		Image: image,
-		Cmd:   cmd,
-		Env:   env,
+		Image:      image,
+		Cmd:        cmd,
+		Env:        env,
+		Entrypoint: []string{},
 	}, &container.HostConfig{
 		Mounts:      mounts,
 		AutoRemove:  true,
-		NetworkMode: "none",
+		NetworkMode: "bridge",
 	}, nil, nil, "")
 	if err != nil {
 		return -1, fmt.Errorf("create exec container: %w", err)

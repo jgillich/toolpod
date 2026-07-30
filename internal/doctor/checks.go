@@ -136,7 +136,7 @@ func checkProfileValidity(userDir string) Check {
 		}
 	}
 	if hadErr {
-		return Check{Name: "profiles", Status: Fail, Message: "some configs invalid"}
+		return Check{Name: "profiles", Status: Fail, Message: "some profiles invalid"}
 	}
 	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", len(cat.Names()))}
 }

@@ -25,7 +25,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	runtimeHome := spec.RuntimeHome
 
 	// Wrap the command with mise activate so installed tools are on PATH.
-	// Spec §6.3: mise activate sets up PATH for config tools + project tools.
+	// Spec §6.3: mise activate sets up PATH for project tools + project tools.
 	activateCmd := mise.ActivateCommand(runtimeHome)
 	shellCmd := activateCmd + " && exec " + shellQuote(spec.Command)
 	cmd := []string{"sh", "-c", shellCmd}
