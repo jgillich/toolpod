@@ -53,3 +53,16 @@ type Runtime interface {
 	Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error)
 	Run(ctx context.Context, spec Spec) (int, error)
 }
+
+// ContainerRunner runs a command in a throwaway container (auto-removed)
+// with named volumes mounted. Implemented by DockerRuntime; accepted by
+// mise.EnsureTools to avoid an import cycle between runtime and mise.
+type ContainerRunner interface {
+	RunInContainer(ctx context.Context, image string, volumes []VolumeMount, env []string, cmd []string) (int, error)
+}
+
+// VolumeMount is a named volume to mount in a ContainerRunner execution.
+type VolumeMount struct {
+	Name   string
+	Target string
+}
