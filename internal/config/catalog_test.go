@@ -54,3 +54,15 @@ func TestLoadCatalogUserAddsProfile(t *testing.T) {
 		t.Error("user profile rustdev not in catalog")
 	}
 }
+
+func TestLoadCatalogRejectsReservedName(t *testing.T) {
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "doctor.yaml"), []byte("version: 1\nimage: x\ncommand: [\"sh\"]\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadCatalog(dir)
+	if err == nil {
+		t.Fatal("expected reserved-name rejection, got nil")
+	}
+}

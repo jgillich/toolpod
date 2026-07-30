@@ -121,8 +121,4 @@ func mergeStringMap(parent, child map[string]string, nullKeys map[string]bool) m
 	return out
 }
 
-// validate checks a merged config for required fields and constraints.
-// STUB: replaced by real implementation in Task 5.
-func validate(rc RawConfig) error {
-	return nil
-}
+

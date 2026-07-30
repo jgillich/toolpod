@@ -69,6 +69,9 @@ func loadBuiltins(entries map[string]RawConfig) error {
 		if err != nil {
 			return err
 		}
+		if err := validateReservedName(rc, name); err != nil {
+			return err
+		}
 		entries[name] = rc
 		return nil
 	})
@@ -89,6 +92,9 @@ func loadUserDir(dir string, entries map[string]RawConfig) error {
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
 		rc, err := parseRaw(data, path)
 		if err != nil {
+			return err
+		}
+		if err := validateReservedName(rc, name); err != nil {
 			return err
 		}
 		entries[name] = rc // shadow
