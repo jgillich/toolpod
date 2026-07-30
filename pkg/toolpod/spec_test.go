@@ -45,8 +45,10 @@ func TestBuildSpecBasic(t *testing.T) {
 	if len(spec.Caches) != 1 || spec.Caches[0].Name != "toolpod-cache-npm" {
 		t.Errorf("Caches = %+v, want one entry toolpod-cache-npm", spec.Caches)
 	}
-	mount, ok := spec.Mounts[0], true
-	_ = ok
+	if len(spec.Mounts) == 0 {
+		t.Fatal("expected at least one mount")
+	}
+	mount := spec.Mounts[0]
 	if mount.Target != "/home/me/.config/opencode" {
 		t.Errorf("mount[0].Target = %q, want /home/me/.config/opencode", mount.Target)
 	}
