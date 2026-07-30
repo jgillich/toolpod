@@ -83,11 +83,37 @@ type ProgressWriter interface {
 	WriteProgress(line string)
 }
 
-// ActivateCommand returns the shell command string that sets up the PATH
-// for mise-installed tools. Uses mise hook-env (POSIX-compatible) instead of
-// mise activate (which requires bash/zsh/etc).
-func ActivateCommand(runtimeHome string) string {
-	return `eval "$(mise hook-env)"`
+// ActivateCommand returns the shell preamble that:
+//  1. Writes the profile's tools into mise's global config (ephemeral — lives
+//     in the container's own filesystem, NOT the shared volume).
+//  2. Activates mise so shims are on PATH.
+//
+// When the user cd's into the workspace, mise's directory walk picks up any
+// project-local .tool-versions / mise.toml and overrides these defaults.
+func ActivateCommand(runtimeHome string, tools map[string]string) string {
+	configDir := filepath.Join(runtimeHome, ".config", "mise")
+	configFile := filepath.Join(configDir, "config.toml")
+
+	var b strings.Builder
+
+	if len(tools) > 0 {
+		fmt.Fprintf(&b, "mkdir -p %s && cat > %s << 'TOOLPOD_EOF'\n", configDir, configFile)
+		b.WriteString("[tools]\n")
+
+		names := make([]string, 0, len(tools))
+		for name := range tools {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Fprintf(&b, "%s = \"%s\"\n", name, tools[name])
+		}
+		b.WriteString("TOOLPOD_EOF\n")
+	}
+
+	fmt.Fprintf(&b, "eval \"$(mise hook-env)\"")
+
+	return b.String()
 }
 
 // batchInstallCommand builds a single shell command that installs all tools
