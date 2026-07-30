@@ -57,7 +57,7 @@ func runShell(args []string) int {
 		opts.Workspace = wd
 	}
 	if cmd != "" {
-		opts.Args = []string{cmd}
+		opts.Args = append(opts.Args, "-c", cmd)
 	}
 
 	result := toolpod.Launch(context.Background(), opts)

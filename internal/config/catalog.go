@@ -78,6 +78,9 @@ func loadBuiltins(entries map[string]RawConfig) error {
 }
 
 func loadUserDir(dir string, entries map[string]RawConfig) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

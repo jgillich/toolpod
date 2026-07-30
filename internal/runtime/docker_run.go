@@ -47,6 +47,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		AttachStderr: true,
 		WorkingDir:   spec.Workspace.Target,
 		Labels:       spec.Labels,
+		Entrypoint:   []string{},
 	}, &container.HostConfig{
 		Mounts:      mounts,
 		NetworkMode: container.NetworkMode(spec.Network),
