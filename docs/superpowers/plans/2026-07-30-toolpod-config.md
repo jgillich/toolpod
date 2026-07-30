@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Go version:** 1.22+ (uses `go:embed`, generics where helpful).
+- **Go version:** 1.25+ (uses `go:embed`, generics where helpful). The project targets Go 1.25+; the toolchain may use a newer release.
 - **YAML library:** `gopkg.in/yaml.v3` — required because it preserves node positions for file:line error reporting (§10 of spec). Do NOT use `yaml.v2` or `sigs.k8s.io/yaml`.
 - **Flag library:** `github.com/spf13/pflag` — required because it supports interspersed flags + passthrough (flags before profile name, everything after is passthrough args). Stdlib `flag` does not support this.
 - **Module path:** `github.com/jgillich/toolpod`.

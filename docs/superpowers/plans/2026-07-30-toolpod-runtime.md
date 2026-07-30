@@ -8,11 +8,11 @@
 
 **Architecture:** The `Runtime` interface (`Prepare` + `Run`) from spec §3.2 is the indirection point. `internal/runtime` has the Docker SDK implementation. `internal/workspace` detects Mode A/B and computes mount targets. `internal/mise` manages the shared volume, the install lock, and `mise activate`. `internal/build` handles the `build:` escape hatch. `pkg/toolpod.Launch` calls `DetectMode` → `buildSpec` → `Prepare` → `Run`. Integration tests run against a real Docker daemon (gated; skipped if unavailable).
 
-**Tech Stack:** `github.com/docker/docker/client` (Docker Engine Go SDK), `github.com/docker/docker/pkg/stdcopy` (stream demultiplexing), `golang.org/x/sys/unix` (flock + SIGWINCH), `github.com/gofrs/flock` (cross-process file lock).
+**Tech Stack:** `github.com/docker/docker/client` (Docker Engine Go SDK, v27.1.0), `github.com/docker/docker/pkg/stdcopy` (stream demultiplexing), `golang.org/x/sys/unix` (flock + SIGWINCH), `github.com/gofrs/flock` (cross-process file lock).
 
 ## Global Constraints
 
-- **Docker SDK:** `github.com/docker/docker/client`. Pinned to `v27.1.0` (run `go get github.com/docker/docker@v27.1.0`). All API calls target the v27 API surface — `VolumeList(ctx, volume.ListOptions{})`, `ImageList(ctx, image.ListOptions{})`, `ImageRemove(ctx, id, image.RemoveOptions{})`. Do NOT use the older `bool` parameter signatures (removed in v25+). All Docker SDK types use v27 sub-package names: `container.AttachOptions`, `container.LogsOptions`, `container.ListOptions`, `container.RemoveOptions`, `image.PullOptions`, `image.BuildOptions`, `image.RemoveOptions`, `image.Summary`, `volume.ListOptions`, `volume.CreateOptions`, `volume.Volume`. Do NOT use the deprecated `types.*` aliases.
+- **Docker SDK:** `github.com/docker/docker/client`. Pinned to `v27.1.0`. All API calls target the v27 API surface — `VolumeList(ctx, volume.ListOptions{})`, `ImageList(ctx, image.ListOptions{})`, `ImageRemove(ctx, id, image.RemoveOptions{})`. Do NOT use the older `bool` parameter signatures (removed in v25+). All Docker SDK types use v27 sub-package names: `container.AttachOptions`, `container.LogsOptions`, `container.ListOptions`, `container.RemoveOptions`, `image.PullOptions`, `image.BuildOptions`, `image.RemoveOptions`, `image.Summary`, `volume.ListOptions`, `volume.CreateOptions`, `volume.Volume`. Do NOT use the deprecated `types.*` aliases.
 - **`DOCKER_HOST`:** honored automatically by the Docker SDK client. No custom socket logic.
 - **Exit codes (spec §10):** 0 = success, 2 = config error (Plan 1), 3 = runtime error, N = profile exit code (propagated).
 - **No comments in code** unless the code itself doesn't make something apparent.
