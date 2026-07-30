@@ -13,7 +13,8 @@ import (
 )
 
 type DockerRuntime struct {
-	cli *client.Client
+	cli     *client.Client
+	Rebuild bool
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {

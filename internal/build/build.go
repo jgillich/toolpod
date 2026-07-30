@@ -12,8 +12,29 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/jgillich/toolpod/internal/config"
-	"github.com/jgillich/toolpod/internal/runtime"
 )
+
+// Spec is the subset of the container spec needed for image preparation.
+// Defined here (not imported from runtime) to avoid an import cycle:
+// runtime.DockerRuntime.Prepare calls build.EnsureImage, and build must not
+// import runtime.
+type Spec struct {
+	ProfileName string
+	Image       string
+	Build       *BuildSpec
+}
+
+type BuildSpec struct {
+	Dockerfile string
+	Context    string
+	DependsOn  []string
+}
+
+// ProgressWriter is structurally identical to runtime.ProgressWriter.
+// Defined locally to avoid importing runtime.
+type ProgressWriter interface {
+	WriteProgress(line string)
+}
 
 // LocalTag returns the local image tag for a built profile.
 func LocalTag(name string) string {
@@ -24,7 +45,7 @@ func LocalTag(name string) string {
 // pulls the referenced image if missing; for build: specs it builds the local
 // image (when missing, or always when rebuild is true). Returns the image
 // reference to use for the container. Spec §3.4.
-func EnsureImage(ctx context.Context, cli *client.Client, spec runtime.Spec, w runtime.ProgressWriter, rebuild bool) (string, error) {
+func EnsureImage(ctx context.Context, cli *client.Client, spec Spec, w ProgressWriter, rebuild bool) (string, error) {
 	if spec.Build == nil {
 		return ensurePull(ctx, cli, spec.Image, w)
 	}
@@ -44,7 +65,7 @@ func EnsureImage(ctx context.Context, cli *client.Client, spec runtime.Spec, w r
 	return tag, buildImage(ctx, cli, spec, w)
 }
 
-func ensurePull(ctx context.Context, cli *client.Client, ref string, w runtime.ProgressWriter) (string, error) {
+func ensurePull(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) (string, error) {
 	exists, err := imageExists(ctx, cli, ref)
 	if err != nil {
 		return "", err
@@ -64,7 +85,7 @@ func ensurePull(ctx context.Context, cli *client.Client, ref string, w runtime.P
 
 // buildImage builds a Docker image from the spec's build config and tags it
 // with the local tag. Spec §3.4.
-func buildImage(ctx context.Context, cli *client.Client, spec runtime.Spec, w runtime.ProgressWriter) error {
+func buildImage(ctx context.Context, cli *client.Client, spec Spec, w ProgressWriter) error {
 	dockerfilePath := spec.Build.Dockerfile
 	contextDir := spec.Build.Context
 	if contextDir == "" {
@@ -84,8 +105,6 @@ func buildImage(ctx context.Context, cli *client.Client, spec runtime.Spec, w ru
 		Remove:     true,
 	})
 	if err != nil {
-		// Drift detection (spec §3.4): if the build error references a
-		// toolpod/* tag that is not a declared depends_on, surface a hint.
 		if strings.Contains(err.Error(), "toolpod/") && !isInDependsOn(spec, err.Error()) {
 			return fmt.Errorf("image build: %w\nhint: this Dockerfile references a toolpod/* image — add it to build.depends_on", err)
 		}
@@ -93,11 +112,8 @@ func buildImage(ctx context.Context, cli *client.Client, spec runtime.Spec, w ru
 	}
 	defer resp.Body.Close()
 
-	// Drain build output to completion so the call finalizes.
 	io.Copy(io.Discard, resp.Body)
 
-	// The engine reports ImageBuild success even on some failures; verify the
-	// expected tag actually exists.
 	exists, err := imageExists(ctx, cli, tag)
 	if err != nil {
 		return err
@@ -115,9 +131,8 @@ func createBuildContext(dir string) (io.ReadCloser, error) {
 }
 
 // isInDependsOn reports whether errStr references a toolpod/* tag matching a
-// dependency already declared in the spec's depends_on. Used for drift
-// detection: only emit the hint when the referenced tag is NOT declared.
-func isInDependsOn(spec runtime.Spec, errStr string) bool {
+// dependency already declared in the spec's depends_on.
+func isInDependsOn(spec Spec, errStr string) bool {
 	if spec.Build == nil {
 		return false
 	}
@@ -142,9 +157,7 @@ func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, err
 
 // ResolveDependencies returns the build order (topological sort) of the
 // depends_on entries reachable from name — i.e. the dependencies that must be
-// built before name's own image. The target itself is excluded: per spec §3.4
-// "Dependencies are built in dependency order before the config's own image is
-// built," so the caller builds name last. Cycles and missing deps are detected.
+// built before name's own image. The target itself is excluded.
 func ResolveDependencies(cat config.Catalog, name string) ([]string, error) {
 	visited := map[string]bool{}
 	inProgress := map[string]bool{}
