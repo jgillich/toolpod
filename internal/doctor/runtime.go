@@ -1,17 +1,17 @@
 package doctor
 
 import (
-	"context"
-	"fmt"
-
-	"github.com/jgillich/toolpod/internal/runtime"
+	"github.com/docker/docker/client"
 )
 
-func newRuntime() (*runtime.DockerRuntime, error) {
-	return runtime.NewDockerRuntime()
+type dockerRT struct {
+	cli *client.Client
 }
 
-func runChecks(ctx context.Context, rt *runtime.DockerRuntime, opts Options) Result {
-	fmt.Println("placeholder")
-	return Result{}
+func newRuntime() (*dockerRT, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	return &dockerRT{cli: cli}, nil
 }
