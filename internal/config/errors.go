@@ -19,3 +19,9 @@ func (e ConfigError) Error() string {
 
 // ExitCode returns the exit code for this error type (spec §10: config errors = 2).
 func (e ConfigError) ExitCode() int { return 2 }
+
+// ExitCoder is satisfied by errors that carry a process exit code (spec §10).
+type ExitCoder interface {
+	Error() string
+	ExitCode() int
+}
