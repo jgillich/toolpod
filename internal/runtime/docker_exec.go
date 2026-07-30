@@ -24,7 +24,7 @@ func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volume
 		Cmd:   cmd,
 		Env:   env,
 	}, &container.HostConfig{
-		Mounts:     mounts,
+		Mounts:      mounts,
 		AutoRemove:  true,
 		NetworkMode: "none",
 	}, nil, nil, "")

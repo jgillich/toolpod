@@ -12,6 +12,8 @@ import (
 	"github.com/docker/docker/client"
 )
 
+var _ Runtime = (*DockerRuntime)(nil)
+
 type DockerRuntime struct {
 	cli     *client.Client
 	Rebuild bool

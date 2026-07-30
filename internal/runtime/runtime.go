@@ -53,4 +53,3 @@ type Runtime interface {
 	Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error)
 	Run(ctx context.Context, spec Spec) (int, error)
 }
-

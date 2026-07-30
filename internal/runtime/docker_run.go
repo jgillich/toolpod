@@ -80,19 +80,26 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// Signal forwarding with cleanup
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	defer func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+	}()
 
 	if tty {
-		// SIGWINCH for terminal resize (spec §3.3)
 		winCh := make(chan os.Signal, 1)
 		signal.Notify(winCh, syscall.SIGWINCH)
-		defer signal.Stop(winCh)
+		defer func() {
+			signal.Stop(winCh)
+			close(winCh)
+		}()
 		go d.handleResize(ctx, resp.ID, winCh)
 	}
 
 	go func() {
 		for sig := range sigCh {
-			_ = d.cli.ContainerKill(ctx, resp.ID, sig.String())
+			if s, ok := sig.(syscall.Signal); ok {
+				_ = d.cli.ContainerKill(ctx, resp.ID, strconv.Itoa(int(s)))
+			}
 		}
 	}()
 
