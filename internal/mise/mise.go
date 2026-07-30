@@ -83,8 +83,7 @@ type ProgressWriter interface {
 // the given runtime home. Injected into the container's entrypoint so the
 // profile command runs with mise-activated PATH.
 func ActivateCommand(runtimeHome string) string {
-	miseBin := filepath.Join(runtimeHome, ".local", "share", "mise", "mise")
-	return fmt.Sprintf("eval \"$(%s activate sh)\"", miseBin)
+	return `eval "$(mise hook-env)"`
 }
 
 // batchInstallCommand builds a single shell command that installs all tools
