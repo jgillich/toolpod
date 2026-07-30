@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,12 +37,25 @@ func writeShellProfile(t *testing.T) string {
 	return dir
 }
 
+func dockerAvailable() bool {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return true
+	}
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/user/" + fmt.Sprint(os.Getuid()) + "/podman/podman.sock"); err == nil {
+		return true
+	}
+	return false
+}
+
 func TestE2EDoctor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	if os.Getenv("DOCKER_HOST") == "" {
-		t.Skip("DOCKER_HOST not set")
+	if !dockerAvailable() {
+		t.Skip("docker/podman not available")
 	}
 	out, _ := runToolpod(t, "doctor")
 	if !strings.Contains(out, "runtime:") {
@@ -56,6 +70,9 @@ func TestE2EPruneForce(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	if !dockerAvailable() {
+		t.Skip("docker/podman not available")
+	}
 	out, err := runToolpod(t, "prune", "--force", "--volumes")
 	if err != nil {
 		t.Fatalf("prune: %v\n%s", err, out)
@@ -69,8 +86,8 @@ func TestE2EShellLaunch(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	if os.Getenv("DOCKER_HOST") == "" {
-		t.Skip("DOCKER_HOST not set")
+	if !dockerAvailable() {
+		t.Skip("docker/podman not available")
 	}
 	profileDir := writeShellProfile(t)
 	out, err := runToolpod(t, "shell", "--profile-dir", profileDir, "-c", "echo hello-from-toolpod")

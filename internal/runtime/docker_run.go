@@ -196,10 +196,11 @@ func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
 			ReadOnly: mt.ReadOnly,
 		})
 	}
+	miseVol := mise.MiseVolume(runtimeHome)
 	m = append(m, mount.Mount{
 		Type:   mount.TypeVolume,
-		Source: "toolpod-mise",
-		Target: "/mise",
+		Source: miseVol.Name,
+		Target: miseVol.Target,
 	})
 	for _, c := range spec.Caches {
 		m = append(m, mount.Mount{

@@ -2,7 +2,6 @@ package mise
 
 import (
 	"context"
-	"strings"
 
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -35,7 +34,7 @@ func EnsureVolume(ctx context.Context, cli *client.Client, name string) error {
 func VolumeExists(ctx context.Context, cli *client.Client, name string) (bool, error) {
 	_, err := cli.VolumeInspect(ctx, name)
 	if err != nil {
-		if strings.Contains(err.Error(), "no such volume") {
+		if client.IsErrNotFound(err) {
 			return false, nil
 		}
 		return false, err

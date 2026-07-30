@@ -26,12 +26,14 @@ func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volume
 		Entrypoint: []string{},
 	}, &container.HostConfig{
 		Mounts:      mounts,
-		AutoRemove:  true,
+		AutoRemove:  false,
 		NetworkMode: "bridge",
 	}, nil, nil, "")
 	if err != nil {
 		return -1, fmt.Errorf("create exec container: %w", err)
 	}
+	defer d.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return -1, fmt.Errorf("start exec container: %w", err)
 	}

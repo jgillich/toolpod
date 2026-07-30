@@ -3,9 +3,9 @@ package toolpod
 import (
 	"fmt"
 	"io"
+	"sort"
 )
 
-// RenderSpec writes the resolved container spec as YAML to w, for --dry-run.
 func RenderSpec(w io.Writer, spec Spec) error {
 	_, err := fmt.Fprintf(w, "profile: %s\n", spec.ProfileName)
 	if err != nil {
@@ -29,34 +29,71 @@ func RenderSpec(w io.Writer, spec Spec) error {
 	}
 	if len(spec.Mounts) > 0 {
 		_, err = fmt.Fprintln(w, "mounts:")
+		if err != nil {
+			return err
+		}
 		for _, m := range spec.Mounts {
 			ro := "ro"
 			if !m.ReadOnly {
 				ro = "rw"
 			}
 			_, err = fmt.Fprintf(w, "  %s <- %s (%s)\n", m.Target, m.Source, ro)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(spec.Tools) > 0 {
 		_, err = fmt.Fprintln(w, "tools:")
-		for name, ver := range spec.Tools {
-			_, err = fmt.Fprintf(w, "  %s: %s\n", name, ver)
+		if err != nil {
+			return err
+		}
+		toolNames := make([]string, 0, len(spec.Tools))
+		for name := range spec.Tools {
+			toolNames = append(toolNames, name)
+		}
+		sort.Strings(toolNames)
+		for _, name := range toolNames {
+			_, err = fmt.Fprintf(w, "  %s: %s\n", name, spec.Tools[name])
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(spec.Caches) > 0 {
 		_, err = fmt.Fprintln(w, "caches:")
+		if err != nil {
+			return err
+		}
 		for _, c := range spec.Caches {
 			_, err = fmt.Fprintf(w, "  %s -> %s\n", c.Name, c.Target)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(spec.Env) > 0 {
 		_, err = fmt.Fprintln(w, "environment:")
-		for k, v := range spec.Env {
-			_, err = fmt.Fprintf(w, "  %s: %q\n", k, v)
+		if err != nil {
+			return err
+		}
+		envKeys := make([]string, 0, len(spec.Env))
+		for k := range spec.Env {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+		for _, k := range envKeys {
+			_, err = fmt.Fprintf(w, "  %s: %q\n", k, spec.Env[k])
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if spec.Network != "" {
 		_, err = fmt.Fprintf(w, "network: %s\n", spec.Network)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
