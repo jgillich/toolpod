@@ -7,4 +7,4 @@ mounts:
     read_only: false
     optional: true
 environment:
-  DOCKER_HOST: /var/run/docker.sock
+  DOCKER_HOST: unix:///var/run/docker.sock
