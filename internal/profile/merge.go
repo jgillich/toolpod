@@ -1,5 +1,7 @@
 package profile
 
+import "errors"
+
 // Resolve walks the extends chain for name and produces a fully merged Profile.
 // Cycles are detected and rejected. Validation runs on the result.
 func ResolveProfile(cat Catalog, name string) (Profile, error) {
@@ -51,7 +53,7 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 			resolved[parentName] = true
 			p, err := resolveChain(cat, parentName, seen)
 			if err != nil {
-				return RawProfile{}, err
+				return RawProfile{}, withParentPath(err, rc)
 			}
 			merged = MergeProfiles(merged, p)
 		}
@@ -73,7 +75,7 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 		resolved[parentName] = true
 		parent, err := resolveChain(cat, parentName, seen)
 		if err != nil {
-			return RawProfile{}, err
+			return RawProfile{}, withParentPath(err, rc)
 		}
 		merged = MergeProfiles(merged, parent)
 	}
@@ -115,6 +117,18 @@ func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bo
 	merged.Path = rc.Path
 	return merged, nil
 }
+// withParentPath attaches the referencing profile's path to a child resolution
+// error that doesn't already name a source, so "profile not found" pinpoints
+// which file has the bad extends target.
+func withParentPath(err error, rc RawProfile) error {
+	var pe ProfileError
+	if errors.As(err, &pe) && pe.Path == "" {
+		pe.Path = rc.Path
+		return pe
+	}
+	return err
+}
+
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace,
 // image/build treated as a single slot.
 func MergeProfiles(parent, child RawProfile) RawProfile {

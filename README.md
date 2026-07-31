@@ -77,15 +77,16 @@ The first launch pulls the mise base image and installs tools (slow). Subsequent
 
 ### `toolpod init`
 
-Profiles become useful once they carry *your* mounts and caches — SSH keys, git config, package caches. `toolpod init` generates a user profile override that extends a built-in and merges in selected **fragments**:
+Profiles become useful once they carry *your* mounts and caches — SSH keys, git config, package caches. `toolpod init` generates a user profile override that extends one or more profiles and merges in selected **fragments**:
 
 ```sh
-$ toolpod init                                # interactive wizard
+$ toolpod init                                # interactive wizard (pick a profile or create "New")
 $ toolpod init opencode --fragments npm,go,ssh
+$ toolpod init myagent --extends opencode,podman,ruby --fragments npm,go
 $ toolpod init opencode --fragments npm,gh --dry-run
 ```
 
-Run `toolpod init` to see the full list of available fragments.
+A name matching a built-in profile shadows it (`init opencode` extends the built-in `opencode`). Any other name creates a brand-new profile; by default it extends the shared `mise` base — pass `--extends` to start from any built-in or user profile, or leave it out and let the wizard or a later edit pick bases. Run `toolpod init` to see the full list of available fragments.
 
 ### Other commands
 

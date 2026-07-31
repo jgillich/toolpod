@@ -42,7 +42,7 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -99,7 +99,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -158,7 +158,7 @@ func TestSkipExistingWithoutForce(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -176,7 +176,7 @@ func TestForceOverwritesExisting(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		Force:      true,
 		ProfileDir: dir,
@@ -194,7 +194,7 @@ func TestDryRunDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		DryRun:     true,
 		ProfileDir: dir,
@@ -220,7 +220,7 @@ func TestDryRunWithForceDoesNotPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		DryRun:     true,
 		Force:      true,
@@ -240,7 +240,7 @@ func TestForceInteractiveDeclinePrompt(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\n"), 0o644)
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:     "opencode",
+		Name:     "opencode",
 		Fragments:     []string{"npm"},
 		Force:       true,
 		Interactive: true,
@@ -307,7 +307,7 @@ func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// All args provided explicitly in a TTY-like test → no wizard → no prompt
 	err := Run(context.Background(), Options{
-		Profile:     "opencode",
+		Name:     "opencode",
 		Fragments:     []string{"npm"},
 		Interactive: true,
 		ProfileDir:  dir,
@@ -353,7 +353,7 @@ func TestUnknownFragmentRejected(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:    []string{"npm", "yarn"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -366,22 +366,6 @@ func TestUnknownFragmentRejected(t *testing.T) {
 	// File should not be written
 	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); !os.IsNotExist(err) {
 		t.Error("file should not be written when fragment is unknown")
-	}
-}
-
-func TestUnknownProfileRejected(t *testing.T) {
-	dir := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), Options{
-		Profile:    "rustdev",
-	Fragments:  []string{"npm"},
-		ProfileDir: dir,
-	}, strings.NewReader(""), &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for unknown profile")
-	}
-	if !strings.Contains(err.Error(), "unknown built-in profile: rustdev") {
-		t.Errorf("error should mention 'unknown built-in profile', got: %v", err)
 	}
 }
 
@@ -403,7 +387,7 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "shell",
+		Name:    "shell",
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -429,7 +413,7 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:  []string{"npm", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -454,7 +438,7 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:  []string{"npm", "go"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -494,7 +478,7 @@ func TestPromptsGoToStderr(t *testing.T) {
 	// no stderr output either.
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -542,7 +526,7 @@ func TestDirectoryCreatedIfAbsent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "profiles")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -558,37 +542,25 @@ func TestDirectoryCreatedIfAbsent(t *testing.T) {
 	}
 }
 
-func TestPostWriteValidationSurvivesBrokenSibling(t *testing.T) {
+func TestBrokenSiblingBlocksInit(t *testing.T) {
 	dir := t.TempDir()
-	// Pre-create a broken sibling YAML that would cause LoadProfiles(dir)
-	// to error under the old post-write validation (which loaded the entire
-	// user dir). The fix validates the generated content in isolation via
-	// validateViaTempDir, so the broken sibling must NOT cause the valid
-	// generated file to be deleted.
+	// A broken sibling YAML makes the catalog load fail. Init hard-fails
+	// rather than silently ignoring the malformed file.
 	if err := os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("key: \"[unterminated\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile broken.yaml: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
-	Fragments:  []string{"npm"},
+		Name:    "opencode",
+		Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	if err == nil {
+		t.Fatal("expected error for broken sibling profile")
 	}
-
-	// The valid generated file must NOT be deleted despite the broken sibling.
-	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if err != nil {
-		t.Fatalf("generated file was deleted despite being valid: %v", err)
-	}
-	if !strings.Contains(string(data), "- opencode") {
-		t.Errorf("generated file should contain extends: opencode, got:\n%s", string(data))
-	}
-	if !strings.Contains(stdout.String(), "generated config is valid") {
-		t.Errorf("stdout should confirm validation, got: %s", stdout.String())
+	if !strings.Contains(err.Error(), "broken.yaml") {
+		t.Errorf("error should reference the broken file, got: %v", err)
 	}
 }
 
@@ -599,7 +571,7 @@ func TestFragmentFileExistenceWarning(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:    []string{"gitconfig", "ssh", "netrc"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)

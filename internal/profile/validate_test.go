@@ -55,6 +55,21 @@ func TestValidateValid(t *testing.T) {
 	}
 }
 
+func TestValidateName(t *testing.T) {
+	valid := []string{"foo", "my-agent", "a.b", "opencode", "x_y"}
+	for _, name := range valid {
+		if err := ValidateName(name); err != nil {
+			t.Errorf("ValidateName(%q) = %v, want nil", name, err)
+		}
+	}
+	invalid := []string{"", "config", "doctor", "help", "version", "completion", "prune", "init", "../x", "a/b", `a\b`, "a b", "a..b"}
+	for _, name := range invalid {
+		if err := ValidateName(name); err == nil {
+			t.Errorf("ValidateName(%q) = nil, want error", name)
+		}
+	}
+}
+
 func TestValidatePorts(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -100,6 +100,23 @@ func validateReservedName(rc RawProfile, name string) error {
 	return nil
 }
 
+// ValidateName checks a user-supplied profile name for the init flow. It
+// rejects empty names, names unsafe for use as a file path (slashes, "..",
+// whitespace), and names reserved for subcommands. Fragment collisions are
+// checked separately by the caller against the catalog.
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("profile name is required")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
+		return fmt.Errorf("invalid profile name %q: must not contain slashes, whitespace, or '..'", name)
+	}
+	if reservedNames[name] {
+		return fmt.Errorf("profile name %q is reserved (collides with a subcommand)", name)
+	}
+	return nil
+}
+
 // ProfileNameFromPath extracts the profile name from a profile file path.
 func ProfileNameFromPath(path string) string {
 	base := path

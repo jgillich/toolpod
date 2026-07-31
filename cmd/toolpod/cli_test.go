@@ -31,3 +31,15 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 		t.Errorf("expected help to mention profile-and-args, got:\n%s", out)
 	}
 }
+
+func TestInitHelpMentionsExtends(t *testing.T) {
+	bin := buildToolpod(t)
+	cmd := exec.Command(bin, "init", "--help")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init --help: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--extends") {
+		t.Errorf("expected --extends in init help, got:\n%s", out)
+	}
+}

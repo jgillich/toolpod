@@ -14,7 +14,7 @@ func TestInitSummaryWithMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Non-interactive, no TTY — summary prints but no editor prompt
 	err := Run(context.Background(), Options{
-		Profile:    "opencode",
+		Name:    "opencode",
 		Fragments:  []string{"ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -35,7 +35,7 @@ func TestInitNoEditorPromptWithoutMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// npm fragment has only caches+tools, no mounts
 	err := Run(context.Background(), Options{
-		Profile:    "shell",
+		Name:    "shell",
 		Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -53,7 +53,7 @@ func TestInitReviewAbort(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Interactive + ssh fragment (has mounts) → review prompt → "a" aborts
 	err := Run(context.Background(), Options{
-		Profile:     "opencode",
+		Name:     "opencode",
 		Fragments:   []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
@@ -74,7 +74,7 @@ func TestInitReviewProceed(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Interactive + ssh fragment → review prompt → "p" (default) proceeds
 	err := Run(context.Background(), Options{
-		Profile:     "opencode",
+		Name:     "opencode",
 		Fragments:   []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,

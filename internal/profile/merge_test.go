@@ -163,6 +163,9 @@ func TestResolveExtendsMissingProfile(t *testing.T) {
 	if !strings.Contains(err.Error(), "missing-parent") {
 		t.Errorf("error message should name the missing profile, got: %q", err.Error())
 	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "child.yaml")) {
+		t.Errorf("error message should name the file with the bad extends, got: %q", err.Error())
+	}
 }
 
 func TestResolvePortsDevicesMergeAndNullDelete(t *testing.T) {

@@ -37,16 +37,6 @@ func FragmentNames() []string {
 	return names
 }
 
-// BuiltInProfiles returns sorted names of all built-in profiles (excluding
-// fragments) for display.
-func BuiltInProfiles() []string {
-	cat, err := profile.LoadProfiles("")
-	if err != nil {
-		return nil
-	}
-	return cat.ProfileNames()
-}
-
 func validateFragment(name string, p profile.RawProfile) error {
 	if len(p.ExtendsList) != 0 || p.Image != "" || p.Build != nil || len(p.Command) > 0 || p.Version != 0 {
 		return fmt.Errorf("fragment %q must not set extends/image/build/command/version", name)

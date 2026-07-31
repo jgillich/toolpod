@@ -36,7 +36,8 @@ type LaunchCmd struct {
 }
 
 type InitCmd struct {
-	Profile   string   `arg:"" optional:"" help:"Built-in profile to extend (${profiles})."`
+	Name      string   `arg:"" optional:"" help:"Profile name to create."`
+	Extends   []string `sep:"," help:"Comma-separated bases to extend: profiles, fragments, or mise."`
 	Fragments []string `sep:"," help:"Comma-separated fragment names (${fragments})." aliases:"presets"`
 	Force     bool     `help:"Overwrite an existing user profile file."`
 	DryRun    bool     `help:"Print the generated file without writing it."`
@@ -55,7 +56,7 @@ type PruneCmd struct {
 
 type CLI struct {
 	Launch  LaunchCmd  `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
-	Init    InitCmd    `cmd:"" help:"Generate a user profile override with fragments."`
+	Init    InitCmd    `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
 	Profile ProfileCmd `cmd:"" help:"Inspect and edit profiles and fragments."`
 	Doctor  DoctorCmd  `cmd:"" help:"Run environment diagnostics."`
 	Prune   PruneCmd   `cmd:"" help:"Remove toolpod-managed volumes and images."`
@@ -84,7 +85,6 @@ func main() {
 		kong.Name("toolpod"),
 		kong.Description("ephemeral dev environments"),
 		kong.Vars{
-			"profiles": strings.Join(scaffold.BuiltInProfiles(), ", "),
 			"fragments": strings.Join(scaffold.FragmentNames(), ", "),
 		},
 	)
@@ -128,10 +128,11 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 
 func (i *InitCmd) Run() error {
 	opts := scaffold.Options{
-		Profile:     i.Profile,
-		Fragments:   i.Fragments,
-		Force:       i.Force,
-		DryRun:      i.DryRun,
+		Name:       i.Name,
+		Extends:    i.Extends,
+		Fragments:  i.Fragments,
+		Force:      i.Force,
+		DryRun:     i.DryRun,
 		Interactive: scaffold.IsTTY(os.Stdin),
 	}
 	if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {

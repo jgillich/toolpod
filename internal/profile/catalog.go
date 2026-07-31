@@ -71,6 +71,13 @@ func (c Catalog) ProfileNames() []string {
 	return names
 }
 
+// AddRaw inserts a raw profile into the catalog, shadowing any existing entry
+// of the same name. Used by init to overlay generated content for validation.
+func (c *Catalog) AddRaw(name string, rc RawProfile) {
+	c.entries[name] = rc
+	delete(c.fragments, name)
+}
+
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
 func LoadProfiles(userDir string) (Catalog, error) {
@@ -381,6 +388,11 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 		fragmentNames[name] = true
 		return nil
 	})
+}
+
+// ParseRaw parses raw YAML bytes into a RawProfile with the given source path.
+func ParseRaw(data []byte, path string) (RawProfile, error) {
+	return parseRaw(data, path)
 }
 
 func validateFragmentName(name string, rc RawProfile) error {
