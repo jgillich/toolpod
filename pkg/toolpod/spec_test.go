@@ -1,10 +1,116 @@
 package toolpod
 
 import (
+	"net"
+	"strconv"
 	"testing"
 
 	"github.com/jgillich/toolpod/internal/profile"
 )
+
+func fakePortAllocator(ports ...string) PortAllocator {
+	i := 0
+	return func(protocol, hostIP string) (string, error) {
+		p := ports[i%len(ports)]
+		i++
+		return p, nil
+	}
+}
+
+func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "img",
+		Command: []string{"opencode", "web", "--port", `{{ index .Ports "8080" }}`},
+		Env:     map[string]string{"WEB_PORT": `{{ index .Ports "8080" }}`},
+		Ports: map[string]profile.PortBind{
+			"8080": {},
+			"5432": {Host: "5432"},
+			"53":   {Protocol: "udp"},
+			"9000": {Host: "9000", HostIP: "127.0.0.1"},
+		},
+	}
+	opts := LaunchOpts{ProfileName: "web", Workspace: "/p", PortAllocator: fakePortAllocator("40001", "40002")}
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPorts := []PortSpec{
+		{Container: "53", HostPort: "40002", Protocol: "udp"},
+		{Container: "5432", HostPort: "5432", Protocol: "tcp"},
+		{Container: "8080", HostPort: "40001", Protocol: "tcp"},
+		{Container: "9000", HostIP: "127.0.0.1", HostPort: "9000", Protocol: "tcp"},
+	}
+	if len(spec.PortSpecs) != len(wantPorts) {
+		t.Fatalf("PortSpecs = %+v, want %+v", spec.PortSpecs, wantPorts)
+	}
+	for i, p := range spec.PortSpecs {
+		if p != wantPorts[i] {
+			t.Errorf("PortSpecs[%d] = %+v, want %+v", i, p, wantPorts[i])
+		}
+	}
+	if spec.Command[3] != "40001" {
+		t.Errorf("template command arg = %q, want 40001", spec.Command[3])
+	}
+	if spec.Env["WEB_PORT"] != "40001" {
+		t.Errorf("template env = %q, want 40001", spec.Env["WEB_PORT"])
+	}
+}
+
+func TestBuildSpecDevices(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1, Image: "img", Command: []string{"x"},
+		Devices: map[string]profile.DeviceBind{
+			"/dev/fuse":    {},
+			"/dev/nvidia0": {Source: "/dev/nvidia0", Permissions: "rw"},
+			"/dev/bus/usb": {Source: "/dev/bus/usb", Cgroup: true},
+		},
+	}
+	opts := LaunchOpts{ProfileName: "x", Workspace: "/p"}
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []DeviceSpec{
+		{Container: "/dev/bus/usb", Host: "/dev/bus/usb", Perms: "rwm", Cgroup: true},
+		{Container: "/dev/fuse", Host: "/dev/fuse", Perms: "rwm"},
+		{Container: "/dev/nvidia0", Host: "/dev/nvidia0", Perms: "rw"},
+	}
+	if len(spec.DeviceSpecs) != len(want) {
+		t.Fatalf("DeviceSpecs = %+v, want %+v", spec.DeviceSpecs, want)
+	}
+	for i, d := range spec.DeviceSpecs {
+		if d != want[i] {
+			t.Errorf("DeviceSpecs[%d] = %+v, want %+v", i, d, want[i])
+		}
+	}
+}
+
+func TestDefaultPortAllocatorAvoidsBoundPorts(t *testing.T) {
+	// Hold a socket open: the allocator must never hand that port back out,
+	// which is the property multi-instance launches rely on. Deterministic —
+	// no sequential close/reuse flake.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	heldPort := strconv.Itoa(held.Addr().(*net.TCPAddr).Port)
+
+	for _, proto := range []string{"tcp", "udp"} {
+		got, err := defaultPortAllocator(proto, "127.0.0.1")
+		if err != nil {
+			t.Fatalf("%s alloc: %v", proto, err)
+		}
+		n, err := strconv.Atoi(got)
+		if err != nil || n < 1 || n > 65535 {
+			t.Errorf("%s alloc returned %q, want a port in 1-65535", proto, got)
+		}
+		if got == heldPort {
+			t.Errorf("%s allocator returned port %s while it is bound", proto, got)
+		}
+	}
+}
 
 func TestBuildSpecBasic(t *testing.T) {
 	cfg := profile.Profile{

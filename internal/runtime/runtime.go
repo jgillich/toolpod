@@ -8,6 +8,8 @@ type Spec struct {
 	Build       *BuildSpec
 	Command     []string
 	Mounts      []MountSpec
+	PortSpecs   []PortSpec
+	DeviceSpecs []DeviceSpec
 	Env         map[string]string
 	Tools       map[string]string
 	Caches      []CacheSpec
@@ -29,6 +31,20 @@ type MountSpec struct {
 	Source   string
 	ReadOnly bool
 	Optional bool
+}
+
+type PortSpec struct {
+	HostIP    string
+	HostPort  string
+	Container string
+	Protocol  string
+}
+
+type DeviceSpec struct {
+	Container string
+	Host      string
+	Perms     string
+	Cgroup    bool
 }
 
 type CacheSpec struct {

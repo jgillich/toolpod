@@ -4,11 +4,38 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 
 	"github.com/jgillich/toolpod/internal/profile"
 	"github.com/jgillich/toolpod/internal/runtime"
 )
+
+// PortAllocator reserves an unused host port for a published binding.
+// protocol is "tcp", "udp", or "sctp"; hostIP is the requested bind address
+// ("" = all interfaces). Returns the allocated port as a string.
+type PortAllocator func(protocol, hostIP string) (string, error)
+
+func defaultPortAllocator(protocol, hostIP string) (string, error) {
+	addr := net.JoinHostPort(hostIP, "0")
+	switch protocol {
+	case "udp":
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return "", err
+		}
+		defer pc.Close()
+		return strconv.Itoa(pc.LocalAddr().(*net.UDPAddr).Port), nil
+	default: // tcp (sctp auto-allocation is rejected at validation)
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return "", err
+		}
+		defer ln.Close()
+		return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port), nil
+	}
+}
 
 func Launch(ctx context.Context, opts LaunchOpts) Result {
 	return LaunchWithWriter(ctx, opts, os.Stdout)

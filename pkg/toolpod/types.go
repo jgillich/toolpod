@@ -6,6 +6,8 @@ type (
 	Spec          = runtime.Spec
 	BuildSpec     = runtime.BuildSpec
 	MountSpec     = runtime.MountSpec
+	PortSpec      = runtime.PortSpec
+	DeviceSpec    = runtime.DeviceSpec
 	CacheSpec     = runtime.CacheSpec
 	WorkspaceSpec = runtime.WorkspaceSpec
 )
@@ -25,6 +27,10 @@ type LaunchOpts struct {
 	// install). If nil, progress goes to stderr. Set to a no-op writer
 	// to silence progress entirely.
 	Progress runtime.ProgressWriter
+	// PortAllocator reserves host ports for auto-allocated bindings. If
+	// nil, an ephemeral socket bind is used. Injectable for deterministic
+	// tests.
+	PortAllocator PortAllocator
 }
 
 type Result struct {
