@@ -28,20 +28,22 @@ func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error {
 // Profile is a resolved toolpod profile (after extends-merge and validation).
 // YAML tags match the schema in the design doc §4.1.
 type Profile struct {
-	Version     int               `yaml:"version"`
-	ExtendsList ExtendsList       `yaml:"extends,omitempty"`
-	Image       string            `yaml:"image,omitempty"`
-	Build       *Build            `yaml:"build,omitempty"`
-	Command     []string          `yaml:"command,omitempty"`
-	ArgsIfNone  []string          `yaml:"args_if_none,omitempty"`
-	Caches      map[string]string `yaml:"caches,omitempty"`
-	Mounts      map[string]Mount  `yaml:"mounts,omitempty"`
-	Env         map[string]string `yaml:"environment,omitempty"`
-	Labels      map[string]string `yaml:"labels,omitempty"`
-	Network     string            `yaml:"network,omitempty"`
-	Resources   *Resources        `yaml:"resources,omitempty"`
-	TTY         string            `yaml:"tty,omitempty"`
-	Tools       map[string]string `yaml:"tools,omitempty"`
+	Version     int                   `yaml:"version"`
+	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
+	Image       string                `yaml:"image,omitempty"`
+	Build       *Build                `yaml:"build,omitempty"`
+	Command     []string              `yaml:"command,omitempty"`
+	ArgsIfNone  []string              `yaml:"args_if_none,omitempty"`
+	Caches      map[string]string     `yaml:"caches,omitempty"`
+	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
+	Env         map[string]string     `yaml:"environment,omitempty"`
+	Labels      map[string]string     `yaml:"labels,omitempty"`
+	Network     string                `yaml:"network,omitempty"`
+	Resources   *Resources            `yaml:"resources,omitempty"`
+	TTY         string                `yaml:"tty,omitempty"`
+	Tools       map[string]string     `yaml:"tools,omitempty"`
+	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
+	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
 }
 
 // Build is the escape-hatch image source: a Dockerfile + optional depends_on.
@@ -56,6 +58,21 @@ type Mount struct {
 	Source   string `yaml:"source"`
 	ReadOnly bool   `yaml:"read_only"`
 	Optional bool   `yaml:"optional"`
+}
+
+// PortBind publishes a container port to the host. Empty Host means the
+// host port is auto-allocated at launch.
+type PortBind struct {
+	Host     string `yaml:"host,omitempty"`
+	HostIP   string `yaml:"host_ip,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"`
+}
+
+// DeviceBind attaches a host device node into the container.
+type DeviceBind struct {
+	Source      string `yaml:"source,omitempty"`
+	Permissions string `yaml:"permissions,omitempty"`
+	Cgroup      bool   `yaml:"cgroup,omitempty"`
 }
 
 // Resources are optional resource hints (best-effort; runtime may ignore).

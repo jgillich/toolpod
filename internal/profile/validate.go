@@ -1,6 +1,11 @@
 package profile
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
 
 var reservedNames = map[string]bool{
 	"config":     true,
@@ -28,6 +33,60 @@ func validate(rc RawProfile) error {
 	}
 	if !hasImage && !hasBuild {
 		return ProfileError{Path: rc.Path, Message: "exactly one of image or build is required (neither set)"}
+	}
+	if err := validatePorts(rc); err != nil {
+		return err
+	}
+	if err := validateDevices(rc); err != nil {
+		return err
+	}
+	if rc.Network == "host" && len(rc.Ports) > 0 {
+		fmt.Fprintln(os.Stderr, "warning: network: host makes ports redundant; ports are ignored by the engine")
+	}
+	return nil
+}
+
+func validatePorts(rc RawProfile) error {
+	for key, bind := range rc.Ports {
+		if err := checkPortNum(key, "container port", rc.Path); err != nil {
+			return err
+		}
+		if bind.Host != "" && bind.Host != "0" {
+			if err := checkPortNum(bind.Host, "host port for container port "+key, rc.Path); err != nil {
+				return err
+			}
+		}
+		proto := bind.Protocol
+		if proto == "" {
+			proto = "tcp"
+		}
+		switch proto {
+		case "tcp", "udp", "sctp":
+		default:
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("ports: container port %s: invalid protocol %q (want tcp, udp, or sctp)", key, bind.Protocol)}
+		}
+		if proto == "sctp" && (bind.Host == "" || bind.Host == "0") {
+			return ProfileError{Path: rc.Path, Message: "ports: container port " + key + ": sctp requires an explicit host port (cannot auto-allocate)"}
+		}
+	}
+	return nil
+}
+
+func validateDevices(rc RawProfile) error {
+	for key, bind := range rc.Devices {
+		switch bind.Permissions {
+		case "", "r", "rw", "rwm":
+		default:
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("devices: %s: invalid permissions %q (want r, rw, or rwm)", key, bind.Permissions)}
+		}
+	}
+	return nil
+}
+
+func checkPortNum(s, what, path string) error {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 65535 {
+		return ProfileError{Path: path, Message: fmt.Sprintf("%s: invalid port %q (want 1-65535)", what, s)}
 	}
 	return nil
 }
