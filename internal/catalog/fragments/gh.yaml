@@ -4,3 +4,4 @@ mounts:
   ~/.config/gh:
     source: ~/.config/gh
     read_only: false
+    optional: true

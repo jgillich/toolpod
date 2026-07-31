@@ -2,3 +2,4 @@ mounts:
   ~/.netrc:
     source: ~/.netrc
     read_only: true
+    optional: true

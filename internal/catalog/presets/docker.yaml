@@ -1,4 +1,0 @@
-mounts:
-  /var/run/docker.sock:
-    source: /var/run/docker.sock
-    read_only: false

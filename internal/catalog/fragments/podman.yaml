@@ -1,0 +1,9 @@
+tools:
+  podman: latest
+mounts:
+  /var/run/docker.sock:
+    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}'
+    read_only: false
+    optional: true
+environment:
+  DOCKER_HOST: /var/run/docker.sock

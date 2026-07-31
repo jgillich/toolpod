@@ -4,3 +4,4 @@ mounts:
   ~/.azure:
     source: ~/.azure
     read_only: false
+    optional: true

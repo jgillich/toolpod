@@ -4,3 +4,4 @@ mounts:
   ~/.kube:
     source: ~/.kube
     read_only: true
+    optional: true
