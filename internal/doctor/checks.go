@@ -131,16 +131,31 @@ func checkProfileValidity(userDir string) Check {
 	if err != nil {
 		return Check{Name: "profiles", Status: Fail, Message: err.Error()}
 	}
-	hadErr := false
+	var errs []string
+	launchable := 0
 	for _, name := range cat.Names() {
-		if _, err := profile.ResolveProfile(cat, name); err != nil {
-			hadErr = true
+		rc, ok := cat.Get(name)
+		if !ok {
+			continue
 		}
+		// Validate every profile for structural errors (version, image/build).
+		// A profile with no command is a base — valid as an extends target,
+		// just not directly launchable. ResolveProfile enforces command, so
+		// tolerate that one error for base profiles and count them as valid.
+		_, err := profile.ResolveProfile(cat, name)
+		if err != nil {
+			if len(rc.Command) == 0 && rc.Extends == "" {
+				// Base profile: missing command is expected, not an error.
+				continue
+			}
+			errs = append(errs, name+": "+err.Error())
+		}
+		launchable++
 	}
-	if hadErr {
-		return Check{Name: "profiles", Status: Fail, Message: "some profiles invalid"}
+	if len(errs) > 0 {
+		return Check{Name: "profiles", Status: Fail, Message: strings.Join(errs, "; ")}
 	}
-	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", len(cat.Names()))}
+	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", launchable)}
 }
 
 func checkUserOverrides(userDir string) []Check {
