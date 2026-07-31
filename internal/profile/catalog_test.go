@@ -74,6 +74,9 @@ func TestBuiltinsHaveNoDefaultCaches(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range cat.Names() {
+		if cat.IsFragment(name) {
+			continue
+		}
 		rc, ok := cat.Get(name)
 		if !ok {
 			continue
@@ -90,6 +93,9 @@ func TestBuiltinsDoNotMountUserDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range cat.Names() {
+		if cat.IsFragment(name) {
+			continue
+		}
 		rc, ok := cat.Get(name)
 		if !ok {
 			continue
@@ -108,6 +114,9 @@ func TestBuiltinsDoNotMountGitconfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range cat.Names() {
+		if cat.IsFragment(name) {
+			continue
+		}
 		rc, ok := cat.Get(name)
 		if !ok {
 			continue

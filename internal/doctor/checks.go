@@ -175,9 +175,8 @@ func checkUserOverrides(userDir string) []Check {
 		if !ok {
 			continue
 		}
-		// Skip built-in profiles; only check user-overridden files.
-		// Built-in paths start with "built-in:".
-		if strings.HasPrefix(rc.Path, "built-in:") {
+		// Skip built-in profiles and all fragments; only check user-overridden profile files.
+		if strings.HasPrefix(rc.Path, "built-in:") || catMerged.IsFragment(name) {
 			continue
 		}
 		userFileCount++

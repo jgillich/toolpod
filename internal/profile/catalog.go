@@ -13,10 +13,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Catalog is the merged set of built-in + user raw profiles, keyed by profile name.
+// Catalog is the merged set of built-in + user raw profiles and fragments, keyed by name.
 type Catalog struct {
-	entries  map[string]RawProfile // merged view: user shadows built-in
-	builtins map[string]RawProfile // built-ins only, for extends-self
+	entries   map[string]RawProfile // merged view: user shadows built-in
+	builtins  map[string]RawProfile // built-in profiles only, for extends-self
+	fragments map[string]bool       // names that are fragments (not profiles)
+}
+
+// IsFragment returns true if name is a fragment, not a profile.
+func (c Catalog) IsFragment(name string) bool {
+	return c.fragments[name]
 }
 
 // Get returns the raw profile for a profile name, plus whether it was found.
@@ -66,13 +72,33 @@ func LoadProfiles(userDir string) (Catalog, error) {
 		entries[k] = v
 	}
 
+	fragmentNames := map[string]bool{}
+
+	// Load built-in fragments into the same namespace.
+	builtinFragments := map[string]RawProfile{}
+	if err := loadBuiltinFragments(builtinFragments); err != nil {
+		return Catalog{}, err
+	}
+	for name, frag := range builtinFragments {
+		if _, exists := entries[name]; exists {
+			return Catalog{}, ProfileError{Path: frag.Path, Message: "name collision: fragment and profile share name " + name}
+		}
+		entries[name] = frag
+		fragmentNames[name] = true
+	}
+
 	if userDir != "" {
-		if err := loadUserDir(userDir, entries); err != nil {
+		if err := loadUserDir(userDir, entries, fragmentNames); err != nil {
+			return Catalog{}, err
+		}
+		// Load user fragments from <userDir>/fragments/
+		userFragDir := filepath.Join(userDir, "fragments")
+		if err := loadUserFragments(userFragDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
 		}
 	}
 
-	return Catalog{entries: entries, builtins: builtins}, nil
+	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
 }
 
 func loadBuiltins(entries map[string]RawProfile) error {
@@ -101,7 +127,7 @@ func loadBuiltins(entries map[string]RawProfile) error {
 	})
 }
 
-func loadUserDir(dir string, entries map[string]RawProfile) error {
+func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[string]bool) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil
 	}
@@ -109,7 +135,14 @@ func loadUserDir(dir string, entries map[string]RawProfile) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
+		if d.IsDir() {
+			// Skip the fragments/ subdirectory; it is loaded separately by loadUserFragments.
+			if d.Name() == "fragments" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -123,6 +156,9 @@ func loadUserDir(dir string, entries map[string]RawProfile) error {
 		}
 		if err := validateReservedName(rc, name); err != nil {
 			return err
+		}
+		if fragmentNames[name] {
+			return ProfileError{Path: rc.Path, Message: "name collision: profile and fragment share name " + name}
 		}
 		entries[name] = rc // shadow
 		return nil
@@ -269,6 +305,74 @@ func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, erro
 		return nil, err
 	}
 	return fragments, nil
+}
+
+func loadBuiltinFragments(entries map[string]RawProfile) error {
+	root := "fragments"
+	return fs.WalkDir(catalog.Fragments, root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
+			return nil
+		}
+		data, err := catalog.Fragments.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		rc, err := parseRaw(data, "built-in-fragment:"+path)
+		if err != nil {
+			return err
+		}
+		if err := validateFragmentName(name, rc); err != nil {
+			return err
+		}
+		if _, exists := entries[name]; exists {
+			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + name}
+		}
+		entries[name] = rc
+		return nil
+	})
+}
+
+func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames map[string]bool) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		rc, err := parseRaw(data, path)
+		if err != nil {
+			return err
+		}
+		if err := validateFragmentName(name, rc); err != nil {
+			return err
+		}
+		if _, exists := entries[name]; exists {
+			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + name}
+		}
+		entries[name] = rc
+		fragmentNames[name] = true
+		return nil
+	})
+}
+
+func validateFragmentName(name string, rc RawProfile) error {
+	if len(rc.ExtendsList) != 0 || rc.Image != "" || rc.Build != nil || len(rc.Command) > 0 || rc.Version != 0 {
+		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set extends/image/build/command/version"}
+	}
+	return nil
 }
 
 // DefaultProfileDir returns the default user profile directory for the current OS.
