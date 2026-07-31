@@ -4,6 +4,6 @@ command: ["codex"]
 tools:
   codex: latest
 mounts:
-  ~/.config/codex:
-    source: ~/.config/codex
-    read_only: true
+  ~/.codex:
+    source: ~/.codex
+    read_only: false

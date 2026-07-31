@@ -6,7 +6,7 @@ tools:
 mounts:
   ~/.claude:
     source: ~/.claude
-    read_only: true
+    read_only: false
   ~/.cache/claude-code:
     source: ~/.cache/claude-code
     read_only: false

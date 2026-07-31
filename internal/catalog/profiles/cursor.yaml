@@ -1,9 +1,0 @@
-version: 1
-extends: mise
-command: ["cursor"]
-tools:
-  cursor: latest
-mounts:
-  ~/.cursor:
-    source: ~/.cursor
-    read_only: true

@@ -1,0 +1,6 @@
+tools:
+  gh: latest
+mounts:
+  ~/.config/gh:
+    source: ~/.config/gh
+    read_only: false

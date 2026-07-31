@@ -1,0 +1,6 @@
+tools:
+  gcloud: latest
+mounts:
+  ~/.config/gcloud:
+    source: ~/.config/gcloud
+    read_only: false
