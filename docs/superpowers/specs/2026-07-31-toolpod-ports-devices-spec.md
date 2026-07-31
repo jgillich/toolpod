@@ -76,6 +76,9 @@ devices:
    under host networking.
 5. No dual-protocol binding on the same container port (map-key collision by
    design; tcp+udp on one port is out of scope).
+6. No port-conflict resolution: two instances binding the same explicit
+   `host` port fail at start with the engine's bind error. No auto-remapping
+   or conflict detection.
 
 ---
 
@@ -84,13 +87,19 @@ devices:
 ### `ports` (optional map)
 
 - **Key** = container port (numeric; YAML int or string, normalized to
-  string). This is the merge identity and the template key.
+  string). This is the merge identity and the template key — the template
+  key is the bare container port, **without** a protocol suffix
+  (`.Ports` key `"8080"`, never `"8080/tcp"`).
 - **Value** (empty `{}` = all defaults):
   - `host`: host port to bind. Missing, `0`, or `""` → an unused host port is
-    allocated (random). String or int accepted (normalized).
+    allocated (random). String or int accepted (normalized). Note the
+    distinction from `null`: `host: 0` keeps the binding and switches it to
+    random; `8080: null` deletes the inherited entry entirely.
   - `host_ip`: bind address on the host. Default `""` = all interfaces
     (matches docker/compose behavior).
-  - `protocol`: `tcp` (default), `udp`, or `sctp`.
+  - `protocol`: `tcp` (default), `udp`, or `sctp`. `sctp` requires an
+    explicit `host` — auto-allocation for sctp is a validation error (Go
+    stdlib cannot pre-allocate an sctp port).
 - `null` deletes an inherited binding (reuse the §4.3 null-to-delete rule;
   consistent with `mounts`).
 
@@ -124,7 +133,8 @@ devices:
   parsing; a non-numeric key or out-of-range value fails at load).
 - `host` in range 1–65535 (after YAML normalization; `0`/empty = random).
 - `host_ip` accepted as-is (validated by the runtime/engine on bind failure).
-- `protocol` must be `tcp`, `udp`, or `sctp`.
+- `protocol` must be `tcp`, `udp`, or `sctp`; `sctp` with missing/`0`
+  `host` is a validation error (no client-side allocation possible).
 - `network: host` + non-empty `ports` → warn (not error) to stderr (ports are
   redundant under host networking).
 - `devices` with `source` referencing a host path that does not exist → not
@@ -152,11 +162,16 @@ Template rendering additionally extends to:
 - `command` and `args_if_none` args:
   `command: ["opencode", "web", "--port", "{{ index .Ports \"8080\" }}"]`.
 
-**Rule:** for the new fields, a string is a template expression **iff it
-starts with `{{`**; otherwise it is literal. Mounts/caches keep the existing
-"contains `{{`" rule (backward compatible). The starts-with rule avoids
-breaking shell snippets that contain literal `{{` mid-string, and provides a
-cheap escape hatch (prefix anything to disable templating).
+**Rule:** rendering has two modes, by field family:
+
+| Field family | Template iff | Reason |
+|---|---|---|
+| `mounts` sources/targets, `caches` targets (existing) | contains `{{` | backward compatible with shipped profiles (`~/dev/{{ .Env.X }}` must keep working) |
+| `environment` values, `command`/`args_if_none` args (new) | starts with `{{` | literal `{{` mid-string is common in shell snippets (jq filters, heredocs); a leading `{{` is unambiguous |
+
+The asymmetry is intentional: the starts-with rule cannot be applied
+retroactively to mounts without breaking existing profiles, and the
+contains rule would break shell commands containing literal `{{`.
 
 **Allocation timing:** `.Ports` must be populated **before** templates render,
 so port allocation happens in `buildSpec` immediately before
@@ -207,13 +222,13 @@ type DeviceSpec struct {
 ```
 
 **Port allocation** (new, client-side): for every `PortSpec` with empty
-`HostPort`, bind an ephemeral socket (`net.Listen("tcp", hostIp+":0")`,
-`udp` for udp/sctp), read the port, close the socket, and use it as the
-explicit `HostPort`. Runs in `buildSpec` before template rendering so
-`.Ports` carries the value. Known race: the port can be taken between close
-and daemon bind; start then fails cleanly with the engine's bind error. The
-allocator is a small injectable function on `LaunchOpts` for deterministic
-tests.
+`HostPort`, bind an ephemeral socket (`net.Listen("tcp", hostIp+":0")` for
+tcp; `net.ListenPacket("udp", ...)` for udp), read the port, close the
+socket, and use it as the explicit `HostPort`. `sctp` cannot be allocated
+client-side (no Go stdlib support) and is rejected at validation when `host`
+is absent. Known race: the port can be taken between close and daemon bind;
+start then fails cleanly with the engine's bind error. The allocator is a
+small injectable function on `LaunchOpts` for deterministic tests.
 
 `internal/runtime` maps to the Docker Engine API create call:
 - `Config.ExposedPorts[<container>/<protocol>] = struct{}{}` and
@@ -228,18 +243,23 @@ tests.
   `HostConfig.DeviceCgroupRules`, scoped to the device's major:minor where
   derivable at `Prepare` (parse `/sys/dev/char`/`/sys/dev/block`), else
   `["c <major>:*"]` per device. Never emit the blanket `["c *:*"]`.
+  **Limitation:** in environments without the device node in sysfs
+  (containers, some VMs) the major-only fallback applies; toolpod logs a
+  warning naming the device whenever it falls back, and the rule remains
+  scoped to a single major — never all devices.
 
 Mode A vs Mode B is transparent here: the Docker-compatible Podman API honors
 the same fields, so no mode-specific translation is needed.
 
 **Post-start output:** after the container starts, print
-`listening at http://<host_ip or 127.0.0.1>:<host_port>` per published
+`listening on <proto>://<host_ip or 127.0.0.1>:<host_port>` per published
 binding via the progress writer (stderr), so concurrent multi-instance
-launches are discoverable by the user.
+launches are discoverable by the user. The scheme is `tcp://`/`udp://`/
+`sctp://`, never an assumed `http://`.
 
 **Determinism:** `buildSpec` iterates the maps into slices. Sort `PortSpecs`
-(by container port, then protocol) and `DeviceSpecs` (by container path) so
-`--dry-run`/`--verbose` output and tests are stable.
+(by container port, then protocol, then host port) and `DeviceSpecs` (by
+container path) so `--dry-run`/`--verbose` output and tests are stable.
 
 ---
 
@@ -288,7 +308,9 @@ launches are discoverable by the user.
 
 - Unit: `ports` key/value validation — range checks (1–65535), protocol
   enum, `host: 0`/missing → auto, int/string normalization → correct
-  `PortSpec`. Invalid values fail at load (`ProfileError` exit 2).
+  `PortSpec`. Invalid values fail at load (`ProfileError` exit 2); `sctp`
+  without explicit `host` fails at load (validation-only — no runtime
+  sctp test).
 - Unit: `devices` defaults (`source` = key, `cgroup` defaults **false**,
   `permissions` default `rwm`); per-field override.
 - Unit: null-to-delete on both maps (single key and whole-field `"*"`).
