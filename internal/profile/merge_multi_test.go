@@ -142,3 +142,26 @@ func TestSingleStringExtendsStillWorks(t *testing.T) {
 		t.Errorf("Image = %q, want base:latest", resolved.Image)
 	}
 }
+
+func TestOldInlinedProfileStillResolves(t *testing.T) {
+	cat := NewProfileCatalogForTest(map[string]RawProfile{
+		"base": {Profile: Profile{Version: 1, Image: "base:latest", Command: []string{"sh"}}},
+		"child": {Profile: Profile{
+			Version:     1,
+			ExtendsList: ExtendsList{"base"},
+			Mounts:      map[string]Mount{"~/.ssh": {Source: "~/.ssh", ReadOnly: true}},
+		}},
+	})
+	resolved, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Image != "base:latest" {
+		t.Errorf("Image = %q, want base:latest (inherited)", resolved.Image)
+	}
+	if m, ok := resolved.Mounts["~/.ssh"]; !ok {
+		t.Errorf("expected inlined ~/.ssh mount to survive merge, got mounts: %v", resolved.Mounts)
+	} else if m.Source != "~/.ssh" {
+		t.Errorf("Mount source = %q, want ~/.ssh", m.Source)
+	}
+}
