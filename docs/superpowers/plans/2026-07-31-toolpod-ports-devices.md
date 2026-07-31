@@ -311,14 +311,15 @@ In `merge.go`, wire into `MergeProfiles` (after the `Labels` line):
 	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
 ```
 
-Add after `mergeMounts`:
+Add after `mergeMounts` (replacing it and the two new functions with one
+generic helper — `mergeMounts` is structurally identical):
 
 ```go
-func mergePortMap(parent, child map[string]PortBind, nullKeys map[string]bool) map[string]PortBind {
+func mergeMap[V any](parent, child map[string]V, nullKeys map[string]bool) map[string]V {
 	if nullKeys != nil && nullKeys["*"] {
-		return map[string]PortBind{}
+		return map[string]V{}
 	}
-	out := make(map[string]PortBind, len(parent)+len(child))
+	out := make(map[string]V, len(parent)+len(child))
 	for k, v := range parent {
 		out[k] = v
 	}
@@ -331,21 +332,16 @@ func mergePortMap(parent, child map[string]PortBind, nullKeys map[string]bool) m
 	return out
 }
 
+func mergeMounts(parent, child map[string]Mount, nullKeys map[string]bool) map[string]Mount {
+	return mergeMap(parent, child, nullKeys)
+}
+
+func mergePortMap(parent, child map[string]PortBind, nullKeys map[string]bool) map[string]PortBind {
+	return mergeMap(parent, child, nullKeys)
+}
+
 func mergeDeviceMap(parent, child map[string]DeviceBind, nullKeys map[string]bool) map[string]DeviceBind {
-	if nullKeys != nil && nullKeys["*"] {
-		return map[string]DeviceBind{}
-	}
-	out := make(map[string]DeviceBind, len(parent)+len(child))
-	for k, v := range parent {
-		out[k] = v
-	}
-	for k, v := range child {
-		out[k] = v
-	}
-	for k := range nullKeys {
-		delete(out, k)
-	}
-	return out
+	return mergeMap(parent, child, nullKeys)
 }
 ```
 
@@ -505,7 +501,21 @@ func renderTemplate(s string, data tmplData) (string, error) {
 }
 ```
 
-Change `expandTarget`/`expandSource` to take `data tmplData` instead of `env map[string]string` (bodies unchanged except the renderTemplate call). Rewrite `ResolveTildes`:
+Change `expandTarget`/`expandSource` to take `data tmplData` instead of `env map[string]string` (full rewrite — they currently call `renderTemplate(path, env)`):
+
+```go
+func expandTarget(path, runtimeHome string, data tmplData) (string, error) {
+	path = expandTilde(path, runtimeHome)
+	return renderTemplate(path, data)
+}
+
+func expandSource(path, hostHome string, data tmplData) (string, error) {
+	path = expandTilde(path, hostHome)
+	return renderTemplate(path, data)
+}
+```
+
+Rewrite `ResolveTildes`:
 
 ```go
 func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
@@ -704,25 +714,34 @@ func TestBuildSpecDevices(t *testing.T) {
 	}
 }
 
-func TestDefaultPortAllocatorDistinct(t *testing.T) {
-	tcp1, err := defaultPortAllocator("tcp", "")
+func TestDefaultPortAllocatorAvoidsBoundPorts(t *testing.T) {
+	// Hold a socket open: the allocator must never hand that port back out,
+	// which is the property multi-instance launches rely on. Deterministic —
+	// no sequential close/reuse flake.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tcp2, err := defaultPortAllocator("tcp", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	udp1, err := defaultPortAllocator("udp", "127.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]bool{tcp1: true, tcp2: true, udp1: true}
-	if len(seen) != 3 {
-		t.Errorf("allocated ports must be distinct: tcp=%s,%s udp=%s", tcp1, tcp2, udp1)
+	defer held.Close()
+	heldPort := strconv.Itoa(held.Addr().(*net.TCPAddr).Port)
+
+	for _, proto := range []string{"tcp", "udp"} {
+		got, err := defaultPortAllocator(proto, "127.0.0.1")
+		if err != nil {
+			t.Fatalf("%s alloc: %v", proto, err)
+		}
+		n, err := strconv.Atoi(got)
+		if err != nil || n < 1 || n > 65535 {
+			t.Errorf("%s alloc returned %q, want a port in 1-65535", proto, got)
+		}
+		if got == heldPort {
+			t.Errorf("%s allocator returned port %s while it is bound", proto, got)
+		}
 	}
 }
 ```
+
+Add imports `net`, `strconv` to `spec_test.go`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1010,7 +1029,7 @@ func buildDevices(spec Spec) []container.DeviceMapping {
 	var out []container.DeviceMapping
 	for _, d := range spec.DeviceSpecs {
 		if _, err := os.Stat(d.Host); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping device %s: %s not found\n", d.Container, d.Host)
+			fmt.Fprintf(os.Stderr, "warning: skipping device %s: %v\n", d.Container, err)
 			continue
 		}
 		out = append(out, container.DeviceMapping{
@@ -1030,6 +1049,7 @@ func buildDeviceCgroupRules(spec Spec) []string {
 		}
 		major, minor, ok := deviceMajorMinor(d.Host)
 		if !ok {
+			fmt.Fprintf(os.Stderr, "warning: device %s: cannot stat %s, no cgroup rule emitted\n", d.Container, d.Host)
 			continue
 		}
 		rule := fmt.Sprintf("c %d:%d rwm", major, minor)
@@ -1112,12 +1132,13 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDockerRuntime: %v", err)
 	}
+	// Note: network must be the default bridge (NOT "none") — published
+	// ports cannot reach a container with no network interface.
 	spec := Spec{
 		ProfileName: "test-port",
 		Image:       "alpine:latest",
 		Command:     []string{"sh", "-c", "echo hi | nc -l -p 8080"},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
-		Network:     "none",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
 	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
@@ -1128,9 +1149,19 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 		_, err := rt.Run(context.Background(), spec)
 		done <- err
 	}()
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+hostPort, 10*time.Second)
-	if err != nil {
-		t.Fatalf("dial published port: %v", err)
+
+	// The container start + nc listen races the host dial; retry until the
+	// published port accepts (or the deadline expires).
+	var conn net.Conn
+	deadline := time.Now().Add(20 * time.Second)
+	for conn == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out dialing published port")
+		}
+		conn, err = net.DialTimeout("tcp", "127.0.0.1:"+hostPort, time.Second)
+		if err != nil {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	defer conn.Close()
 	buf := make([]byte, 16)
@@ -1146,9 +1177,9 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 
 Add imports `net`, `strconv`, `time` to `docker_test.go`.
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 6: Tidy deps and run tests to verify they pass**
 
-Run: `go test ./internal/runtime/`
+Run: `go mod tidy && go test ./internal/runtime/`
 Expected: PASS (integration test skips without DOCKER_HOST).
 
 - [ ] **Step 7: Commit**
@@ -1204,7 +1235,7 @@ func TestRenderSpecPortsAndDevices(t *testing.T) {
 	output := out.String()
 	for _, want := range []string{
 		"ports:",
-		"  8080/tcp -> :40001",
+		"  8080/tcp -> 0.0.0.0:40001",
 		"  53/udp -> 127.0.0.1:40002",
 		"devices:",
 		"  /dev/fuse <- /dev/fuse (rwm)",
@@ -1232,7 +1263,11 @@ In `pkg/toolpod/dryrun.go`, after the `caches:` block, add:
 			return err
 		}
 		for _, p := range spec.PortSpecs {
-			_, err = fmt.Fprintf(w, "  %s/%s -> %s:%s\n", p.Container, p.Protocol, p.HostIP, p.HostPort)
+			hostIP := p.HostIP
+			if hostIP == "" {
+				hostIP = "0.0.0.0"
+			}
+			_, err = fmt.Fprintf(w, "  %s/%s -> %s:%s\n", p.Container, p.Protocol, hostIP, p.HostPort)
 			if err != nil {
 				return err
 			}
@@ -1323,8 +1358,9 @@ git commit -m "feat(toolpod): render ports/devices in dry-run output; document s
 
 - [ ] **Step 1: Run the full suite**
 
-Run: `go vet ./... && go test ./...`
-Expected: all PASS, no vet complaints. (If the mise `go` shim errors, run `mise use -g go@1.26.5` first.)
+Run: `go mod tidy && go vet ./... && go test ./...`
+Expected: all PASS, no vet complaints, no go.mod changes remaining. (If the
+mise `go` shim errors, run `mise use -g go@1.26.5` first.)
 
 - [ ] **Step 2: Manual smoke test (optional, requires Docker)**
 
