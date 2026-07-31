@@ -140,18 +140,22 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// If the profile grants host access (mounts or env), prompt to review.
 	if len(resolved.Mounts) > 0 || len(resolved.Env) > 0 {
 		if interactive {
-			choice, err := promptReviewChoice(tty, stdin, stdout, reader)
-			if err != nil {
-				return err
-			}
-			switch choice {
-			case "view":
-				if err := openEditorWithResolved(resolved, stdout); err != nil {
-					fmt.Fprintf(stderr, "warning: could not open editor: %v\n", err)
+			for {
+				choice, err := promptReviewChoice(tty, stdin, stdout, reader)
+				if err != nil {
+					return err
 				}
-			case "abort":
-				fmt.Fprintln(stdout, "aborted")
-				return nil
+				switch choice {
+				case "view":
+					if err := openEditorWithResolved(resolved, stdout); err != nil {
+						fmt.Fprintf(stderr, "warning: could not open editor: %v\n", err)
+					}
+					continue
+				case "abort":
+					fmt.Fprintln(stdout, "aborted")
+					return nil
+				}
+				break
 			}
 		}
 	}
@@ -347,7 +351,7 @@ func promptOverwrite(tty bool, targetPath string, managed bool, stdin io.Reader,
 }
 
 // promptReviewChoice offers a three-way choice after showing the summary:
-// proceed, view the resolved profile in $EDITOR, or abort.
+// proceed, view the details in $EDITOR, or abort.
 func promptReviewChoice(tty bool, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (string, error) {
 	if tty {
 		var selected string
@@ -357,7 +361,7 @@ func promptReviewChoice(tty bool, stdin io.Reader, stdout io.Writer, reader *buf
 					Title("The profile grants host access. What next?").
 					Options(
 						huh.NewOption("Proceed", "proceed"),
-						huh.NewOption("View resolved profile", "view"),
+						huh.NewOption("View details", "view"),
 						huh.NewOption("Abort", "abort"),
 					).
 					Value(&selected),
@@ -368,7 +372,7 @@ func promptReviewChoice(tty bool, stdin io.Reader, stdout io.Writer, reader *buf
 		}
 		return selected, nil
 	}
-	fmt.Fprint(stdout, "Proceed / View resolved profile / Abort? [P/v/a]: ")
+	fmt.Fprint(stdout, "Proceed / View details / Abort? [P/v/a]: ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(strings.ToLower(line))
 	switch line {
@@ -445,16 +449,26 @@ func openEditorWithResolved(resolved profile.Profile, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	tmpFile, err := os.CreateTemp("", "toolpod-resolved-*.yaml")
+
+	header := "# This is a read-only preview of the fully merged profile.\n" +
+		"# It shows everything the container will have access to after all\n" +
+		"# extends and fragments are resolved. Changes here are not saved.\n" +
+		"# To customize, edit your user profile and re-run 'toolpod init'.\n\n"
+
+	tmpFile, err := os.CreateTemp("", "toolpod-details-*.yaml")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmpFile.Name())
-	if _, err := tmpFile.Write(data); err != nil {
+	if _, err := tmpFile.WriteString(header + string(data)); err != nil {
 		tmpFile.Close()
 		return err
 	}
 	tmpFile.Close()
+
+	if err := os.Chmod(tmpFile.Name(), 0o444); err != nil {
+		return err
+	}
 
 	cmd := exec.Command(editor, tmpFile.Name())
 	cmd.Stdin = os.Stdin
