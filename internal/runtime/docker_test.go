@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"golang.org/x/sys/unix"
 )
 
@@ -227,7 +230,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	spec := Spec{
 		ProfileName: "test-port",
 		Image:       "alpine:latest",
-		Command:     []string{"sh", "-c", "printf hi | nc -l -p 8080"},
+		Command:     []string{"sh", "-c", "printf hi | nc -l -p 8080 -s 0.0.0.0"},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
@@ -242,13 +245,30 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 
 	// The container start + nc listen races the host dial; retry until the
 	// published port accepts (or the deadline expires).
+	//
+	// The published port is bound by the engine's userland proxy. When the
+	// tests run inside a container that only mounts the engine's socket
+	// (e.g. rootless Podman), that proxy binds on the outer host's loopback,
+	// which is unreachable from here — but the container's own IP on the
+	// shared bridge is. Fall back to dialing the container directly.
 	var conn net.Conn
 	deadline := time.Now().Add(20 * time.Second)
 	for conn == nil {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out dialing published port")
 		}
-		conn, err = net.DialTimeout("tcp", "127.0.0.1:"+hostPort, time.Second)
+		for _, addr := range []string{"127.0.0.1:" + hostPort} {
+			conn, err = net.DialTimeout("tcp", addr, time.Second)
+			if err == nil {
+				break
+			}
+		}
+		if conn == nil {
+			ip, ierr := containerIPOf(rt, "test-port")
+			if ierr == nil {
+				conn, err = net.DialTimeout("tcp", ip+":8080", time.Second)
+			}
+		}
 		if err != nil {
 			time.Sleep(500 * time.Millisecond)
 		}
@@ -262,7 +282,51 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	if string(buf[:n]) != "hi" {
 		t.Errorf("got %q from published port, want \"hi\"", string(buf[:n]))
 	}
+	// Close the connection before waiting for Run to return. The container's
+	// busybox nc serves one connection and only exits once the client closes
+	// it; Run blocks on ContainerWait until the container stops.
+	conn.Close()
 	if err := <-done; err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+}
+
+// containerIPOf resolves the bridge IP of the newest running container for
+// profileName. The container is named toolpod-<profile>-<randomID> by Run.
+// Stale (exited) containers matching the prefix are skipped.
+func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
+	cli := rt.cli
+	containers, err := cli.ContainerList(context.Background(), container.ListOptions{})
+	if err != nil {
+		return "", err
+	}
+	prefix := "toolpod-" + profileName + "-"
+	var best types.Container
+	for _, c := range containers {
+		if c.State != "running" {
+			continue
+		}
+		matches := false
+		for _, name := range c.Names {
+			if strings.HasPrefix(name, "/"+prefix) || strings.HasPrefix(name, prefix) {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		if best.ID == "" || c.Created > best.Created {
+			best = c
+		}
+	}
+	if best.ID == "" {
+		return "", fmt.Errorf("container for profile %s not found", profileName)
+	}
+	for _, net := range best.NetworkSettings.Networks {
+		if net.IPAddress != "" {
+			return net.IPAddress, nil
+		}
+	}
+	return "", fmt.Errorf("container for profile %s has no IP", profileName)
 }
