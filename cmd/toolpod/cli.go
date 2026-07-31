@@ -44,9 +44,7 @@ func runProfile(profileName string, args []string) int {
 	var cmd string
 	fs := pflag.NewFlagSet(profileName, pflag.ContinueOnError)
 	fs.StringVarP(&cmd, "command", "c", "", "command to run in the profile")
-	fs.StringSliceVar(&opts.Args, "args", nil, "arguments to pass to the profile command")
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace directory to mount")
-	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user profile directory")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the spec without launching")
 	fs.BoolVar(&opts.Verbose, "verbose", false, "print the spec before launching")
 	fs.BoolVar(&opts.Rebuild, "rebuild", false, "rebuild the image even if cached")
@@ -58,6 +56,7 @@ func runProfile(profileName string, args []string) int {
 		wd, _ := os.Getwd()
 		opts.Workspace = wd
 	}
+	opts.Args = append(opts.Args, fs.Args()...)
 	if cmd != "" {
 		opts.Args = append(opts.Args, "-c", cmd)
 	}
@@ -73,7 +72,6 @@ func runDoctor(args []string) int {
 	opts := doctor.Options{}
 	fs := pflag.NewFlagSet("doctor", pflag.ContinueOnError)
 	fs.StringVar(&opts.Workspace, "workspace", "", "workspace to check")
-	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override user profile dir")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -147,7 +145,7 @@ func usage() {
 	fmt.Println(`toolpod — ephemeral dev environments
 
 Usage:
-  toolpod <profile> [flags]      Launch a profile (e.g. "shell")
+  toolpod <profile> [args...] [flags]  Launch a profile (e.g. "shell")
   toolpod doctor [flags]         Run environment diagnostics
   toolpod prune [flags]          Remove toolpod-managed volumes and images
   toolpod help                   Show this help
@@ -159,7 +157,6 @@ Commands:
 
 Flags:
   --workspace string             Workspace directory to mount
-  --profile-dir string           Override user profile directory
   --dry-run                      Print the spec without launching
   --verbose                      Print the spec before launching
   --rebuild                      Rebuild the image even if cached
@@ -168,6 +165,7 @@ Flags:
 Examples:
   toolpod shell
   toolpod shell -c "echo hello"
+  toolpod opencode config view
   toolpod doctor
   toolpod prune --force --volumes`)
 }
