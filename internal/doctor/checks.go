@@ -144,7 +144,7 @@ func checkProfileValidity(userDir string) Check {
 		// tolerate that one error for base profiles and count them as valid.
 		_, err := profile.ResolveProfile(cat, name)
 		if err != nil {
-			if len(rc.Command) == 0 && rc.Extends == "" {
+			if len(rc.Command) == 0 && len(rc.ExtendsList) == 0 {
 				// Base profile: missing command is expected, not an error.
 				continue
 			}

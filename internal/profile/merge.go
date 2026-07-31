@@ -26,13 +26,13 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	if seen[name] {
 		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
 	}
-	if rc.Extends == "" {
+	if len(rc.ExtendsList) == 0 {
 		return rc, nil
 	}
 	// Special case: a user shadow that extends the built-in of the same name.
 	// IsUserShadow implies a built-in exists, so GetBuiltin should always succeed
 	// here; the !ok branch is a defensive guard.
-	if rc.Extends == name && cat.IsUserShadow(name) {
+	if len(rc.ExtendsList) == 1 && rc.ExtendsList[0] == name && cat.IsUserShadow(name) {
 		builtin, ok := cat.GetBuiltin(name)
 		if !ok {
 			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
@@ -51,7 +51,7 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	seen[name] = true
 	defer delete(seen, name)
 
-	parent, err := resolveChain(cat, rc.Extends, seen)
+	parent, err := resolveChain(cat, rc.ExtendsList[0], seen)
 	if err != nil {
 		return RawProfile{}, err
 	}
@@ -65,10 +65,10 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 // carries names already visited in the outer resolution to detect cycles
 // that span the shadow boundary.
 func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bool) (RawProfile, error) {
-	if rc.Extends == "" {
+	if len(rc.ExtendsList) == 0 {
 		return rc, nil
 	}
-	name := rc.Extends
+	name := rc.ExtendsList[0]
 	if inheritedSeen[name] {
 		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
 	}
@@ -99,8 +99,8 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	if child.Version != 0 {
 		out.Version = child.Version
 	}
-	if child.Extends != "" {
-		out.Extends = child.Extends
+	if len(child.ExtendsList) > 0 {
+		out.ExtendsList = child.ExtendsList
 	}
 	if child.Network != "" {
 		out.Network = child.Network
@@ -131,7 +131,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 		out.Resources = child.Resources
 	}
 
-	out.Extends = ""
+	out.ExtendsList = nil
 	out.NullKeys = nil
 	return out
 }

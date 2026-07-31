@@ -1,22 +1,47 @@
 package profile
 
+import "gopkg.in/yaml.v3"
+
+// ExtendsList is a list of profile/fragment names to extend.
+// It unmarshals from both a string ("extends: foo") and a list
+// ("extends: [foo, bar]"). A single string is normalized to a
+// one-element slice.
+type ExtendsList []string
+
+func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
+		*e = ExtendsList{s}
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*e = ExtendsList(list)
+	return nil
+}
+
 // Profile is a resolved toolpod profile (after extends-merge and validation).
 // YAML tags match the schema in the design doc §4.1.
 type Profile struct {
-	Version    int               `yaml:"version"`
-	Extends    string            `yaml:"extends,omitempty"`
-	Image      string            `yaml:"image,omitempty"`
-	Build      *Build            `yaml:"build,omitempty"`
-	Command    []string          `yaml:"command,omitempty"`
-	ArgsIfNone []string          `yaml:"args_if_none,omitempty"`
-	Caches     map[string]string `yaml:"caches,omitempty"`
-	Mounts     map[string]Mount  `yaml:"mounts,omitempty"`
-	Env        map[string]string `yaml:"environment,omitempty"`
-	Labels     map[string]string `yaml:"labels,omitempty"`
-	Network    string            `yaml:"network,omitempty"`
-	Resources  *Resources        `yaml:"resources,omitempty"`
-	TTY        string            `yaml:"tty,omitempty"`
-	Tools      map[string]string `yaml:"tools,omitempty"`
+	Version     int               `yaml:"version"`
+	ExtendsList ExtendsList       `yaml:"extends,omitempty"`
+	Image       string            `yaml:"image,omitempty"`
+	Build       *Build            `yaml:"build,omitempty"`
+	Command     []string          `yaml:"command,omitempty"`
+	ArgsIfNone  []string          `yaml:"args_if_none,omitempty"`
+	Caches      map[string]string `yaml:"caches,omitempty"`
+	Mounts      map[string]Mount  `yaml:"mounts,omitempty"`
+	Env         map[string]string `yaml:"environment,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Network     string            `yaml:"network,omitempty"`
+	Resources   *Resources        `yaml:"resources,omitempty"`
+	TTY         string            `yaml:"tty,omitempty"`
+	Tools       map[string]string `yaml:"tools,omitempty"`
 }
 
 // Build is the escape-hatch image source: a Dockerfile + optional depends_on.
@@ -30,6 +55,7 @@ type Build struct {
 type Mount struct {
 	Source   string `yaml:"source"`
 	ReadOnly bool   `yaml:"read_only"`
+	Optional bool   `yaml:"optional"`
 }
 
 // Resources are optional resource hints (best-effort; runtime may ignore).

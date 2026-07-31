@@ -47,7 +47,7 @@ func BuiltInProfiles() []string {
 }
 
 func validateFragment(name string, p profile.RawProfile) error {
-	if p.Extends != "" || p.Image != "" || p.Build != nil || len(p.Command) > 0 || p.Version != 0 {
+	if len(p.ExtendsList) != 0 || p.Image != "" || p.Build != nil || len(p.Command) > 0 || p.Version != 0 {
 		return fmt.Errorf("fragment %q must not set extends/image/build/command/version", name)
 	}
 	return nil

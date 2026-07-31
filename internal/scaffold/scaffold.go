@@ -213,7 +213,7 @@ func generate(profileName string, selectedFragments []string) (string, error) {
 	for _, name := range selectedFragments {
 		base = profile.MergeProfiles(base, Fragments()[name])
 	}
-	base.Extends = profileName // set after merge; MergeProfiles clears Extends
+	base.ExtendsList = profile.ExtendsList{profileName} // set after merge; MergeProfiles clears ExtendsList
 
 	data, err := yaml.Marshal(base.Profile)
 	if err != nil {

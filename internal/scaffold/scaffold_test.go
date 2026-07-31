@@ -30,7 +30,7 @@ func TestValidateFragmentRejectsIdentityFields(t *testing.T) {
 				t.Errorf("expected error for fragment %q with image set", name)
 			}
 			bad = p
-			bad.Extends = "shell"
+			bad.ExtendsList = profile.ExtendsList{"shell"}
 			if err := validateFragment(name, bad); err == nil {
 				t.Errorf("expected error for fragment %q with extends set", name)
 			}
@@ -65,8 +65,8 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	}
 
 	// extends
-	if !strings.Contains(output, "extends: opencode") {
-		t.Errorf("missing extends: opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
+		t.Errorf("missing extends list with opencode, got:\n%s", output)
 	}
 
 	// No command: [] (omitempty should handle this)
@@ -342,7 +342,7 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 		t.Errorf("should prompt for fragments on stderr")
 	}
 	// YAML goes to stdout
-	if !strings.Contains(stdout.String(), "extends: opencode") {
+	if !strings.Contains(stdout.String(), "- opencode") {
 		t.Error("stdout should contain generated YAML")
 	}
 	// No file written
@@ -416,8 +416,8 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends: shell") {
-		t.Errorf("should contain extends: shell, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- shell") {
+		t.Errorf("should contain extends list with shell, got:\n%s", output)
 	}
 	if strings.Contains(output, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
@@ -488,8 +488,8 @@ func TestInteractiveWizard(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends: opencode") {
-		t.Errorf("missing extends: opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
+		t.Errorf("missing extends list with opencode, got:\n%s", output)
 	}
 	if !strings.Contains(output, "npm: ~/.npm") {
 		t.Errorf("missing npm cache, got:\n%s", output)
@@ -549,7 +549,7 @@ func TestPostWriteValidationSurvivesBrokenSibling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generated file was deleted despite being valid: %v", err)
 	}
-	if !strings.Contains(string(data), "extends: opencode") {
+	if !strings.Contains(string(data), "- opencode") {
 		t.Errorf("generated file should contain extends: opencode, got:\n%s", string(data))
 	}
 	if !strings.Contains(stdout.String(), "generated config is valid") {
