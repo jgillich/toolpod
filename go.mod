@@ -7,6 +7,7 @@ require (
 	github.com/alecthomas/kong v1.16.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/docker/docker v27.1.0+incompatible
+	github.com/docker/go-connections v0.6.0
 	github.com/gofrs/flock v0.13.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
@@ -32,7 +33,6 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect

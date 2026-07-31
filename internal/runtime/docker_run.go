@@ -19,7 +19,9 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 	"github.com/jgillich/toolpod/internal/mise"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -57,6 +59,10 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	envList := buildEnv(spec, runtimeHome)
 	containerName := "toolpod-" + spec.ProfileName + "-" + randomID(8)
 
+	exposedPorts, portBindings := buildPortBindings(spec)
+	devices := buildDevices(spec)
+	cgroupRules := buildDeviceCgroupRules(spec)
+
 	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
 
 	var oldState *term.State
@@ -82,10 +88,16 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		Labels:       spec.Labels,
 		Hostname:     "toolpod",
 		Entrypoint:   []string{},
+		ExposedPorts: exposedPorts,
 	}, &container.HostConfig{
-		Mounts:      mounts,
-		NetworkMode: container.NetworkMode(spec.Network),
-		AutoRemove:  false,
+		Mounts:       mounts,
+		NetworkMode:  container.NetworkMode(spec.Network),
+		AutoRemove:   false,
+		PortBindings: portBindings,
+		Resources: container.Resources{
+			Devices:           devices,
+			DeviceCgroupRules: cgroupRules,
+		},
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
 		return 3, fmt.Errorf("create container: %w", err)
@@ -150,6 +162,14 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return 3, fmt.Errorf("start container: %w", err)
+	}
+
+	for _, p := range spec.PortSpecs {
+		ip := p.HostIP
+		if ip == "" || ip == "0.0.0.0" {
+			ip = "127.0.0.1"
+		}
+		fmt.Fprintf(os.Stderr, "listening on %s://%s:%s\n", p.Protocol, ip, p.HostPort)
 	}
 
 	// Pump streams AFTER start. This blocks until the container exits and
@@ -252,6 +272,64 @@ func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
 		})
 	}
 	return m
+}
+
+func buildPortBindings(spec Spec) (nat.PortSet, nat.PortMap) {
+	exposed := nat.PortSet{}
+	bindings := nat.PortMap{}
+	for _, p := range spec.PortSpecs {
+		port := nat.Port(p.Container + "/" + p.Protocol)
+		exposed[port] = struct{}{}
+		bindings[port] = []nat.PortBinding{{HostIP: p.HostIP, HostPort: p.HostPort}}
+	}
+	return exposed, bindings
+}
+
+func buildDevices(spec Spec) []container.DeviceMapping {
+	var out []container.DeviceMapping
+	for _, d := range spec.DeviceSpecs {
+		if _, err := os.Stat(d.Host); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping device %s: %v\n", d.Container, err)
+			continue
+		}
+		out = append(out, container.DeviceMapping{
+			PathOnHost:        d.Host,
+			PathInContainer:   d.Container,
+			CgroupPermissions: d.Perms,
+		})
+	}
+	return out
+}
+
+func buildDeviceCgroupRules(spec Spec) []string {
+	var out []string
+	for _, d := range spec.DeviceSpecs {
+		if !d.Cgroup {
+			continue
+		}
+		major, minor, ok := deviceMajorMinor(d.Host)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "warning: device %s: cannot stat %s, no cgroup rule emitted\n", d.Container, d.Host)
+			continue
+		}
+		rule := fmt.Sprintf("c %d:%d rwm", major, minor)
+		if _, err := os.Lstat(fmt.Sprintf("/sys/dev/char/%d:%d", major, minor)); err != nil {
+			if _, err2 := os.Lstat(fmt.Sprintf("/sys/dev/block/%d:%d", major, minor)); err2 != nil {
+				rule = fmt.Sprintf("c %d:* rwm", major)
+				fmt.Fprintf(os.Stderr, "warning: device %s: no sysfs entry for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
+			}
+		}
+		out = append(out, rule)
+	}
+	return out
+}
+
+func deviceMajorMinor(path string) (int, int, bool) {
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		return 0, 0, false
+	}
+	return int(unix.Major(uint64(st.Rdev))), int(unix.Minor(uint64(st.Rdev))), true
 }
 
 func buildEnv(spec Spec, runtimeHome string) []string {
