@@ -1,0 +1,7 @@
+mounts:
+  ~/.ssh:
+    source: ~/.ssh
+    read_only: true
+  ~/.ssh/known_hosts:
+    source: ~/.ssh/known_hosts
+    read_only: false

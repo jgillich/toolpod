@@ -1,0 +1,4 @@
+caches:
+  go: ~/go
+tools:
+  go: latest

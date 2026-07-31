@@ -1,0 +1,4 @@
+caches:
+  cargo: ~/.cargo
+tools:
+  rust: latest

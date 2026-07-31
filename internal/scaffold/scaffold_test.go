@@ -12,7 +12,7 @@ import (
 )
 
 func TestPresetsAreValid(t *testing.T) {
-	for name, p := range presets {
+	for name, p := range Presets() {
 		if err := validatePreset(name, p); err != nil {
 			t.Errorf("preset %q: %v", name, err)
 		}
@@ -20,9 +20,9 @@ func TestPresetsAreValid(t *testing.T) {
 }
 
 func TestValidatePresetRejectsIdentityFields(t *testing.T) {
-	for name := range presets {
+	for name := range Presets() {
 		t.Run(name, func(t *testing.T) {
-			p := presets[name]
+			p := Presets()[name]
 			// Mutate a copy to set a forbidden field and verify rejection.
 			bad := p
 			bad.Image = "evil:latest"
@@ -141,6 +141,16 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	if len(cfg.Command) != 1 || cfg.Command[0] != "opencode" {
 		t.Errorf("Command = %v, want [opencode] inherited from built-in", cfg.Command)
 	}
+	// Presets install mise tools alongside their caches
+	if cfg.Tools["node"] != "latest" {
+		t.Errorf("Tools[node] = %q, want latest (from npm preset)", cfg.Tools["node"])
+	}
+	if cfg.Tools["go"] != "latest" {
+		t.Errorf("Tools[go] = %q, want latest (from go preset)", cfg.Tools["go"])
+	}
+	if cfg.Tools["opencode"] != "latest" {
+		t.Errorf("Tools[opencode] = %q, want latest (inherited from built-in)", cfg.Tools["opencode"])
+	}
 }
 
 func TestSkipExistingWithoutForce(t *testing.T) {
@@ -248,6 +258,67 @@ func TestForceInteractiveDeclinePrompt(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
 	if string(data) != "version: 1\n" {
 		t.Error("file should be unchanged after declining overwrite")
+	}
+}
+
+func TestInteractiveOverwritePromptDecline(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(headerMarker+"\nversion: 1\nextends: opencode\n"), 0o644)
+	var stdout, stderr bytes.Buffer
+	// No Profile/Presets provided → wizard triggers → overwrite prompt shows
+	err := Run(context.Background(), Options{
+		Interactive: true,
+		ProfileDir:  dir,
+	}, strings.NewReader("opencode\nnpm\nn\n"), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("declining prompt should not error, got: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "skipped") {
+		t.Error("should print skipped")
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if string(data) != headerMarker+"\nversion: 1\nextends: opencode\n" {
+		t.Error("file should be unchanged after declining overwrite")
+	}
+}
+
+func TestInteractiveOverwritePromptAccept(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(headerMarker+"\nversion: 1\nextends: opencode\n"), 0o644)
+	var stdout, stderr bytes.Buffer
+	// No Profile/Presets provided → wizard triggers → overwrite prompt shows
+	err := Run(context.Background(), Options{
+		Interactive: true,
+		ProfileDir:  dir,
+	}, strings.NewReader("opencode\nnpm\ny\n"), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("accepting prompt should not error, got: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "created") {
+		t.Errorf("should print created, got: %s", stdout.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if !strings.Contains(string(data), "npm: ~/.npm") {
+		t.Error("file should contain npm cache from new generation")
+	}
+}
+
+func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(headerMarker+"\nversion: 1\nextends: opencode\n"), 0o644)
+	var stdout, stderr bytes.Buffer
+	// All args provided explicitly in a TTY-like test → no wizard → no prompt
+	err := Run(context.Background(), Options{
+		Profile:     "opencode",
+		Presets:     []string{"npm"},
+		Interactive: true,
+		ProfileDir:  dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error for existing file with explicit args and no --force")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should mention 'already exists', got: %v", err)
 	}
 }
 

@@ -1,0 +1,4 @@
+caches:
+  pip: ~/.cache/pip
+tools:
+  python: latest

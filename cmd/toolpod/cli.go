@@ -146,6 +146,13 @@ func runPrune(args []string) int {
 func runInit(args []string) int {
 	var opts scaffold.Options
 	fs := pflag.NewFlagSet("init", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: toolpod init [profile] [flags]")
+		fmt.Fprintln(os.Stderr, "  profile  Built-in profile to extend (e.g. opencode, shell, codex)")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
 	fs.StringSliceVar(&opts.Presets, "presets", nil, "comma-separated preset names")
 	fs.BoolVar(&opts.Force, "force", false, "overwrite an existing user profile file")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the generated file without writing it")
@@ -180,7 +187,8 @@ Usage:
 
 Commands:
   shell                          Launch the built-in "shell" profile
-  init [<profile>]               Generate a user profile override with presets
+  init [profile]                 Generate a user profile override with presets
+                                 (profile: opencode, shell, codex)
   doctor                         Check runtime, profiles, workspace, and project tools
   prune                          Remove toolpod-prefixed volumes and images
 
