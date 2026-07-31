@@ -30,21 +30,32 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 		return rc, nil
 	}
 	// Special case: a user shadow that extends the built-in of the same name.
-	// IsUserShadow implies a built-in exists, so GetBuiltin should always succeed
-	// here; the !ok branch is a defensive guard.
-	if len(rc.ExtendsList) == 1 && rc.ExtendsList[0] == name && cat.IsUserShadow(name) {
+	// The first entry may be a self-reference (profileName) that must be
+	// resolved as the built-in to avoid a cycle. IsUserShadow implies a
+	// built-in exists, so GetBuiltin should always succeed here.
+	if cat.IsUserShadow(name) && len(rc.ExtendsList) > 0 && rc.ExtendsList[0] == name {
 		builtin, ok := cat.GetBuiltin(name)
 		if !ok {
 			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
 		}
-		// Resolve the built-in's own extends chain (e.g. opencode -> mise)
-		// before merging the user shadow on top. Use a fresh seen map so
-		// the built-in's chain doesn't conflict with the current name.
 		parent, err := resolveBuiltinChain(cat, builtin, seen)
 		if err != nil {
 			return RawProfile{}, err
 		}
-		merged := MergeProfiles(parent, rc)
+		merged := parent
+		resolved := map[string]bool{name: true}
+		for _, parentName := range rc.ExtendsList[1:] {
+			if resolved[parentName] {
+				continue
+			}
+			resolved[parentName] = true
+			p, err := resolveChain(cat, parentName, seen)
+			if err != nil {
+				return RawProfile{}, err
+			}
+			merged = MergeProfiles(merged, p)
+		}
+		merged = MergeProfiles(merged, rc)
 		merged.Path = rc.Path
 		return merged, nil
 	}

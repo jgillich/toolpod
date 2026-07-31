@@ -49,9 +49,6 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
-	// Note: this test uses mount fragments (gitconfig, ssh) so checkFragmentFiles
-	// may emit warnings to stderr if those host files are absent. This test
-	// only asserts on the generated file content, not stderr.
 
 	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
 	if err != nil {
@@ -64,9 +61,21 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 		t.Errorf("missing header marker, got:\n%s", output)
 	}
 
-	// extends
+	// extends list references profile + fragments
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
 		t.Errorf("missing extends list with opencode, got:\n%s", output)
+	}
+	if !strings.Contains(output, "- npm") {
+		t.Errorf("missing npm in extends list, got:\n%s", output)
+	}
+	if !strings.Contains(output, "- go") {
+		t.Errorf("missing go in extends list, got:\n%s", output)
+	}
+	if !strings.Contains(output, "- gitconfig") {
+		t.Errorf("missing gitconfig in extends list, got:\n%s", output)
+	}
+	if !strings.Contains(output, "- ssh") {
+		t.Errorf("missing ssh in extends list, got:\n%s", output)
 	}
 
 	// No command: [] (omitempty should handle this)
@@ -74,26 +83,15 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 		t.Errorf("should not emit command: in override, got:\n%s", output)
 	}
 
-	// Caches (alphabetical)
-	if !strings.Contains(output, "go: ~/go") {
-		t.Errorf("missing go cache, got:\n%s", output)
+	// Should NOT contain inlined cache/mount content (live-linked via extends)
+	if strings.Contains(output, "npm: ~/.npm") {
+		t.Errorf("should not inline npm cache, got:\n%s", output)
 	}
-	if !strings.Contains(output, "npm: ~/.npm") {
-		t.Errorf("missing npm cache, got:\n%s", output)
+	if strings.Contains(output, "~/.gitconfig:") {
+		t.Errorf("should not inline gitconfig mount, got:\n%s", output)
 	}
-
-	// Mounts
-	if !strings.Contains(output, "~/.gitconfig:") {
-		t.Errorf("missing gitconfig mount, got:\n%s", output)
-	}
-	if !strings.Contains(output, "~/.ssh:") {
-		t.Errorf("missing ssh mount, got:\n%s", output)
-	}
-	if !strings.Contains(output, "~/.ssh/known_hosts:") {
-		t.Errorf("missing known_hosts mount, got:\n%s", output)
-	}
-	if !strings.Contains(output, "read_only: false") {
-		t.Errorf("known_hosts should be read_only: false, got:\n%s", output)
+	if strings.Contains(output, "~/.ssh:") {
+		t.Errorf("should not inline ssh mount, got:\n%s", output)
 	}
 }
 
@@ -187,8 +185,8 @@ func TestForceOverwritesExisting(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "npm: ~/.npm") {
-		t.Errorf("file should contain npm cache after force overwrite")
+	if !strings.Contains(string(data), "- npm") {
+		t.Errorf("file should reference npm fragment after force overwrite")
 	}
 }
 
@@ -298,8 +296,8 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 		t.Errorf("should print created, got: %s", stdout.String())
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "npm: ~/.npm") {
-		t.Error("file should contain npm cache from new generation")
+	if !strings.Contains(string(data), "- npm") {
+		t.Error("file should reference npm fragment from new generation")
 	}
 }
 
@@ -432,7 +430,7 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Fragments:    []string{"npm", "ssh"},
+		Fragments:  []string{"npm", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -452,11 +450,48 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	}
 }
 
+func TestGenerateWritesExtendsList(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Profile:    "opencode",
+		Fragments:  []string{"npm", "go"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Read the generated file
+	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	// Should contain extends list, not inlined caches/tools
+	if !strings.Contains(content, "extends:") {
+		t.Error("generated file should contain extends:")
+	}
+	if !strings.Contains(content, "npm") {
+		t.Error("generated file should reference npm fragment")
+	}
+	if !strings.Contains(content, "go") {
+		t.Error("generated file should reference go fragment")
+	}
+	// Should NOT contain inlined cache paths from npm fragment
+	if strings.Contains(content, "~/.npm") {
+		t.Error("generated file should not inline ~/.npm cache (should be live-linked via extends)")
+	}
+	// Should NOT contain inlined tool entries from fragments
+	if strings.Contains(content, "node: latest") {
+		t.Error("generated file should not inline node tool (should be live-linked via extends)")
+	}
+}
+
 func TestPromptsGoToStderr(t *testing.T) {
 	dir := t.TempDir()
 	// Non-interactive mode (Interactive not set, defaults to false) should
 	// not write prompts. Uses "npm" fragment which has no file mounts, so
-	// checkFragmentFiles produces no stderr output either.
+	// no stderr output either.
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
@@ -491,11 +526,11 @@ func TestInteractiveWizard(t *testing.T) {
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
 		t.Errorf("missing extends list with opencode, got:\n%s", output)
 	}
-	if !strings.Contains(output, "npm: ~/.npm") {
-		t.Errorf("missing npm cache, got:\n%s", output)
+	if !strings.Contains(output, "- npm") {
+		t.Errorf("missing npm in extends list, got:\n%s", output)
 	}
-	if !strings.Contains(output, "~/.gitconfig:") {
-		t.Errorf("missing gitconfig mount, got:\n%s", output)
+	if !strings.Contains(output, "- gitconfig") {
+		t.Errorf("missing gitconfig in extends list, got:\n%s", output)
 	}
 	// Prompts should go to stderr, not stdout
 	if strings.Contains(stdout.String(), "Available built-in profiles") {

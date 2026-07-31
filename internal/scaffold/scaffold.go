@@ -117,9 +117,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// Dedup fragments
 	selectedFragments = dedup(selectedFragments)
 
-	// Check host-side existence of file fragment sources (spec §10b)
-	checkFragmentFiles(selectedFragments, stderr)
-
 	// Generate the profile content
 	content, err := generate(profileName, selectedFragments)
 	if err != nil {
@@ -207,21 +204,22 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 }
 
 func generate(profileName string, selectedFragments []string) (string, error) {
-	base := profile.RawProfile{Profile: profile.Profile{
-		Version: 1,
-	}}
-	for _, name := range selectedFragments {
-		base = profile.MergeProfiles(base, Fragments()[name])
-	}
-	base.ExtendsList = profile.ExtendsList{profileName} // set after merge; MergeProfiles clears ExtendsList
+	extends := make([]string, 0, len(selectedFragments)+1)
+	extends = append(extends, profileName)
+	extends = append(extends, selectedFragments...)
 
-	data, err := yaml.Marshal(base.Profile)
+	p := profile.Profile{
+		Version:     1,
+		ExtendsList: profile.ExtendsList(extends),
+	}
+
+	data, err := yaml.Marshal(p)
 	if err != nil {
 		return "", err
 	}
 
 	header := headerMarker + "\n" +
-		fmt.Sprintf("# This user profile overrides the built-in %q profile.\n", profileName) +
+		fmt.Sprintf("# This user profile extends the built-in %q profile.\n", profileName) +
 		"# Remove this file to restore the built-in default.\n\n"
 
 	return header + string(data), nil
