@@ -15,6 +15,10 @@ func Launch(ctx context.Context, opts LaunchOpts) Result {
 }
 
 func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result {
+	progress := opts.Progress
+	if progress == nil {
+		progress = &stderrProgress{}
+	}
 	userDir := opts.ProfileDir
 	if userDir == "" {
 		userDir = profile.DefaultProfileDir()
@@ -69,7 +73,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			RenderSpec(w, spec)
 		}
 
-		progress := &stdoutProgress{w: w}
+		progress := progress
 		imageRef, err := rt.Prepare(ctx, spec, progress)
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
@@ -93,12 +97,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	return Result{ExitCode: 0}
 }
 
-type stdoutProgress struct {
-	w io.Writer
-}
+type stderrProgress struct{}
 
-func (s *stdoutProgress) WriteProgress(line string) {
-	fmt.Fprintln(s.w, line)
+func (stderrProgress) WriteProgress(line string) {
+	fmt.Fprintln(os.Stderr, line)
 }
 
 func parseToolFlag(s string) (string, string) {

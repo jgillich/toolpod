@@ -15,12 +15,16 @@ type LaunchOpts struct {
 	Args        []string
 	Command     string
 	Workspace   string
-	ProfileDir   string
+	ProfileDir  string
 	ExtraTools  []string
 	Rebuild     bool
 	DryRun      bool
 	Verbose     bool
 	Runtime     runtime.Runtime
+	// Progress receives status lines during Prepare (image pull, mise
+	// install). If nil, progress goes to stderr. Set to a no-op writer
+	// to silence progress entirely.
+	Progress runtime.ProgressWriter
 }
 
 type Result struct {

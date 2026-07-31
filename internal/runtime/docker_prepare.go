@@ -46,7 +46,6 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		return "", fmt.Errorf("mise tools: %w", err)
 	}
 
-	w.WriteProgress("prepare: complete")
 	return imageRef, nil
 }
 
