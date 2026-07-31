@@ -78,7 +78,7 @@ func TestE2EShellLaunch(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runToolpod(t, "shell", "-c", "echo hello-from-toolpod")
+	out, err := runToolpod(t, "-c", "echo hello-from-toolpod", "shell")
 	if err != nil {
 		t.Fatalf("shell launch: %v\n%s", err, out)
 	}

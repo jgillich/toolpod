@@ -14,6 +14,17 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// globalFlags holds toolpod-owned flags parsed BEFORE the profile name.
+// Everything after the profile name is passed through verbatim to the
+// profile's command — no flag parsing, no collisions with agent flags.
+type globalFlags struct {
+	workspace string
+	command   string
+	dryRun    bool
+	verbose   bool
+	rebuild   bool
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -21,47 +32,73 @@ func main() {
 	}
 
 	cmd := os.Args[1]
-	args := os.Args[2:]
 
+	// Subcommands with their own flag sets.
 	switch cmd {
 	case "doctor":
-		os.Exit(runDoctor(args))
+		os.Exit(runDoctor(os.Args[2:]))
 	case "init":
-		os.Exit(runInit(args))
+		os.Exit(runInit(os.Args[2:]))
 	case "prune":
-		os.Exit(runPrune(args))
-	case "shell":
-		os.Exit(runShell(args))
+		os.Exit(runPrune(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
-	default:
-		os.Exit(runProfile(cmd, args))
+		return
 	}
+
+	// Default: launch a profile. toolpod-owned flags come before the
+	// profile name; everything after is passthrough to the profile command.
+	//   toolpod [--workspace X] [--verbose] [--dry-run] [--rebuild] [-c CMD] <profile> [args...]
+	gf, profileName, passthrough, ok := parseGlobalFlags(os.Args[1:])
+	if !ok {
+		os.Exit(2)
+	}
+	os.Exit(runProfile(gf, profileName, passthrough))
 }
 
-func runShell(args []string) int {
-	return runProfile("shell", args)
-}
-
-func runProfile(profileName string, args []string) int {
-	opts := toolpod.LaunchOpts{ProfileName: profileName}
-	var cmd string
-	fs := pflag.NewFlagSet(profileName, pflag.ContinueOnError)
-	fs.StringVarP(&cmd, "command", "c", "", "command to run in the profile")
-	fs.StringVar(&opts.Workspace, "workspace", "", "workspace directory to mount")
-	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the spec without launching")
-	fs.BoolVar(&opts.Verbose, "verbose", false, "print the spec before launching")
-	fs.BoolVar(&opts.Rebuild, "rebuild", false, "rebuild the image even if cached")
+// parseGlobalFlags scans os.Args[1:] for toolpod-owned flags, stopping at the
+// first non-flag argument (the profile name). Everything after the profile
+// name is returned verbatim as passthrough. Returns ok=false on parse error
+// (error already printed).
+func parseGlobalFlags(args []string) (gf globalFlags, profileName string, passthrough []string, ok bool) {
+	fs := pflag.NewFlagSet("toolpod", pflag.ContinueOnError)
+	fs.StringVarP(&gf.command, "command", "c", "", "command to run in the profile (shell only)")
+	fs.StringVar(&gf.workspace, "workspace", "", "workspace directory to mount")
+	fs.BoolVar(&gf.dryRun, "dry-run", false, "print the spec without launching")
+	fs.BoolVar(&gf.verbose, "verbose", false, "print the spec before launching")
+	fs.BoolVar(&gf.rebuild, "rebuild", false, "rebuild the image even if cached")
+	// Stop at the first non-flag arg; treat everything from there on as the
+	// profile name + passthrough. pflag.InterspersedFlags=false makes Parse
+	// return at the first positional, leaving the rest in fs.Args().
+	fs.SetInterspersed(false)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 2
+		return gf, "", nil, false
+	}
+	remaining := fs.Args()
+	if len(remaining) == 0 {
+		fmt.Fprintln(os.Stderr, "profile name required")
+		fmt.Fprintln(os.Stderr, "Usage: toolpod [flags] <profile> [args...]")
+		fmt.Fprintln(os.Stderr, "Run 'toolpod help' for details.")
+		return gf, "", nil, false
+	}
+	return gf, remaining[0], remaining[1:], true
+}
+
+func runProfile(gf globalFlags, profileName string, passthrough []string) int {
+	opts := toolpod.LaunchOpts{
+		ProfileName: profileName,
+		Workspace:   gf.workspace,
+		DryRun:      gf.dryRun,
+		Verbose:     gf.verbose,
+		Rebuild:     gf.rebuild,
+		Command:     gf.command,
+		Args:        passthrough,
 	}
 	if opts.Workspace == "" {
 		wd, _ := os.Getwd()
 		opts.Workspace = wd
 	}
-	opts.Args = append(opts.Args, fs.Args()...)
-	opts.Command = cmd
 
 	result := toolpod.Launch(context.Background(), opts)
 	if result.Err != nil {
@@ -180,11 +217,22 @@ func usage() {
 	fmt.Printf(`toolpod — ephemeral dev environments
 
 Usage:
-  toolpod <profile> [args...] [flags]  Launch a profile (e.g. "shell")
-  toolpod init [<profile>] [flags]  Generate a user profile override with presets
-  toolpod doctor [flags]         Run environment diagnostics
-  toolpod prune [flags]          Remove toolpod-managed volumes and images
-  toolpod help                   Show this help
+  toolpod [flags] <profile> [args...]  Launch a profile (e.g. "shell")
+  toolpod init [<profile>] [flags]      Generate a user profile override with presets
+  toolpod doctor [flags]                Run environment diagnostics
+  toolpod prune [flags]                 Remove toolpod-managed volumes and images
+  toolpod help                          Show this help
+
+Flags (must come before the profile name):
+  -c, --command <cmd>            Run a command in the profile (shell only)
+  --workspace <path>             Workspace directory to mount (default: $PWD)
+  --dry-run                      Print the spec without launching
+  --verbose                       Print the spec before launching
+  --rebuild                      Rebuild the image even if cached
+
+Everything after the profile name is passed verbatim to the profile's command,
+so agent flags like "--model foo" work without any escaping:
+  toolpod opencode --model foo
 
 Commands:
   shell                          Launch the built-in "shell" profile
@@ -193,18 +241,16 @@ Commands:
   doctor                         Check runtime, profiles, workspace, and project tools
   prune                          Remove toolpod-prefixed volumes and images
 
-Flags:
-  --workspace string             Workspace directory to mount
-  --dry-run                      Print the spec without launching
-  --verbose                      Print the spec before launching
-  --rebuild                      Rebuild the image even if cached
-  --volumes, --images, --force   Prune-specific flags
+Init/prune flags:
   --presets <names>              Init: comma-separated preset names (%s)
   --force                        Init: overwrite existing profile file
+  --volumes, --images            Prune: what to remove (default: both)
 
 Examples:
   toolpod shell
-  toolpod shell -c "echo hello"
+  toolpod -c "echo hello" shell
+  toolpod --workspace ~/p2 shell
+  toolpod opencode --model foo
   toolpod opencode config view
   toolpod init opencode --presets npm,go,gitconfig,ssh
   toolpod doctor
