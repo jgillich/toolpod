@@ -94,17 +94,17 @@ The first launch of a profile pulls the mise base image and installs tools into 
 
 ### `toolpod init`
 
-Profiles become useful once they carry *your* mounts and caches — your SSH keys, your git config, the package caches for the languages you use. `toolpod init` generates a user profile override that extends a built-in and merges in selected **presets**:
+Profiles become useful once they carry *your* mounts and caches — your SSH keys, your git config, the package caches for the languages you use. `toolpod init` generates a user profile override that extends a built-in and merges in selected **fragments** (pass `--presets` as an alias for `--fragments`):
 
 ```sh
-# Interactive wizard (prompts for profile + presets).
+# Interactive wizard (prompts for profile + fragments).
 $ toolpod init
 
-# Non-interactive: extend the opencode built-in, add presets.
-$ toolpod init opencode --presets npm,go,gitconfig,ssh
+# Non-interactive: extend the opencode built-in, add fragments.
+$ toolpod init opencode --fragments npm,go,gitconfig,ssh
 
 # Preview the generated file without writing it.
-$ toolpod init opencode --presets npm,gh --dry-run
+$ toolpod init opencode --fragments npm,gh --dry-run
 ```
 
 This writes `~/.config/toolpod/profiles/opencode.yaml`, which shadows the built-in `opencode` profile. The built-in provides the image, command, and agent tool; your file adds the mounts and caches you selected. Remove the file to restore the built-in default.
@@ -152,7 +152,7 @@ caches:
 | `gemini` | `gemini` | Google's Gemini CLI. Mounts `~/.gemini` (rw) so checkpoints and OAuth tokens persist. |
 | `shell` | `bash` | A disposable, project-aware shell. No agent-specific tools or mounts. Useful as a base to `extends:`. |
 
-All built-ins extend a shared `mise` base profile (`image: ghcr.io/jdx/mise:latest`) and install their agent as a `tools:` entry. None mount `~/.ssh` or `~/.gitconfig` by default — add those via `init` presets or by hand.
+All built-ins extend a shared `mise` base profile (`image: ghcr.io/jdx/mise:latest`) and install their agent as a `tools:` entry. None mount `~/.ssh` or `~/.gitconfig` by default — add those via `init` fragments or by hand.
 
 ### Schema reference
 
@@ -161,12 +161,12 @@ Every field is optional except `version` and `command` (required in the resolved
 | Field | Type | Description |
 | --- | --- | --- |
 | `version` | int | Config schema version. Currently `1`. |
-| `extends` | string | Inherit from another profile (built-in or user), then deep-merge. Cycles are rejected. |
+| `extends` | string \| list | Inherit from another profile or fragment (built-in or user), then deep-merge. Accepts a single name (`extends: opencode`) for backward compatibility, or a list (`extends: [opencode, ssh, npm]`). Entries are resolved depth-first and merged left-to-right; the profile body always wins last. Cycles are rejected. |
 | `image` | string | Container image to use. Mutually exclusive with `build`. |
 | `build` | object | Escape hatch: `{ dockerfile, context, depends_on }` to build a custom image. |
 | `command` | string[] | The command to run. CLI args are appended verbatim. |
 | `args_if_none` | string[] | Default args used only if the user passes none. |
-| `mounts` | map | Bind mounts, keyed by container target. `~` in target → runtime home, in source → host `$HOME`. |
+| `mounts` | map | Bind mounts, keyed by container target. Each entry has `source`, `read_only`, and `optional` (if true, the mount is skipped when the source doesn't exist). `~` in target → runtime home, in source → host `$HOME`. `{{ }}` template expressions are evaluated against the host environment via `.Env` (e.g. `{{ or (index .Env "DOCKER_HOST") "/var/run/docker.sock" }}`), `uid` (host user ID), and `trimPrefix`/`printf` helpers. |
 | `caches` | map | Named-volume-backed cache dirs, keyed by cache name. Shared across all profiles. |
 | `tools` | map | mise-managed tools to ensure installed, keyed by name. Value is the version. |
 | `environment` | map | Env vars. Empty string = passthrough from host; literal = set. |
@@ -182,17 +182,44 @@ Every field is optional except `version` and `command` (required in the resolved
 - **Lists** (`command`, `args_if_none`): replaced, not concatenated.
 - **`image` / `build`:** treated as a single slot — setting either in a child clears the other from the parent.
 
-This lets you extend a built-in and change one mount or one tool version without redeclaring everything.
+`extends` accepts a single string (backward compatible) or a list:
 
-## Presets
-
-Presets are mergeable profile fragments — a bundle of mounts, caches, and tools for a specific tool or purpose. You don't use them directly; `toolpod init` merges selected presets into a user profile that extends a built-in.
-
-```sh
-$ toolpod init opencode --presets npm,go,gitconfig,ssh
+```yaml
+extends: [opencode, ssh, npm]   # resolved left-to-right; body wins last
 ```
 
-### Available presets
+All extends entries (and fragments) are composable building blocks: a profile inherits from one or more of them and then applies its own body on top. This lets you extend a built-in and change one mount or one tool version without redeclaring everything.
+
+### Inspecting profiles
+
+`profile show`, `profile edit`, and `profile list` let you inspect what toolpod resolves for a profile without launching a container.
+
+```sh
+# Print the raw (on-disk) profile, exactly as written.
+$ toolpod profile show shell
+
+# Print the fully merged profile, with all extends inlined.
+$ toolpod profile show --resolved shell
+
+# List every profile and fragment, labeled built-in / user / shadow / fragment.
+$ toolpod profile list
+
+# Open your user profile file in $EDITOR (creates an override for a built-in
+# via `toolpod init <name>`).
+$ toolpod profile edit myagent
+```
+
+`profile show --resolved` walks the extends chain depth-first (see [Inheritance and merge semantics](#inheritance-and-merge-semantics)) and prints the merged result — handy for debugging why a mount or tool isn't what you expect.
+
+## Fragments
+
+**Fragments are small, composable building blocks representing a single concern** — one tool's cache, one host config mount, or one credential set. Each fragment is a self-contained piece of a profile (mounts, caches, tools, env, labels) with no `extends`/`image`/`command` of its own. They live in the catalog alongside profiles, under globally unique names, and are merged into a user profile by `toolpod init`.
+
+```sh
+$ toolpod init opencode --fragments npm,go,gitconfig,ssh   # --presets is accepted as an alias
+```
+
+### Available fragments
 
 **Package caches** (tool + shared cache volume):
 
@@ -222,9 +249,12 @@ $ toolpod init opencode --presets npm,go,gitconfig,ssh
 | `gitconfig` | — | `~/.gitconfig` (ro) |
 | `netrc` | — | `~/.netrc` (ro) |
 | `ssh` | — | `~/.ssh` (ro) + `~/.ssh/known_hosts` (rw) |
-| `docker` | — | `/var/run/docker.sock` (rw — host Docker socket) |
+| `docker` | `docker-cli` | `{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") "/var/run/docker.sock" }}` (rw — host Docker socket) |
+| `podman` | `podman` | `{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}` (rw — host Podman socket) |
 
-There is no `all` shorthand — name presets explicitly. You can add your own presets by dropping a YAML fragment into the catalog, but the common case is to let `init` handle it.
+All fragment mounts are marked `optional: true` — if the source path doesn't exist on the host, the mount is silently skipped (with a stderr warning) rather than failing the launch. User-authored mounts default to required.
+
+There is no `all` shorthand — name fragments explicitly. You can add your own fragments by dropping a YAML fragment into the catalog, but the common case is to let `init` handle it.
 
 ## Runtime modes
 
@@ -241,12 +271,12 @@ toolpod talks to any Docker-API-compatible engine via `DOCKER_HOST`. The workspa
 toolpod/
   cmd/toolpod/        # thin CLI: arg parsing, stdio, exit codes
   internal/
-    catalog/          # embedded built-in profiles + presets (go:embed)
+    catalog/          # embedded built-in profiles + fragments (go:embed)
     profile/          # profile loading, extends merge, validation
     runtime/          # Docker Engine SDK: Prepare (image+tools) + Run (container+attach)
     mise/             # mise integration: ensure-tools, shared volume mgmt
     build/            # on-demand image build, depends_on resolution
-    scaffold/         # `toolpod init`: preset selection + profile generation
+    scaffold/         # `toolpod init`: fragment selection + profile generation
     doctor/           # environment diagnostics
     prune/            # volume/image cleanup
     ui/               # CLI output (TTY-aware)
