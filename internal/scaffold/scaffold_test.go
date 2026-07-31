@@ -288,7 +288,7 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nnpm\ny\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nnpm\nn\ny\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("accepting prompt should not error, got: %v", err)
 	}

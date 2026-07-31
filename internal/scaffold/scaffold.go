@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -121,6 +122,36 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	content, err := generate(profileName, selectedFragments)
 	if err != nil {
 		return fmt.Errorf("generating profile: %w", err)
+	}
+
+	// Resolve the profile to generate a summary.
+	resolved, err := resolveGeneratedProfile(content, profileName)
+	if err != nil {
+		return fmt.Errorf("resolving profile for summary: %w", err)
+	}
+
+	printSummary(stdout, profileName, selectedFragments, resolved)
+
+	// If the profile grants host access (mounts or env), prompt for review.
+	if len(resolved.Mounts) > 0 || len(resolved.Env) > 0 {
+		if interactive {
+			fmt.Fprint(stdout, "\nReview the resolved profile? [y/N]: ")
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(strings.ToLower(line))
+			if line == "y" || line == "yes" {
+				if err := openEditorWithResolved(resolved, stdout); err != nil {
+					fmt.Fprintf(stderr, "warning: could not open editor: %v\n", err)
+				} else {
+					fmt.Fprint(stdout, "Proceed with generating this profile? [y/N]: ")
+					line, _ = reader.ReadString('\n')
+					line = strings.TrimSpace(strings.ToLower(line))
+					if line != "y" && line != "yes" {
+						fmt.Fprintln(stdout, "aborted")
+						return nil
+					}
+				}
+			}
+		}
 	}
 
 	// Determine target path
@@ -379,4 +410,77 @@ func checkFragmentFiles(selectedFragments []string, stderr io.Writer) {
 			}
 		}
 	}
+}
+
+func resolveGeneratedProfile(content, profileName string) (profile.Profile, error) {
+	tmpDir, err := os.MkdirTemp("", "toolpod-init-summary-*")
+	if err != nil {
+		return profile.Profile{}, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, profileName+".yaml"), []byte(content), 0o644); err != nil {
+		return profile.Profile{}, err
+	}
+
+	cat, err := profile.LoadProfiles(tmpDir)
+	if err != nil {
+		return profile.Profile{}, err
+	}
+	return profile.ResolveProfile(cat, profileName)
+}
+
+func printSummary(stdout io.Writer, profileName string, fragments []string, resolved profile.Profile) {
+	fmt.Fprintf(stdout, "Profile: %s\n", profileName)
+	if len(fragments) > 0 {
+		fmt.Fprintf(stdout, "Fragments: %s\n", strings.Join(fragments, ", "))
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Container access:")
+
+	hasMounts := len(resolved.Mounts) > 0
+	hasEnv := len(resolved.Env) > 0
+
+	for target := range resolved.Mounts {
+		fmt.Fprintf(stdout, "  • mounts %s\n", target)
+	}
+	for k := range resolved.Env {
+		fmt.Fprintf(stdout, "  • passes %s\n", k)
+	}
+	for name := range resolved.Tools {
+		fmt.Fprintf(stdout, "  • installs %s\n", name)
+	}
+	for name := range resolved.Caches {
+		fmt.Fprintf(stdout, "  • caches %s\n", name)
+	}
+
+	_ = hasMounts
+	_ = hasEnv
+}
+
+func openEditorWithResolved(resolved profile.Profile, stdout io.Writer) error {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	data, err := yaml.Marshal(resolved)
+	if err != nil {
+		return err
+	}
+	tmpFile, err := os.CreateTemp("", "toolpod-resolved-*.yaml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	tmpFile.Close()
+
+	cmd := exec.Command(editor, tmpFile.Name())
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
