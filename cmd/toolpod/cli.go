@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
 	"github.com/jgillich/toolpod/internal/doctor"
@@ -31,7 +32,7 @@ type LaunchCmd struct {
 	// passed verbatim to the profile's command. passthrough:"" stops
 	// flag parsing at the first positional, so agent flags like
 	// "--model foo" survive unescaped.
-	ProfileAndArgs []string `arg:"" name:"profile-and-args" passthrough:"partial" help:"Profile name followed by args passed verbatim to the profile."`
+	ProfileAndArgs []string `arg:"" optional:"" name:"profile-and-args" passthrough:"partial" help:"Profile name followed by args passed verbatim to the profile."`
 }
 
 type InitCmd struct {
@@ -96,9 +97,9 @@ func main() {
 	}
 }
 
-func (l *LaunchCmd) Run() error {
+func (l *LaunchCmd) Run(ctx *kong.Context) error {
 	if len(l.ProfileAndArgs) == 0 {
-		return fmt.Errorf("profile name required")
+		return ctx.PrintUsage(false)
 	}
 	profileName := l.ProfileAndArgs[0]
 	passthrough := l.ProfileAndArgs[1:]
@@ -266,22 +267,22 @@ func (c *ProfileListCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tKIND\tSOURCE")
 	for _, name := range cat.Names() {
 		rc, _ := cat.Get(name)
-		var label string
-		switch {
-		case cat.IsFragment(name) && strings.HasPrefix(rc.Path, "built-in"):
-			label = "fragment"
-		case cat.IsFragment(name):
-			label = "user-fragment"
-		case cat.IsUserShadow(name):
-			label = "user-shadow"
-		case strings.HasPrefix(rc.Path, "built-in"):
-			label = "built-in"
-		default:
-			label = "user"
+		kind, source := "profile", "built-in"
+		if cat.IsFragment(name) {
+			kind = "fragment"
 		}
-		fmt.Printf("%-20s %s\n", name, label)
+		if !strings.HasPrefix(rc.Path, "built-in") {
+			source = "user"
+			if cat.IsUserShadow(name) {
+				source = "user shadow"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", name, kind, source)
 	}
+	w.Flush()
 	return nil
 }

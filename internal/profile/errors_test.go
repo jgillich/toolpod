@@ -24,3 +24,11 @@ func TestProfileErrorExitCode(t *testing.T) {
 		t.Errorf("ExitCode() = %d, want 2", err.ExitCode())
 	}
 }
+
+func TestProfileErrorNoPath(t *testing.T) {
+	err := ProfileError{Message: "profile not found: az"}
+	want := "profile not found: az"
+	if err.Error() != want {
+		t.Errorf("Error() = %q, want %q (no stray leading colon when Path is empty)", err.Error(), want)
+	}
+}

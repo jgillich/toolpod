@@ -145,3 +145,22 @@ func TestResolveUserCrossCycle(t *testing.T) {
 		t.Errorf("error should mention cycle, got: %v", err)
 	}
 }
+
+func TestResolveExtendsMissingProfile(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: missing-parent\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolveProfile(cat, "child")
+	if err == nil {
+		t.Fatal("expected error for extends referencing a missing profile, got nil")
+	}
+	if strings.HasPrefix(err.Error(), ":") {
+		t.Errorf("error message should not start with a stray colon, got: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "missing-parent") {
+		t.Errorf("error message should name the missing profile, got: %q", err.Error())
+	}
+}

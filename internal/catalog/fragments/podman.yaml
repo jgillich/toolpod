@@ -1,5 +1,6 @@
 tools:
   podman: latest
+  docker-compose: latest
 mounts:
   /var/run/docker.sock:
     source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}'

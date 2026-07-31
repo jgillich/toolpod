@@ -1,5 +1,6 @@
 tools:
-  az: latest
+  pipx: latest
+  azure: latest
 mounts:
   ~/.azure:
     source: ~/.azure

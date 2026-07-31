@@ -11,6 +11,9 @@ type ProfileError struct {
 }
 
 func (e ProfileError) Error() string {
+	if e.Path == "" {
+		return e.Message
+	}
 	if e.Line > 0 {
 		return e.Path + ":" + strconv.Itoa(e.Line) + ": " + e.Message
 	}

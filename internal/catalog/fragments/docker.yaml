@@ -1,5 +1,6 @@
 tools:
   docker-cli: latest
+  docker-compose: latest
 mounts:
   /var/run/docker.sock:
     source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") "/var/run/docker.sock" }}'
