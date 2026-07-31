@@ -1,0 +1,5 @@
+tools:
+  kotlin: latest
+  gradle: latest
+caches:
+  gradle: ~/.gradle

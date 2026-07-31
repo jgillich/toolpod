@@ -1,0 +1,6 @@
+tools:
+  scala: latest
+  sbt: latest
+caches:
+  sbt: ~/.sbt
+  ivy: ~/.ivy2

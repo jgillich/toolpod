@@ -1,0 +1,6 @@
+tools:
+  elixir: latest
+  erlang: latest
+caches:
+  hex: ~/.hex
+  mix: ~/.mix

@@ -1,0 +1,4 @@
+tools:
+  dotnet: latest
+caches:
+  nuget: ~/.nuget
