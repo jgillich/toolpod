@@ -51,11 +51,24 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	seen[name] = true
 	defer delete(seen, name)
 
-	parent, err := resolveChain(cat, rc.ExtendsList[0], seen)
-	if err != nil {
-		return RawProfile{}, err
+	// Resolve each extends entry depth-first, merge left-to-right.
+	// Duplicates are ignored after first resolution.
+	merged := RawProfile{}
+	resolved := map[string]bool{}
+	for _, parentName := range rc.ExtendsList {
+		if resolved[parentName] {
+			continue
+		}
+		resolved[parentName] = true
+		parent, err := resolveChain(cat, parentName, seen)
+		if err != nil {
+			return RawProfile{}, err
+		}
+		merged = MergeProfiles(merged, parent)
 	}
-	merged := MergeProfiles(parent, rc)
+
+	// Merge the profile's own body last (wins over all extends).
+	merged = MergeProfiles(merged, rc)
 	merged.Path = rc.Path
 	return merged, nil
 }
