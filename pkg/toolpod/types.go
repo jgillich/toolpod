@@ -13,6 +13,7 @@ type (
 type LaunchOpts struct {
 	ProfileName string
 	Args        []string
+	Command     string
 	Workspace   string
 	ProfileDir   string
 	ExtraTools  []string

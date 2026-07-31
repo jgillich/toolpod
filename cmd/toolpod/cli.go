@@ -61,9 +61,7 @@ func runProfile(profileName string, args []string) int {
 		opts.Workspace = wd
 	}
 	opts.Args = append(opts.Args, fs.Args()...)
-	if cmd != "" {
-		opts.Args = append(opts.Args, "-c", cmd)
-	}
+	opts.Command = cmd
 
 	result := toolpod.Launch(context.Background(), opts)
 	if result.Err != nil {
@@ -151,7 +149,6 @@ func runInit(args []string) int {
 	fs.StringSliceVar(&opts.Presets, "presets", nil, "comma-separated preset names")
 	fs.BoolVar(&opts.Force, "force", false, "overwrite an existing user profile file")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the generated file without writing it")
-	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override the user profile directory")
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
 			return 0

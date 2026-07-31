@@ -62,3 +62,48 @@ func TestBuildSpecModeBWorkspace(t *testing.T) {
 		t.Errorf("Mode B workspace target = %q, want /workspace", spec.Workspace.Target)
 	}
 }
+
+func TestBuildSpecCommandFlagForShellProfile(t *testing.T) {
+	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"bash"}}
+	opts := LaunchOpts{Command: "echo hello", Workspace: "/home/me/proj"}
+	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	wantCmd := []string{"bash", "-c", "echo hello"}
+	if len(spec.Command) != len(wantCmd) {
+		t.Fatalf("Command = %v, want %v", spec.Command, wantCmd)
+	}
+	for i, c := range spec.Command {
+		if c != wantCmd[i] {
+			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
+		}
+	}
+}
+
+func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
+	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
+	opts := LaunchOpts{Command: "/bin/bash", Workspace: "/home/me/proj"}
+	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	wantCmd := []string{"sh", "-c", "/bin/bash"}
+	if len(spec.Command) != len(wantCmd) {
+		t.Fatalf("Command = %v, want %v", spec.Command, wantCmd)
+	}
+	for i, c := range spec.Command {
+		if c != wantCmd[i] {
+			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
+		}
+	}
+}
+
+func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
+	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
+	opts := LaunchOpts{Command: "/bin/bash", Args: []string{"config", "view"}, Workspace: "/home/me/proj"}
+	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	wantCmd := []string{"sh", "-c", "/bin/bash"}
+	if len(spec.Command) != len(wantCmd) {
+		t.Fatalf("Command = %v, want %v (Command should override Args)", spec.Command, wantCmd)
+	}
+	for i, c := range spec.Command {
+		if c != wantCmd[i] {
+			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
+		}
+	}
+}

@@ -1,6 +1,8 @@
 package toolpod
 
 import (
+	"path/filepath"
+
 	"github.com/jgillich/toolpod/internal/profile"
 )
 
@@ -51,7 +53,13 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 
 	// Command = profile.Command + passthrough args (or args_if_none if no args)
 	cmd := append([]string{}, cfg.Command...)
-	if len(opts.Args) > 0 {
+	if opts.Command != "" {
+		if isShellCommand(cmd) {
+			cmd = append(cmd, "-c", opts.Command)
+		} else {
+			cmd = []string{"sh", "-c", opts.Command}
+		}
+	} else if len(opts.Args) > 0 {
 		cmd = append(cmd, opts.Args...)
 	} else if len(cfg.ArgsIfNone) > 0 {
 		cmd = append(cmd, cfg.ArgsIfNone...)
@@ -81,4 +89,12 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		TTY:         cfg.TTY,
 		RuntimeHome: runtimeHome,
 	}
+}
+
+func isShellCommand(cmd []string) bool {
+	if len(cmd) == 0 {
+		return false
+	}
+	base := filepath.Base(cmd[0])
+	return base == "sh" || base == "bash" || base == "zsh" || base == "fish"
 }

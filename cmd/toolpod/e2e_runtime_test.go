@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -25,16 +24,6 @@ func runToolpod(t *testing.T, args ...string) (string, error) {
 	cmd := exec.Command(bin, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
-}
-
-func writeShellProfile(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: alpine:latest\ncommand: [\"sh\", \"-c\"]\nargs_if_none: [\"echo\", \"ready\"]\n"), 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return dir
 }
 
 func dockerAvailable() bool {
@@ -89,8 +78,7 @@ func TestE2EShellLaunch(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	profileDir := writeShellProfile(t)
-	out, err := runToolpod(t, "shell", "--profile-dir", profileDir, "-c", "echo hello-from-toolpod")
+	out, err := runToolpod(t, "shell", "-c", "echo hello-from-toolpod")
 	if err != nil {
 		t.Fatalf("shell launch: %v\n%s", err, out)
 	}

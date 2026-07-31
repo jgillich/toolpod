@@ -32,7 +32,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		userDir = profile.DefaultProfileDir()
 	}
 	if userDir == "" {
-		return fmt.Errorf("cannot determine profile directory (set --profile-dir or XDG_CONFIG_HOME)")
+		return fmt.Errorf("cannot determine profile directory (set XDG_CONFIG_HOME)")
 	}
 
 	// Determine if interactive. The CLI sets opts.Interactive via IsTTY;
