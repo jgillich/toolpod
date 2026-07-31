@@ -15,5 +15,3 @@ mounts:
     read_only: false
 labels:
   profile: opencode
-network: bridge
-tty: auto

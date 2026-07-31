@@ -12,5 +12,3 @@ mounts:
     read_only: false
 labels:
   profile: claude
-network: bridge
-tty: auto

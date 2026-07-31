@@ -9,5 +9,3 @@ mounts:
     read_only: true
 labels:
   profile: gemini
-network: bridge
-tty: auto
