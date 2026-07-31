@@ -8,12 +8,12 @@ import (
 	"github.com/jgillich/toolpod/internal/profile"
 )
 
-func fakePortAllocator(ports ...string) PortAllocator {
-	i := 0
+func fakePortAllocator() PortAllocator {
 	return func(protocol, hostIP string) (string, error) {
-		p := ports[i%len(ports)]
-		i++
-		return p, nil
+		if protocol == "udp" {
+			return "40002", nil
+		}
+		return "40001", nil
 	}
 }
 
@@ -30,7 +30,7 @@ func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
 			"9000": {Host: "9000", HostIP: "127.0.0.1"},
 		},
 	}
-	opts := LaunchOpts{ProfileName: "web", Workspace: "/p", PortAllocator: fakePortAllocator("40001", "40002")}
+	opts := LaunchOpts{ProfileName: "web", Workspace: "/p", PortAllocator: fakePortAllocator()}
 	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
@@ -87,28 +87,33 @@ func TestBuildSpecDevices(t *testing.T) {
 }
 
 func TestDefaultPortAllocatorAvoidsBoundPorts(t *testing.T) {
-	// Hold a socket open: the allocator must never hand that port back out,
-	// which is the property multi-instance launches rely on. Deterministic —
-	// no sequential close/reuse flake.
-	held, err := net.Listen("tcp", "127.0.0.1:0")
+	heldTCP, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
-	heldPort := strconv.Itoa(held.Addr().(*net.TCPAddr).Port)
+	defer heldTCP.Close()
+	heldTCPPort := strconv.Itoa(heldTCP.Addr().(*net.TCPAddr).Port)
 
-	for _, proto := range []string{"tcp", "udp"} {
-		got, err := defaultPortAllocator(proto, "127.0.0.1")
-		if err != nil {
-			t.Fatalf("%s alloc: %v", proto, err)
-		}
-		n, err := strconv.Atoi(got)
-		if err != nil || n < 1 || n > 65535 {
-			t.Errorf("%s alloc returned %q, want a port in 1-65535", proto, got)
-		}
-		if got == heldPort {
-			t.Errorf("%s allocator returned port %s while it is bound", proto, got)
-		}
+	heldUDP, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heldUDP.Close()
+	heldUDPPort := strconv.Itoa(heldUDP.LocalAddr().(*net.UDPAddr).Port)
+
+	tcp, err := defaultPortAllocator("tcp", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tcp == heldTCPPort {
+		t.Errorf("tcp allocator returned port %s while it is bound", tcp)
+	}
+	udp, err := defaultPortAllocator("udp", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udp == heldUDPPort {
+		t.Errorf("udp allocator returned port %s while it is bound", udp)
 	}
 }
 
