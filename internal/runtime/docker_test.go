@@ -194,7 +194,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	spec := Spec{
 		ProfileName: "test-port",
 		Image:       "alpine:latest",
-		Command:     []string{"sh", "-c", "echo hi | nc -l -p 8080"},
+		Command:     []string{"sh", "-c", "printf hi | nc -l -p 8080"},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
@@ -222,7 +222,10 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	}
 	defer conn.Close()
 	buf := make([]byte, 16)
-	n, _ := conn.Read(buf)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read from published port: %v", err)
+	}
 	if string(buf[:n]) != "hi" {
 		t.Errorf("got %q from published port, want \"hi\"", string(buf[:n]))
 	}
