@@ -84,14 +84,15 @@ type ProgressWriter interface {
 }
 
 // ActivateCommand returns the shell preamble that:
-//  1. Writes the profile's tools into mise's global config (ephemeral — lives
-//     in the container's own filesystem, NOT the shared volume).
+//  1. Writes the profile's tools into mise's global config at configDir
+//     (ephemeral — lives in the container's own filesystem, NOT the shared
+//     volume). configDir must match MISE_CONFIG_DIR set in the container env,
+//     otherwise mise will not read the written config.
 //  2. Activates mise so shims are on PATH.
 //
 // When the user cd's into the workspace, mise's directory walk picks up any
 // project-local .tool-versions / mise.toml and overrides these defaults.
-func ActivateCommand(runtimeHome string, tools map[string]string) string {
-	configDir := filepath.Join(runtimeHome, ".config", "mise")
+func ActivateCommand(configDir string, tools map[string]string) string {
 	configFile := filepath.Join(configDir, "config.toml")
 
 	var b strings.Builder

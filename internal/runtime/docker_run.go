@@ -32,7 +32,8 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// 3. Evaluate project environment (adds project tools to PATH immediately)
 	// 4. If shell command, inject activate hooks into .bashrc for interactive cd-switching
 	// 5. exec the profile command
-	activateCmd := mise.ActivateCommand(runtimeHome, spec.Tools)
+	configDir := filepath.Join(runtimeHome, ".config", "mise")
+	activateCmd := mise.ActivateCommand(configDir, spec.Tools)
 	installCmd := "mise install 2>/dev/null || true"
 	hookEnvCmd := `eval "$(mise hook-env 2>/dev/null)" || true`
 
@@ -244,7 +245,10 @@ func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
 }
 
 func buildEnv(spec Spec, runtimeHome string) []string {
-	env := []string{"HOME=" + runtimeHome}
+	env := []string{
+		"HOME=" + runtimeHome,
+		"MISE_CONFIG_DIR=" + filepath.Join(runtimeHome, ".config", "mise"),
+	}
 	for k, v := range spec.Env {
 		if v == "" {
 			if hostVal, ok := os.LookupEnv(k); ok {

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,40 @@ func TestIsLikelyRootlessSocket(t *testing.T) {
 		if got := isLikelyRootlessSocket(tt.host); got != tt.want {
 			t.Errorf("isLikelyRootlessSocket(%q) = %v, want %v", tt.host, got, tt.want)
 		}
+	}
+}
+
+func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
+	spec := Spec{
+		RuntimeHome: "/root",
+		Env:         map[string]string{"OPENCODE_CONFIG_CONTENT": "..."},
+	}
+	env := buildEnv(spec, "/root")
+	var hasHome, hasMiseConfigDir, hasProfileEnv bool
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "HOME="):
+			hasHome = true
+			if e != "HOME=/root" {
+				t.Errorf("HOME = %q, want HOME=/root", e)
+			}
+		case strings.HasPrefix(e, "MISE_CONFIG_DIR="):
+			hasMiseConfigDir = true
+			if e != "MISE_CONFIG_DIR=/root/.config/mise" {
+				t.Errorf("MISE_CONFIG_DIR = %q, want /root/.config/mise", e)
+			}
+		case strings.HasPrefix(e, "OPENCODE_CONFIG_CONTENT="):
+			hasProfileEnv = true
+		}
+	}
+	if !hasHome {
+		t.Error("missing HOME in env")
+	}
+	if !hasMiseConfigDir {
+		t.Error("missing MISE_CONFIG_DIR in env")
+	}
+	if !hasProfileEnv {
+		t.Error("missing profile env OPENCODE_CONFIG_CONTENT")
 	}
 }
 

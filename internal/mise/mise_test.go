@@ -7,7 +7,7 @@ import (
 
 func TestActivateCommand_WithTools(t *testing.T) {
 	tools := map[string]string{"node": "20", "python": "3.12"}
-	cmd := ActivateCommand("/root", tools)
+	cmd := ActivateCommand("/root/.config/mise", tools)
 
 	if !strings.Contains(cmd, "/root/.config/mise/config.toml") {
 		t.Errorf("missing config write in %q", cmd)
@@ -24,7 +24,7 @@ func TestActivateCommand_WithTools(t *testing.T) {
 }
 
 func TestActivateCommand_NoTools(t *testing.T) {
-	cmd := ActivateCommand("/root", nil)
+	cmd := ActivateCommand("/root/.config/mise", nil)
 	if strings.Contains(cmd, "config.toml") {
 		t.Errorf("should not write config when no tools: %q", cmd)
 	}
