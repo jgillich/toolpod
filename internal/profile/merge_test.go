@@ -164,3 +164,50 @@ func TestResolveExtendsMissingProfile(t *testing.T) {
 		t.Errorf("error message should name the missing profile, got: %q", err.Error())
 	}
 }
+
+func TestResolvePortsDevicesMergeAndNullDelete(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\n"+
+		"ports:\n  8080: {host: 5173}\n  9000: {}\n"+
+		"devices:\n  /dev/fuse: {}\n  /dev/nvidia0: {permissions: rw}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\n"+
+		"ports:\n  8080: {host: 0}\n  9000: null\n"+
+		"devices:\n  /dev/fuse: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Ports["8080"].Host != "0" {
+		t.Errorf("8080 host = %q, want \"0\" (overridden to random)", cfg.Ports["8080"].Host)
+	}
+	if _, exists := cfg.Ports["9000"]; exists {
+		t.Error("9000 should be deleted by null-to-delete")
+	}
+	if _, exists := cfg.Devices["/dev/fuse"]; exists {
+		t.Error("/dev/fuse should be deleted by null-to-delete")
+	}
+	if cfg.Devices["/dev/nvidia0"].Permissions != "rw" {
+		t.Errorf("inherited /dev/nvidia0 permissions = %q, want rw", cfg.Devices["/dev/nvidia0"].Permissions)
+	}
+}
+
+func TestResolvePortsWholeFieldNull(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nports:\n  8080: {}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nports: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(cfg.Ports) != 0 {
+		t.Errorf("whole-field null should drop all inherited ports, got %v", cfg.Ports)
+	}
+}

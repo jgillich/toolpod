@@ -150,6 +150,8 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Tools = mergeStringMap(parent.Tools, child.Tools, child.NullKeys["tools"])
 	out.Caches = mergeStringMap(parent.Caches, child.Caches, child.NullKeys["caches"])
 	out.Labels = mergeStringMap(parent.Labels, child.Labels, child.NullKeys["labels"])
+	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
+	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
 
 	if child.Resources != nil {
 		out.Resources = child.Resources
@@ -160,11 +162,11 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	return out
 }
 
-func mergeMounts(parent, child map[string]Mount, nullKeys map[string]bool) map[string]Mount {
+func mergeMap[V any](parent, child map[string]V, nullKeys map[string]bool) map[string]V {
 	if nullKeys != nil && nullKeys["*"] {
-		return map[string]Mount{}
+		return map[string]V{}
 	}
-	out := make(map[string]Mount, len(parent)+len(child))
+	out := make(map[string]V, len(parent)+len(child))
 	for k, v := range parent {
 		out[k] = v
 	}
@@ -175,6 +177,18 @@ func mergeMounts(parent, child map[string]Mount, nullKeys map[string]bool) map[s
 		delete(out, k)
 	}
 	return out
+}
+
+func mergeMounts(parent, child map[string]Mount, nullKeys map[string]bool) map[string]Mount {
+	return mergeMap(parent, child, nullKeys)
+}
+
+func mergePortMap(parent, child map[string]PortBind, nullKeys map[string]bool) map[string]PortBind {
+	return mergeMap(parent, child, nullKeys)
+}
+
+func mergeDeviceMap(parent, child map[string]DeviceBind, nullKeys map[string]bool) map[string]DeviceBind {
+	return mergeMap(parent, child, nullKeys)
 }
 
 func mergeStringMap(parent, child map[string]string, nullKeys map[string]bool) map[string]string {
