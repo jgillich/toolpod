@@ -31,6 +31,7 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 		userDir = profile.DefaultProfileDir()
 	}
 	checks = append(checks, checkProfileValidity(userDir))
+	checks = append(checks, checkUserOverrides(userDir)...)
 
 	ws := opts.Workspace
 	if ws == "" {
@@ -140,6 +141,58 @@ func checkProfileValidity(userDir string) Check {
 		return Check{Name: "profiles", Status: Fail, Message: "some profiles invalid"}
 	}
 	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", len(cat.Names()))}
+}
+
+func checkUserOverrides(userDir string) []Check {
+	if userDir == "" {
+		return []Check{{Name: "presets", Status: Skip, Message: "no user profile directory"}}
+	}
+
+	catMerged, err := profile.LoadProfiles(userDir)
+	if err != nil {
+		return []Check{{Name: "presets", Status: Warn, Message: err.Error()}}
+	}
+
+	var checks []Check
+	userFileCount := 0
+	for _, name := range catMerged.Names() {
+		rc, ok := catMerged.Get(name)
+		if !ok {
+			continue
+		}
+		// Skip built-in profiles; only check user-overridden files.
+		// Built-in paths start with "built-in:".
+		if strings.HasPrefix(rc.Path, "built-in:") {
+			continue
+		}
+		userFileCount++
+		cfg, err := profile.ResolveProfile(catMerged, name)
+		if err != nil {
+			continue
+		}
+		if len(cfg.Caches) == 0 {
+			checks = append(checks, Check{
+				Name:    "caches",
+				Status:  Info,
+				Message: fmt.Sprintf("%s: none configured (run `toolpod init %s` to enable)", name, name),
+			})
+		}
+		if _, hasGit := cfg.Mounts["~/.gitconfig"]; !hasGit {
+			checks = append(checks, Check{
+				Name:    "gitconfig",
+				Status:  Info,
+				Message: fmt.Sprintf("%s: not mounted (run `toolpod init %s --presets gitconfig`)", name, name),
+			})
+		}
+	}
+
+	if userFileCount == 0 {
+		return []Check{{Name: "presets", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `toolpod init <profile>` to add them"}}
+	}
+	if len(checks) == 0 {
+		return []Check{{Name: "presets", Status: Pass, Message: "all user overrides have caches and gitconfig"}}
+	}
+	return checks
 }
 
 func checkProjectTools(ctx context.Context, workspace string) Check {

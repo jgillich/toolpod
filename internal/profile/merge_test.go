@@ -71,6 +71,27 @@ func TestResolveListReplaced(t *testing.T) {
 	}
 }
 
+func TestResolveExtendsSelfViaBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	// User file shadows built-in "opencode" and extends "opencode" (the built-in).
+	mustWriteProfile(t, dir, "opencode.yaml", "version: 1\nextends: opencode\ncaches:\n  npm: ~/.npm\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	cfg, err := ResolveProfile(cat, "opencode")
+	if err != nil {
+		t.Fatalf("ResolveProfile: %v", err)
+	}
+	// Should inherit image/command from the built-in opencode, plus the user caches.
+	if cfg.Image != "ghcr.io/jdx/mise:latest" {
+		t.Errorf("Image = %q, want ghcr.io/jdx/mise:latest (inherited from built-in)", cfg.Image)
+	}
+	if cfg.Caches["npm"] != "~/.npm" {
+		t.Errorf("Caches[npm] = %q, want ~/.npm", cfg.Caches["npm"])
+	}
+}
+
 func TestResolveCycle(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteProfile(t, dir, "a.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: b\n")
@@ -89,5 +110,38 @@ func TestResolveCycle(t *testing.T) {
 	}
 	if ce.Message == "" || !strings.Contains(ce.Message, "cycle") {
 		t.Errorf("error message %q should mention cycle", ce.Message)
+	}
+}
+
+func TestResolveSelfExtendsNoBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "foo.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: foo\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolveProfile(cat, "foo")
+	if err == nil {
+		t.Fatal("expected cycle error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
+	}
+}
+
+func TestResolveUserCrossCycle(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "a.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\nextends: b\n")
+	mustWriteProfile(t, dir, "b.yaml", "version: 1\nimage: y\ncommand: [\"y\"]\nextends: a\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ResolveProfile(cat, "a")
+	if err == nil {
+		t.Fatal("expected cycle error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
 	}
 }

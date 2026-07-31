@@ -15,13 +15,31 @@ import (
 
 // Catalog is the merged set of built-in + user raw profiles, keyed by profile name.
 type Catalog struct {
-	entries map[string]RawProfile
+	entries  map[string]RawProfile // merged view: user shadows built-in
+	builtins map[string]RawProfile // built-ins only, for extends-self
 }
 
 // Get returns the raw profile for a profile name, plus whether it was found.
 func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok
+}
+
+// GetBuiltin returns the built-in profile for a name, plus whether it was found.
+func (c Catalog) GetBuiltin(name string) (RawProfile, bool) {
+	rc, ok := c.builtins[name]
+	return rc, ok
+}
+
+// IsUserShadow returns true if a user file shadows a built-in of this name.
+func (c Catalog) IsUserShadow(name string) bool {
+	_, hasBuiltin := c.builtins[name]
+	_, hasEntry := c.entries[name]
+	if !hasBuiltin || !hasEntry {
+		return false
+	}
+	// The entry is a shadow if its Path is not a built-in path.
+	return c.entries[name].Path != c.builtins[name].Path
 }
 
 // Names returns all profile names in the catalog, sorted.
@@ -37,10 +55,15 @@ func (c Catalog) Names() []string {
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
 func LoadProfiles(userDir string) (Catalog, error) {
-	entries := map[string]RawProfile{}
+	builtins := map[string]RawProfile{}
 
-	if err := loadBuiltins(entries); err != nil {
+	if err := loadBuiltins(builtins); err != nil {
 		return Catalog{}, err
+	}
+
+	entries := make(map[string]RawProfile, len(builtins))
+	for k, v := range builtins {
+		entries[k] = v
 	}
 
 	if userDir != "" {
@@ -49,7 +72,7 @@ func LoadProfiles(userDir string) (Catalog, error) {
 		}
 	}
 
-	return Catalog{entries: entries}, nil
+	return Catalog{entries: entries, builtins: builtins}, nil
 }
 
 func loadBuiltins(entries map[string]RawProfile) error {
@@ -210,14 +233,20 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 // NewCatalogForTest creates a Catalog from a raw map. For test use only;
 // production code uses LoadCatalog.
 func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
-	return Catalog{entries: entries}
+	builtins := make(map[string]RawProfile, len(entries))
+	for k, v := range entries {
+		builtins[k] = v
+	}
+	return Catalog{entries: entries, builtins: builtins}
 }
 
 // DefaultProfileDir returns the default user profile directory for the current OS.
-// Used by the CLI when --profile-dir is not set.
+// Honors XDG_CONFIG_HOME on Linux via os.UserConfigDir. Used by the CLI when
+// --profile-dir is not set.
 func DefaultProfileDir() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "toolpod", "profiles")
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		return ""
 	}
-	return ""
+	return filepath.Join(base, "toolpod", "profiles")
 }

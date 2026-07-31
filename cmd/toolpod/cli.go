@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jgillich/toolpod/internal/doctor"
 	"github.com/jgillich/toolpod/internal/prune"
+	"github.com/jgillich/toolpod/internal/scaffold"
 	"github.com/jgillich/toolpod/internal/ui"
 	"github.com/jgillich/toolpod/pkg/toolpod"
 	"github.com/spf13/pflag"
@@ -24,6 +26,8 @@ func main() {
 	switch cmd {
 	case "doctor":
 		os.Exit(runDoctor(args))
+	case "init":
+		os.Exit(runInit(args))
 	case "prune":
 		os.Exit(runPrune(args))
 	case "shell":
@@ -141,17 +145,45 @@ func runPrune(args []string) int {
 	return 0
 }
 
+func runInit(args []string) int {
+	var opts scaffold.Options
+	fs := pflag.NewFlagSet("init", pflag.ContinueOnError)
+	fs.StringSliceVar(&opts.Presets, "presets", nil, "comma-separated preset names")
+	fs.BoolVar(&opts.Force, "force", false, "overwrite an existing user profile file")
+	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the generated file without writing it")
+	fs.StringVar(&opts.ProfileDir, "profile-dir", "", "override the user profile directory")
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	opts.Profile = fs.Arg(0)
+	opts.Interactive = scaffold.IsTTY(os.Stdin)
+
+	err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	return 0
+}
+
 func usage() {
-	fmt.Println(`toolpod — ephemeral dev environments
+	presetList := strings.Join(scaffold.PresetNames(), ", ")
+	fmt.Printf(`toolpod — ephemeral dev environments
 
 Usage:
   toolpod <profile> [args...] [flags]  Launch a profile (e.g. "shell")
+  toolpod init [<profile>] [flags]  Generate a user profile override with presets
   toolpod doctor [flags]         Run environment diagnostics
   toolpod prune [flags]          Remove toolpod-managed volumes and images
   toolpod help                   Show this help
 
 Commands:
   shell                          Launch the built-in "shell" profile
+  init [<profile>]               Generate a user profile override with presets
   doctor                         Check runtime, profiles, workspace, and project tools
   prune                          Remove toolpod-prefixed volumes and images
 
@@ -161,11 +193,15 @@ Flags:
   --verbose                      Print the spec before launching
   --rebuild                      Rebuild the image even if cached
   --volumes, --images, --force   Prune-specific flags
+  --presets <names>              Init: comma-separated preset names (%s)
+  --force                        Init: overwrite existing profile file
 
 Examples:
   toolpod shell
   toolpod shell -c "echo hello"
   toolpod opencode config view
+  toolpod init opencode --presets npm,go,gitconfig,ssh
   toolpod doctor
-  toolpod prune --force --volumes`)
+  toolpod prune --force --volumes
+`, presetList)
 }

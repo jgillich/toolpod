@@ -7,11 +7,11 @@ type Profile struct {
 	Extends    string            `yaml:"extends,omitempty"`
 	Image      string            `yaml:"image,omitempty"`
 	Build      *Build            `yaml:"build,omitempty"`
-	Command    []string          `yaml:"command"`
+	Command    []string          `yaml:"command,omitempty"`
 	ArgsIfNone []string          `yaml:"args_if_none,omitempty"`
+	Caches     map[string]string `yaml:"caches,omitempty"`
 	Mounts     map[string]Mount  `yaml:"mounts,omitempty"`
 	Env        map[string]string `yaml:"environment,omitempty"`
-	Caches     map[string]string `yaml:"caches,omitempty"`
 	Labels     map[string]string `yaml:"labels,omitempty"`
 	Network    string            `yaml:"network,omitempty"`
 	Resources  *Resources        `yaml:"resources,omitempty"`

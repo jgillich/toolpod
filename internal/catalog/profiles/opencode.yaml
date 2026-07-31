@@ -10,14 +10,9 @@ mounts:
   ~/.cache/opencode:
     source: ~/.cache/opencode
     read_only: false
-  ~/.gitconfig:
-    source: ~/.gitconfig
-    read_only: true
-caches:
-  npm: ~/.npm
-  cargo: ~/.cargo
-  pip: ~/.cache/pip
-  go: ~/go
+  ~/.local/share/opencode:
+    source:  ~/.local/share/opencode
+    read_only: false
 labels:
   profile: opencode
 network: bridge

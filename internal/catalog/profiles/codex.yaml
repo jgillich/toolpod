@@ -7,14 +7,6 @@ mounts:
   ~/.config/codex:
     source: ~/.config/codex
     read_only: true
-  ~/.gitconfig:
-    source: ~/.gitconfig
-    read_only: true
-caches:
-  npm: ~/.npm
-  cargo: ~/.cargo
-  pip: ~/.cache/pip
-  go: ~/go
 labels:
   profile: codex
 network: bridge

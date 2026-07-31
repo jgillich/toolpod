@@ -9,6 +9,7 @@ var reservedNames = map[string]bool{
 	"version":    true,
 	"completion": true,
 	"prune":      true,
+	"init":       true,
 }
 
 // validate checks a resolved profile for required fields and invariants.

@@ -29,6 +29,18 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	if rc.Extends == "" {
 		return rc, nil
 	}
+	// Special case: a user shadow that extends the built-in of the same name.
+	// IsUserShadow implies a built-in exists, so GetBuiltin should always succeed
+	// here; the !ok branch is a defensive guard.
+	if rc.Extends == name && cat.IsUserShadow(name) {
+		parent, ok := cat.GetBuiltin(name)
+		if !ok {
+			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+		}
+		merged := MergeProfiles(parent, rc)
+		merged.Path = rc.Path
+		return merged, nil
+	}
 	seen[name] = true
 	defer delete(seen, name)
 
@@ -36,15 +48,15 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	if err != nil {
 		return RawProfile{}, err
 	}
-	merged := mergeProfiles(parent, rc)
+	merged := MergeProfiles(parent, rc)
 	merged.Path = rc.Path
 	return merged, nil
 }
 
-// mergeProfiles merges child on top of parent per spec §4.3:
+// MergeProfiles merges child on top of parent per spec §4.3:
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace,
 // image/build treated as a single slot.
-func mergeProfiles(parent, child RawProfile) RawProfile {
+func MergeProfiles(parent, child RawProfile) RawProfile {
 	out := parent
 
 	if child.Version != 0 {

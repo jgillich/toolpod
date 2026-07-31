@@ -2,8 +2,3 @@ version: 1
 image: ghcr.io/jdx/mise:latest
 command: ["bash"]
 tty: auto
-caches:
-  npm: ~/.npm
-  cargo: ~/.cargo
-  pip: ~/.cache/pip
-  go: ~/go
