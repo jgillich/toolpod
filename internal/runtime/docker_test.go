@@ -58,6 +58,31 @@ func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
 	}
 }
 
+func TestBuildMountsSkipsOptionalMissing(t *testing.T) {
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Mounts: []MountSpec{
+			{Target: "/etc/hosts", Source: "/etc/hosts", ReadOnly: true, Optional: true},
+			{Target: "/nonexistent", Source: "/this/does/not/exist", Optional: true},
+		},
+	}
+	m := buildMounts(spec, "/root")
+	// Should contain workspace + /etc/hosts but skip the nonexistent optional mount.
+	found := map[string]bool{}
+	for _, mt := range m {
+		found[mt.Target] = true
+	}
+	if !found["/workspace"] {
+		t.Error("workspace mount missing")
+	}
+	if !found["/etc/hosts"] {
+		t.Error("/etc/hosts optional mount should be present (source exists)")
+	}
+	if found["/nonexistent"] {
+		t.Error("nonexistent optional mount should be skipped")
+	}
+}
+
 func TestIntegrationRunShellEcho(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

@@ -67,7 +67,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			}
 		}
 
-		spec := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
+		spec, err := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
+		if err != nil {
+			return Result{ExitCode: 2, Err: err}
+		}
 
 		if opts.Verbose {
 			RenderSpec(w, spec)
@@ -90,7 +93,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		return Result{ExitCode: code}
 	}
 
-	spec := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
+	spec, err := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
+	if err != nil {
+		return Result{ExitCode: 2, Err: err}
+	}
 	if err := RenderSpec(w, spec); err != nil {
 		return Result{ExitCode: 3, Err: err}
 	}

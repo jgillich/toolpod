@@ -28,6 +28,7 @@ type MountSpec struct {
 	Target   string
 	Source   string
 	ReadOnly bool
+	Optional bool
 }
 
 type CacheSpec struct {

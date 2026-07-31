@@ -1,6 +1,7 @@
 package toolpod
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/jgillich/toolpod/internal/profile"
@@ -10,8 +11,11 @@ import (
 // mode is "A" (rootless podman) or "B" (fallback). hostHome is the host user's
 // $HOME; runtimeHome is the in-container user's home (/home/<user> in Mode A,
 // /root in Mode B).
-func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) Spec {
-	cfg = profile.ResolveTildes(cfg, mode, hostHome, runtimeHome)
+func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) (Spec, error) {
+	cfg, err := profile.ResolveTildes(cfg, mode, hostHome, runtimeHome)
+	if err != nil {
+		return Spec{}, fmt.Errorf("resolve paths: %w", err)
+	}
 
 	mounts := make([]MountSpec, 0, len(cfg.Mounts))
 	for target, m := range cfg.Mounts {
@@ -19,6 +23,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 			Target:   target,
 			Source:   m.Source,
 			ReadOnly: m.ReadOnly,
+			Optional: m.Optional,
 		})
 	}
 
@@ -93,7 +98,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		Workspace:   WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},
 		TTY:         cfg.TTY,
 		RuntimeHome: runtimeHome,
-	}
+	}, nil
 }
 
 func isShellCommand(cmd []string) bool {

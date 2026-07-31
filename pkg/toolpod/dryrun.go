@@ -37,7 +37,11 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			if !m.ReadOnly {
 				ro = "rw"
 			}
-			_, err = fmt.Fprintf(w, "  %s <- %s (%s)\n", m.Target, m.Source, ro)
+			suffix := ""
+			if m.Optional {
+				suffix = " optional"
+			}
+			_, err = fmt.Fprintf(w, "  %s <- %s (%s%s)\n", m.Target, m.Source, ro, suffix)
 			if err != nil {
 				return err
 			}

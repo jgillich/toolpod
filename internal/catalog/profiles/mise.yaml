@@ -4,3 +4,4 @@ mounts:
   /etc/mise:
     source: ~/.config/mise
     read_only: true
+    optional: true

@@ -19,7 +19,10 @@ func TestBuildSpecBasic(t *testing.T) {
 		Network: "bridge",
 	}
 	opts := LaunchOpts{ProfileName: "opencode", Args: []string{"--model", "foo"}, Workspace: "/home/me/proj"}
-	spec := buildSpec(opts, cfg, "A", "/home/me", "/home/me")
+	spec, err := buildSpec(opts, cfg, "A", "/home/me", "/home/me")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if spec.Image != "myimage:latest" {
 		t.Errorf("Image = %q", spec.Image)
@@ -61,7 +64,10 @@ func TestBuildSpecBasic(t *testing.T) {
 func TestBuildSpecModeBWorkspace(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	opts := LaunchOpts{Workspace: "/home/me/proj"}
-	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if spec.Workspace.Target != "/workspace" {
 		t.Errorf("Mode B workspace target = %q, want /workspace", spec.Workspace.Target)
 	}
@@ -70,7 +76,10 @@ func TestBuildSpecModeBWorkspace(t *testing.T) {
 func TestBuildSpecCommandFlagForShellProfile(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"bash"}}
 	opts := LaunchOpts{Command: "echo hello", Workspace: "/home/me/proj"}
-	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wantCmd := []string{"bash", "-c", "echo hello"}
 	if len(spec.Command) != len(wantCmd) {
 		t.Fatalf("Command = %v, want %v", spec.Command, wantCmd)
@@ -85,7 +94,10 @@ func TestBuildSpecCommandFlagForShellProfile(t *testing.T) {
 func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
 	opts := LaunchOpts{Command: "/bin/bash", Workspace: "/home/me/proj"}
-	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wantCmd := []string{"sh", "-c", "/bin/bash"}
 	if len(spec.Command) != len(wantCmd) {
 		t.Fatalf("Command = %v, want %v", spec.Command, wantCmd)
@@ -100,7 +112,10 @@ func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
 func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
 	opts := LaunchOpts{Command: "/bin/bash", Args: []string{"config", "view"}, Workspace: "/home/me/proj"}
-	spec := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wantCmd := []string{"sh", "-c", "/bin/bash"}
 	if len(spec.Command) != len(wantCmd) {
 		t.Fatalf("Command = %v, want %v (Command should override Args)", spec.Command, wantCmd)
