@@ -1,0 +1,31 @@
+version: 2
+
+project_name: toolpod
+
+builds:
+  - main: ./cmd/toolpod
+    binary: toolpod
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: git
+
+release:
+  github:
+    owner: jgillich
+    name: toolpod

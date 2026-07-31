@@ -61,10 +61,14 @@ You don't need to be a mise expert to use toolpod. If a project has a `mise.toml
 
 ## Install
 
-Requires Go 1.25+ and a Docker-compatible container engine (Docker, or Podman via `podman system service`).
+```
+mise use -g github:jgillich/toolpod
+```
+
+Alternatively, build from source (requires Go 1.25+):
 
 ```
-make install   # go install ./cmd/toolpod
+go install github.com/jgillich/toolpod/cmd/toolpod@latest
 ```
 
 For the best experience (correct file ownership and host-path parity), point `DOCKER_HOST` at a **rootless Podman** socket. Docker and rootful Podman also work, but the workspace is mounted at `/workspace` and files are written as root — see [Runtime modes](#runtime-modes).
