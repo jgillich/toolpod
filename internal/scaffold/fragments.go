@@ -38,8 +38,11 @@ func FragmentNames() []string {
 }
 
 func validateFragment(name string, p profile.RawProfile) error {
-	if len(p.ExtendsList) != 0 || p.Image != "" || p.Build != nil || len(p.Command) > 0 || p.Version != 0 {
-		return fmt.Errorf("fragment %q must not set extends/image/build/command/version", name)
+	if p.Version != 1 {
+		return fmt.Errorf("fragment %q must set version: 1", name)
+	}
+	if p.Image != "" || p.Build != nil || len(p.Command) > 0 {
+		return fmt.Errorf("fragment %q must not set image/build/command", name)
 	}
 	return nil
 }

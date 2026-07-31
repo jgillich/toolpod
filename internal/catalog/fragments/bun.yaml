@@ -1,4 +1,0 @@
-tools:
-  bun: latest
-caches:
-  bun: ~/.bun/install/global

@@ -1,3 +1,4 @@
+version: 1
 mounts:
   ~/.netrc:
     source: ~/.netrc

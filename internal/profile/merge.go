@@ -31,6 +31,15 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	if len(rc.ExtendsList) == 0 {
 		return rc, nil
 	}
+	// Fragments are composition-only: they may extend other fragments, but
+	// must not pull in profile identity (image/command/version).
+	if cat.IsFragment(name) {
+		for _, parentName := range rc.ExtendsList {
+			if !cat.IsFragment(parentName) {
+				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment " + name + " may only extend fragments, not profile " + parentName}
+			}
+		}
+	}
 	// Special case: a user shadow that extends the built-in of the same name.
 	// The first entry may be a self-reference (profileName) that must be
 	// resolved as the built-in to avoid a cycle. IsUserShadow implies a

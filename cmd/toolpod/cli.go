@@ -36,11 +36,10 @@ type LaunchCmd struct {
 }
 
 type InitCmd struct {
-	Name      string   `arg:"" optional:"" help:"Profile name to create."`
-	Extends   []string `sep:"," help:"Comma-separated bases to extend: profiles, fragments, or mise."`
-	Fragments []string `sep:"," help:"Comma-separated fragment names (${fragments})." aliases:"presets"`
-	Force     bool     `help:"Overwrite an existing user profile file."`
-	DryRun    bool     `help:"Print the generated file without writing it."`
+	Name    string   `arg:"" optional:"" help:"Profile name to create."`
+	Extends []string `sep:"," help:"Comma-separated bases to extend: profiles, fragments, or mise."`
+	Force   bool     `help:"Overwrite an existing user profile file."`
+	DryRun  bool     `help:"Print the generated file without writing it."`
 }
 
 type DoctorCmd struct {
@@ -84,9 +83,6 @@ func main() {
 	ctx := kong.Parse(&cli,
 		kong.Name("toolpod"),
 		kong.Description("ephemeral dev environments"),
-		kong.Vars{
-			"fragments": strings.Join(scaffold.FragmentNames(), ", "),
-		},
 	)
 	err := ctx.Run()
 	ctx.FatalIfErrorf(err)
@@ -128,11 +124,10 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 
 func (i *InitCmd) Run() error {
 	opts := scaffold.Options{
-		Name:       i.Name,
-		Extends:    i.Extends,
-		Fragments:  i.Fragments,
-		Force:      i.Force,
-		DryRun:     i.DryRun,
+		Name:        i.Name,
+		Extends:     i.Extends,
+		Force:       i.Force,
+		DryRun:      i.DryRun,
 		Interactive: scaffold.IsTTY(os.Stdin),
 	}
 	if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {

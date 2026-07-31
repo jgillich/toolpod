@@ -52,6 +52,16 @@ func TestCheckProjectToolsNone(t *testing.T) {
 	}
 }
 
+func TestCheckProfileValidityIgnoresFragments(t *testing.T) {
+	// Built-in fragments resolve without version/command/image; they must not
+	// be validated as launchable profiles. typescript extends javascript, which
+	// used to trip the base-profile tolerance and fail the check.
+	c := checkProfileValidity("")
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass, message: %s", c.Status, c.Message)
+	}
+}
+
 func TestCheckUserOverridesNoCachesNoGitconfig(t *testing.T) {
 	dir := t.TempDir()
 	// Create a user override for opencode with no caches and no gitconfig

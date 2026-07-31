@@ -1,0 +1,9 @@
+version: 1
+caches:
+  pip: ~/.cache/pip
+tools:
+  python: latest
+  uv: latest
+  pipx:black: latest
+  pipx:pytest: latest
+  pipx:ruff: latest

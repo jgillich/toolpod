@@ -1,0 +1,12 @@
+version: 1
+caches:
+  bun: ~/.bun/install/global
+  deno: ~/.cache/deno
+  npm: ~/.npm
+tools:
+  bun: latest
+  deno: latest
+  node: latest
+  npm:eslint: latest
+  npm:prettier: latest
+  pnpm: latest

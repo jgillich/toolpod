@@ -19,11 +19,10 @@ import (
 )
 
 type Options struct {
-	Name       string
-	Extends    []string
-	Fragments  []string
-	Force      bool
-	DryRun     bool
+	Name        string
+	Extends     []string
+	Force       bool
+	DryRun      bool
 	Interactive bool
 	ProfileDir  string
 }
@@ -131,16 +130,41 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return fmt.Errorf("profile name %q collides with an existing fragment", profileName)
 	}
 
-	// Resolve bases: explicit --extends, wizard choice, or default. A name
-	// that matches a built-in defaults to shadowing it; anything else starts
-	// from the shared mise base.
-	if len(bases) == 0 {
-		if _, ok := cat.GetBuiltin(profileName); ok {
-			bases = []string{profileName}
-		} else {
-			bases = []string{"mise"}
+	// Resolve bases: explicit --extends, wizard choice, or default. When
+	// --extends names only fragments (or nothing), fall back to the default
+	// base — the built-in of the same name (shadow) or the shared mise base —
+	// so fragments stay additions to a base, not replacements.
+	hasProfile := false
+	for _, b := range bases {
+		if _, ok := cat.Get(b); ok && !cat.IsFragment(b) {
+			hasProfile = true
+			break
 		}
 	}
+	if !hasProfile {
+		if _, ok := cat.GetBuiltin(profileName); ok {
+			bases = append([]string{profileName}, bases...)
+		} else {
+			bases = append([]string{"mise"}, bases...)
+		}
+	}
+
+	// Interactively pick extra fragments when the user gave no --extends.
+	// Picked fragments are appended to the same extends list as bases.
+	if interactive && len(opts.Extends) == 0 {
+		if tty {
+			picked, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
+			if err != nil {
+				return err
+			}
+			bases = append(bases, picked...)
+		} else {
+			bases = append(bases, promptFragments(FragmentNames(), reader, stderr)...)
+		}
+		wizardUsed = true
+	}
+
+	// Validate extends targets (profiles and fragments alike).
 	bases = dedup(bases)
 	for _, b := range bases {
 		if _, ok := cat.Get(b); !ok {
@@ -148,37 +172,8 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	// Resolve fragments (prompt if interactive and not provided via flag)
-	fragmentNamesList := FragmentNames()
-	selectedFragments := opts.Fragments
-	if len(selectedFragments) == 0 && interactive {
-		if tty {
-			selectedFragments, err = promptFragmentsHuh(fragmentNamesList, stdin, stdout)
-			if err != nil {
-				return err
-			}
-		} else {
-			selectedFragments = promptFragments(fragmentNamesList, reader, stderr)
-		}
-		wizardUsed = true
-	}
-
-	// Validate fragment names
-	for _, p := range selectedFragments {
-		if !cat.IsFragment(p) {
-			hint := ""
-			if p == "all" {
-				hint = "\nnote: there is no \"all\" shorthand; specify fragments explicitly"
-			}
-			return fmt.Errorf("unknown fragment: %s\navailable fragments: %s%s", p, strings.Join(fragmentNamesList, ", "), hint)
-		}
-	}
-
-	// Dedup fragments
-	selectedFragments = dedup(selectedFragments)
-
 	// Generate the profile content
-	content, err := generate(profileName, bases, selectedFragments, cat)
+	content, err := generate(profileName, bases, cat)
 	if err != nil {
 		return fmt.Errorf("generating profile: %w", err)
 	}
@@ -195,7 +190,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 		fmt.Fprintf(stderr, "note: %s is not runnable yet (no command or image); edit the file before launching\n", targetPath)
 	} else {
-		printSummary(stdout, profileName, selectedFragments, resolved)
+		printSummary(stdout, profileName, bases, resolved)
 
 		// If the profile grants host access (mounts or env), prompt to review.
 		if len(resolved.Mounts) > 0 || len(resolved.Env) > 0 {
@@ -271,16 +266,12 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	return nil
 }
 
-func generate(name string, bases []string, fragments []string, cat profile.Catalog) (string, error) {
-	extends := make([]string, 0, len(bases)+len(fragments))
-	extends = append(extends, bases...)
-	extends = append(extends, fragments...)
-
+func generate(name string, extends []string, cat profile.Catalog) (string, error) {
 	p := profile.Profile{
 		Version:     1,
 		ExtendsList: profile.ExtendsList(extends),
 	}
-	if !basesProvideCommand(cat, bases) {
+	if !basesProvideCommand(cat, extends) {
 		p.Command = []string{"bash"}
 	}
 
@@ -290,7 +281,7 @@ func generate(name string, bases []string, fragments []string, cat profile.Catal
 	}
 
 	header := headerMarker + "\n"
-	if len(bases) == 1 && bases[0] == name {
+	if len(extends) == 1 && extends[0] == name {
 		header += fmt.Sprintf("# This user profile extends the built-in %q profile.\n", name) +
 			"# Remove this file to restore the built-in default.\n\n"
 	} else {
@@ -534,10 +525,10 @@ func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (
 	return profile.ResolveProfile(cat, profileName)
 }
 
-func printSummary(stdout io.Writer, profileName string, fragments []string, resolved profile.Profile) {
+func printSummary(stdout io.Writer, profileName string, extends []string, resolved profile.Profile) {
 	fmt.Fprintf(stdout, "Profile: %s\n", profileName)
-	if len(fragments) > 0 {
-		fmt.Fprintf(stdout, "Fragments: %s\n", strings.Join(fragments, ", "))
+	if len(extends) > 0 {
+		fmt.Fprintf(stdout, "Extends: %s\n", strings.Join(extends, ", "))
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Container access:")

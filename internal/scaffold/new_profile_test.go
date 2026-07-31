@@ -103,7 +103,7 @@ func TestNewProfileNameCollidesWithFragment(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:       "npm",
+		Name:       "javascript",
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -162,8 +162,9 @@ func TestUnknownExtendsRejected(t *testing.T) {
 
 func TestWizardNewProfileFlow(t *testing.T) {
 	dir := t.TempDir()
-	// "New" → name "foo" → bases "mise,opencode" → fragments "npm,gitconfig".
-	input := strings.NewReader("New\nfoo\nmise,opencode\nnpm,gitconfig\n")
+	// "New" → name "foo" → bases "mise,opencode" → fragments "javascript,gitconfig"
+	// (the fragment picker appends to the same extends list).
+	input := strings.NewReader("New\nfoo\nmise,opencode\njavascript,gitconfig\n")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Interactive: true,
@@ -177,7 +178,7 @@ func TestWizardNewProfileFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, want := range []string{"- mise", "- opencode", "- npm", "- gitconfig"} {
+	for _, want := range []string{"- mise", "- opencode", "- javascript", "- gitconfig"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
@@ -189,7 +190,7 @@ func TestUnknownNameCreatesNewProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "rustdev",
-		Fragments:  []string{"npm"},
+		Extends:  []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {

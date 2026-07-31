@@ -29,11 +29,6 @@ func TestValidateFragmentRejectsIdentityFields(t *testing.T) {
 			if err := validateFragment(name, bad); err == nil {
 				t.Errorf("expected error for fragment %q with image set", name)
 			}
-			bad = p
-			bad.ExtendsList = profile.ExtendsList{"shell"}
-			if err := validateFragment(name, bad); err == nil {
-				t.Errorf("expected error for fragment %q with extends set", name)
-			}
 		})
 	}
 }
@@ -43,7 +38,7 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
+		Extends:  []string{"javascript", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -65,8 +60,8 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
 		t.Errorf("missing extends list with opencode, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- npm") {
-		t.Errorf("missing npm in extends list, got:\n%s", output)
+	if !strings.Contains(output, "- javascript") {
+		t.Errorf("missing javascript in extends list, got:\n%s", output)
 	}
 	if !strings.Contains(output, "- go") {
 		t.Errorf("missing go in extends list, got:\n%s", output)
@@ -100,7 +95,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
+		Extends:  []string{"javascript", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -141,7 +136,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	}
 	// Fragments install mise tools alongside their caches
 	if cfg.Tools["node"] != "latest" {
-		t.Errorf("Tools[node] = %q, want latest (from npm fragment)", cfg.Tools["node"])
+		t.Errorf("Tools[node] = %q, want latest (from javascript fragment)", cfg.Tools["node"])
 	}
 	if cfg.Tools["go"] != "latest" {
 		t.Errorf("Tools[go] = %q, want latest (from go fragment)", cfg.Tools["go"])
@@ -159,7 +154,7 @@ func TestSkipExistingWithoutForce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -177,7 +172,7 @@ func TestForceOverwritesExisting(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		Force:      true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -185,8 +180,8 @@ func TestForceOverwritesExisting(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "- npm") {
-		t.Errorf("file should reference npm fragment after force overwrite")
+	if !strings.Contains(string(data), "- javascript") {
+		t.Errorf("file should reference javascript fragment after force overwrite")
 	}
 }
 
@@ -195,7 +190,7 @@ func TestDryRunDoesNotWrite(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		DryRun:     true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -221,7 +216,7 @@ func TestDryRunWithForceDoesNotPrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		DryRun:     true,
 		Force:      true,
 		ProfileDir: dir,
@@ -241,7 +236,7 @@ func TestForceInteractiveDeclinePrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:     "opencode",
-		Fragments:     []string{"npm"},
+		Extends:     []string{"javascript"},
 		Force:       true,
 		Interactive: true,
 		ProfileDir:  dir,
@@ -267,7 +262,7 @@ func TestInteractiveOverwritePromptDecline(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nnpm\nn\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\njavascript\nn\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("declining prompt should not error, got: %v", err)
 	}
@@ -288,7 +283,7 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nnpm\nn\ny\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\njavascript\nn\ny\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("accepting prompt should not error, got: %v", err)
 	}
@@ -296,8 +291,8 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 		t.Errorf("should print created, got: %s", stdout.String())
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "- npm") {
-		t.Error("file should reference npm fragment from new generation")
+	if !strings.Contains(string(data), "- javascript") {
+		t.Error("file should reference javascript fragment from new generation")
 	}
 }
 
@@ -308,7 +303,7 @@ func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
 	// All args provided explicitly in a TTY-like test → no wizard → no prompt
 	err := Run(context.Background(), Options{
 		Name:     "opencode",
-		Fragments:     []string{"npm"},
+		Extends:     []string{"javascript"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -322,7 +317,7 @@ func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
 
 func TestDryRunInteractivePrompts(t *testing.T) {
 	dir := t.TempDir()
-	input := strings.NewReader("opencode\nnpm\n")
+	input := strings.NewReader("opencode\njavascript\n")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		DryRun:      true,
@@ -349,23 +344,23 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 	}
 }
 
-func TestUnknownFragmentRejected(t *testing.T) {
+func TestUnknownExtendsTargetRejected(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:    []string{"npm", "yarn"},
+		Extends:    []string{"javascript", "yarn"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
-		t.Fatal("expected error for unknown fragment")
+		t.Fatal("expected error for unknown extends target")
 	}
-	if !strings.Contains(err.Error(), "unknown fragment: yarn") {
-		t.Errorf("error should mention 'unknown fragment: yarn', got: %v", err)
+	if !strings.Contains(err.Error(), "unknown extends target: yarn") {
+		t.Errorf("error should mention 'unknown extends target: yarn', got: %v", err)
 	}
 	// File should not be written
 	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); !os.IsNotExist(err) {
-		t.Error("file should not be written when fragment is unknown")
+		t.Error("file should not be written when extends target is unknown")
 	}
 }
 
@@ -414,7 +409,7 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:  []string{"npm", "ssh"},
+		Extends:  []string{"javascript", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -439,7 +434,7 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:  []string{"npm", "go"},
+		Extends:  []string{"javascript", "go"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -455,8 +450,8 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	if !strings.Contains(content, "extends:") {
 		t.Error("generated file should contain extends:")
 	}
-	if !strings.Contains(content, "npm") {
-		t.Error("generated file should reference npm fragment")
+	if !strings.Contains(content, "javascript") {
+		t.Error("generated file should reference javascript fragment")
 	}
 	if !strings.Contains(content, "go") {
 		t.Error("generated file should reference go fragment")
@@ -474,12 +469,12 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 func TestPromptsGoToStderr(t *testing.T) {
 	dir := t.TempDir()
 	// Non-interactive mode (Interactive not set, defaults to false) should
-	// not write prompts. Uses "npm" fragment which has no file mounts, so
+	// not write prompts. Uses "javascript" fragment which has no file mounts, so
 	// no stderr output either.
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -493,7 +488,7 @@ func TestPromptsGoToStderr(t *testing.T) {
 func TestInteractiveWizard(t *testing.T) {
 	dir := t.TempDir()
 	// Simulated stdin: first line = profile name, second line = fragment names.
-	input := strings.NewReader("opencode\nnpm,gitconfig\n")
+	input := strings.NewReader("opencode\njavascript,gitconfig\n")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Interactive: true,
@@ -510,8 +505,8 @@ func TestInteractiveWizard(t *testing.T) {
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
 		t.Errorf("missing extends list with opencode, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- npm") {
-		t.Errorf("missing npm in extends list, got:\n%s", output)
+	if !strings.Contains(output, "- javascript") {
+		t.Errorf("missing javascript in extends list, got:\n%s", output)
 	}
 	if !strings.Contains(output, "- gitconfig") {
 		t.Errorf("missing gitconfig in extends list, got:\n%s", output)
@@ -527,7 +522,7 @@ func TestDirectoryCreatedIfAbsent(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-	Fragments:  []string{"npm"},
+	Extends:  []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -553,7 +548,7 @@ func TestBrokenSiblingBlocksInit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:  []string{"npm"},
+		Extends:  []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -572,7 +567,7 @@ func TestFragmentFileExistenceWarning(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:    "opencode",
-		Fragments:    []string{"gitconfig", "ssh", "netrc"},
+		Extends:    []string{"gitconfig", "ssh", "netrc"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {

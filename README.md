@@ -4,10 +4,6 @@
 
 Disposable, reproducible development environments in a container, with a persistent [mise](https://mise.jdx.dev/) toolchain shared across runs.
 
-```
-container  +  workspace  +  persistent mise  =  toolpod
-```
-
 `toolpod opencode` spins up a container, mounts your current directory, runs the agent, and removes the container on exit. The next run is instant — mise, your tools, and your caches are already warm in shared volumes.
 
 ## Why
@@ -34,7 +30,7 @@ AI coding agents are the flagship use case, but because the architecture is gene
 
 ## A quick intro to mise
 
-[mise](https://mise.jdx.dev/) (formerly rtx) is a polyglot version manager. The two ideas that matter for toolpod:
+[mise](https://mise.jdx.dev/) is a polyglot version manager. The two ideas that matter for toolpod:
 
 1. **Tools are declared, not baked in.** A project lists what it needs in a `mise.toml`:
    ```toml
@@ -50,11 +46,13 @@ You don't need to be a mise expert. If a project has a `mise.toml`, toolpod's sh
 
 ## Install
 
+Using mise:
+
 ```
 mise use -g github:jgillich/toolpod
 ```
 
-Alternatively, build from source (requires Go 1.25+):
+Alternatively, build from source (requires Go):
 
 ```
 go install github.com/jgillich/toolpod/cmd/toolpod@latest
@@ -77,16 +75,16 @@ The first launch pulls the mise base image and installs tools (slow). Subsequent
 
 ### `toolpod init`
 
-Profiles become useful once they carry *your* mounts and caches — SSH keys, git config, package caches. `toolpod init` generates a user profile override that extends one or more profiles and merges in selected **fragments**:
+Profiles become useful once they carry *your* mounts and caches — SSH keys, git config, package caches. `toolpod init` generates a user profile override that merges a base profile and selected **fragments**:
 
 ```sh
 $ toolpod init                                # interactive wizard (pick a profile or create "New")
-$ toolpod init opencode --fragments npm,go,ssh
-$ toolpod init myagent --extends opencode,podman,ruby --fragments npm,go
-$ toolpod init opencode --fragments npm,gh --dry-run
+$ toolpod init opencode --extends javascript,go,ssh
+$ toolpod init myagent --extends opencode,podman,ruby,javascript,go
+$ toolpod init opencode --extends javascript,github --dry-run
 ```
 
-A name matching a built-in profile shadows it (`init opencode` extends the built-in `opencode`). Any other name creates a brand-new profile; by default it extends the shared `mise` base — pass `--extends` to start from any built-in or user profile, or leave it out and let the wizard or a later edit pick bases. Run `toolpod init` to see the full list of available fragments.
+A name matching a built-in profile shadows it (`init opencode` extends the built-in `opencode`). Any other name creates a brand-new profile; by default it extends the shared `mise` base — pass `--extends` to start from any built-in or user profile, or leave it out and let the wizard or a later edit pick bases. `--extends` accepts profiles and fragments alike; run `toolpod init` to see the full list of available fragments.
 
 ### Other commands
 
@@ -138,7 +136,7 @@ Every field is optional except `version` and `command`.
 | Field | Type | Description |
 | --- | --- | --- |
 | `version` | int | Config schema version. Currently `1`. |
-| `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. List form: `extends: [opencode, ssh, npm]` (resolved left-to-right; body wins last). Cycles are rejected. |
+| `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. List form: `extends: [opencode, ssh, javascript]` (resolved left-to-right; body wins last). Cycles are rejected. Fragments may only extend other fragments, never profiles. |
 | `image` | string | Container image. Mutually exclusive with `build`. |
 | `build` | object | Escape hatch: `{ dockerfile, context, depends_on }`. |
 | `command` | string[] | Command to run. CLI args are appended verbatim. |
@@ -211,13 +209,9 @@ $ toolpod profile edit myagent         # open in $EDITOR
 
 ## Fragments
 
-Fragments are small, composable building blocks — one tool's cache, one host config mount, or one credential set. They're merged into a user profile by `toolpod init`, which lists all available fragments interactively.
+Fragments are small, composable building blocks — a tool's cache, a host config mount, a credential set. `toolpod init` merges selected fragments into a user profile (via `--extends`, or the interactive wizard).
 
-```sh
-$ toolpod init opencode --fragments npm,go,gitconfig,ssh
-```
-
-All fragment mounts are `optional: true` — missing host paths are skipped with a warning rather than failing the launch.
+Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning rather than failing the launch. Fragments may extend other fragments (e.g. `typescript` builds on `javascript`) but never profiles — a fragment can't pull in profile identity like `image` or `command`.
 
 ## Runtime modes
 

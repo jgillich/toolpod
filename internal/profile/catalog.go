@@ -300,8 +300,9 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 
 // LoadFragments loads YAML fragment files from an embedded filesystem (e.g.
 // catalog.Fragments) and returns them keyed by fragment name. Each file must
-// be a bare profile fragment (caches/mounts/tools/labels/env) without
-// extends/image/build/command/version — validateFragmentName enforces this.
+// be a bare profile fragment (caches/mounts/tools/labels/env), optionally
+// extending other fragments, without image/build/command/version —
+// validateFragmentName enforces this.
 func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, error) {
 	fragments := map[string]RawProfile{}
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
@@ -396,8 +397,11 @@ func ParseRaw(data []byte, path string) (RawProfile, error) {
 }
 
 func validateFragmentName(name string, rc RawProfile) error {
-	if len(rc.ExtendsList) != 0 || rc.Image != "" || rc.Build != nil || len(rc.Command) > 0 || rc.Version != 0 {
-		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set extends/image/build/command/version"}
+	if rc.Version != 1 {
+		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must set version: 1"}
+	}
+	if rc.Image != "" || rc.Build != nil || len(rc.Command) > 0 {
+		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set image/build/command"}
 	}
 	return nil
 }

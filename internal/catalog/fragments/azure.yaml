@@ -1,3 +1,4 @@
+version: 1
 tools:
   pipx: latest
   azure: latest

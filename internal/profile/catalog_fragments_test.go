@@ -41,7 +41,7 @@ func TestUserFragmentsLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Create a user fragment
-	if err := os.WriteFile(filepath.Join(fragDir, "myfrag.yaml"), []byte("mounts:\n  /data:\n    source: /data\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(fragDir, "myfrag.yaml"), []byte("version: 1\nmounts:\n  /data:\n    source: /data\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)
@@ -54,5 +54,74 @@ func TestUserFragmentsLoaded(t *testing.T) {
 	}
 	if _, ok := rc.Mounts["/data"]; !ok {
 		t.Error("user fragment mount missing")
+	}
+}
+
+func TestFragmentExtendsFragment(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(dir, "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "basefrag.yaml"), []byte("version: 1\ntools:\n  base-tool: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "childfrag.yaml"), []byte("version: 1\nextends: basefrag\ntools:\n  child-tool: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "proj.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\nextends: childfrag\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveProfile(cat, "proj")
+	if err != nil {
+		t.Fatalf("ResolveProfile: %v", err)
+	}
+	if resolved.Tools["base-tool"] != "latest" {
+		t.Error("missing base-tool from basefrag")
+	}
+	if resolved.Tools["child-tool"] != "latest" {
+		t.Error("missing child-tool from childfrag")
+	}
+}
+
+func TestFragmentWithoutVersionRejected(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(dir, "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "oldfrag.yaml"), []byte("tools:\n  old-tool: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadProfiles(dir); err == nil {
+		t.Fatal("expected error for fragment without version, got nil")
+	}
+}
+
+func TestFragmentExtendingProfileRejected(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(dir, "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "base.yaml"), []byte("version: 1\nimage: base:latest\ncommand: [sh]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "badfrag.yaml"), []byte("version: 1\nextends: base\ntools:\n  x: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "proj.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\nextends: badfrag\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveProfile(cat, "proj"); err == nil {
+		t.Fatal("expected error for fragment extending a profile")
 	}
 }

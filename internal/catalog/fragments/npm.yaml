@@ -1,4 +1,0 @@
-caches:
-  npm: ~/.npm
-tools:
-  node: latest

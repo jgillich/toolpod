@@ -133,7 +133,9 @@ func checkProfileValidity(userDir string) Check {
 	}
 	var errs []string
 	launchable := 0
-	for _, name := range cat.Names() {
+	// Fragments are composition-only and not directly launchable; they are
+	// validated at load (identity fields) and when resolved via a profile.
+	for _, name := range cat.ProfileNames() {
 		rc, ok := cat.Get(name)
 		if !ok {
 			continue

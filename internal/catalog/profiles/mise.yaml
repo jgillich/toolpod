@@ -5,3 +5,10 @@ mounts:
     source: ~/.config/mise
     read_only: true
     optional: true
+tools:
+  bat: latest
+  fd: latest
+  fzf: latest
+  jq: latest
+  ripgrep: latest
+  yq: latest

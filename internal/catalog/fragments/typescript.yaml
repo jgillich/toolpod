@@ -1,0 +1,7 @@
+version: 1
+extends: javascript
+tools:
+  biome: latest
+  npm:ts-node: latest
+  npm:tsx: latest
+  npm:typescript: latest

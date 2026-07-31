@@ -60,11 +60,17 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 
 	w.WriteProgress(fmt.Sprintf("mise: installing %d tools", len(spec.Tools)))
 
-	cmd := batchInstallCommand(spec.Tools)
+	configDir := filepath.Join(runtimeHome, ".config", "mise")
+	cmd := ActivateCommand(configDir, spec.Tools) + " && mise install"
 	volumes := []VolumeMount{
 		{Name: miseVol.Name, Target: miseVol.Target},
 	}
-	env := []string{"HOME=" + runtimeHome, "MISE_DATA_DIR=/mise", "PATH=/mise/shims:" + runtimeHome + "/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+	env := []string{
+		"HOME=" + runtimeHome,
+		"MISE_CONFIG_DIR=" + configDir,
+		"MISE_DATA_DIR=/mise",
+		"PATH=/mise/shims:" + runtimeHome + "/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
 
 	exitCode, err := runner.RunInContainer(ctx, spec.Image, volumes, env, []string{"sh", "-c", cmd})
 	if err != nil {
@@ -109,24 +115,9 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		fmt.Fprintf(&b, "%s = \"%s\"\n", name, tools[name])
+		fmt.Fprintf(&b, "%q = \"%s\"\n", name, tools[name])
 	}
 	b.WriteString("' > ")
 	b.WriteString(configFile)
 	return b.String()
-}
-
-// batchInstallCommand builds a single shell command that installs all tools
-// in one mise invocation chain. Tools are sorted for deterministic ordering.
-func batchInstallCommand(tools map[string]string) string {
-	names := make([]string, 0, len(tools))
-	for name := range tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var cmds []string
-	for _, name := range names {
-		cmds = append(cmds, fmt.Sprintf("mise install %s@%s", name, tools[name]))
-	}
-	return strings.Join(cmds, " && ")
 }

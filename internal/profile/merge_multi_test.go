@@ -8,10 +8,10 @@ func TestMultiExtendsLeftToRight(t *testing.T) {
 	cat := NewProfileCatalogForTest(map[string]RawProfile{
 		"base":     {Profile: Profile{Version: 1, Image: "base:latest", Command: []string{"sh"}}},
 		"ssh":      {Profile: Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "~/.ssh"}}}},
-		"npm":      {Profile: Profile{Caches: map[string]string{"npm": "~/.npm"}, Tools: map[string]string{"node": "latest"}}},
+		"javascript": {Profile: Profile{Caches: map[string]string{"npm": "~/.npm"}, Tools: map[string]string{"node": "latest"}}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"base", "ssh", "npm"},
+			ExtendsList: ExtendsList{"base", "ssh", "javascript"},
 		}},
 	})
 	resolved, err := ResolveProfile(cat, "myprofile")
@@ -25,10 +25,10 @@ func TestMultiExtendsLeftToRight(t *testing.T) {
 		t.Error("missing ~/.ssh mount from ssh fragment")
 	}
 	if _, ok := resolved.Caches["npm"]; !ok {
-		t.Error("missing npm cache from npm fragment")
+		t.Error("missing npm cache from javascript fragment")
 	}
 	if resolved.Tools["node"] != "latest" {
-		t.Error("missing node tool from npm fragment")
+		t.Error("missing node tool from javascript fragment")
 	}
 }
 
