@@ -413,11 +413,8 @@ func printSummary(stdout io.Writer, profileName string, fragments []string, reso
 	for _, k := range sortedStringMapKeys(resolved.Env) {
 		fmt.Fprintf(stdout, "  • passes %s\n", k)
 	}
-	for _, name := range sortedStringMapKeys(resolved.Tools) {
-		fmt.Fprintf(stdout, "  • installs %s\n", name)
-	}
 	for _, name := range sortedStringMapKeys(resolved.Caches) {
-		fmt.Fprintf(stdout, "  • caches %s\n", name)
+		fmt.Fprintf(stdout, "  • caches %s\n", resolved.Caches[name])
 	}
 }
 
