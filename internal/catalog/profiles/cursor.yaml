@@ -1,0 +1,13 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+command: ["cursor"]
+tools:
+  cursor: latest
+mounts:
+  ~/.cursor:
+    source: ~/.cursor
+    read_only: true
+labels:
+  profile: cursor
+network: bridge
+tty: auto

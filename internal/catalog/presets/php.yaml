@@ -1,0 +1,4 @@
+tools:
+  php: latest
+caches:
+  composer: ~/.composer/cache

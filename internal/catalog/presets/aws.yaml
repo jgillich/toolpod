@@ -1,0 +1,6 @@
+tools:
+  aws: latest
+mounts:
+  ~/.aws:
+    source: ~/.aws
+    read_only: true

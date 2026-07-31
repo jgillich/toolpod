@@ -1,0 +1,4 @@
+tools:
+  helm: latest
+caches:
+  helm: ~/.cache/helm

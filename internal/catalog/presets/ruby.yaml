@@ -1,0 +1,4 @@
+tools:
+  ruby: latest
+caches:
+  gem: ~/.gem

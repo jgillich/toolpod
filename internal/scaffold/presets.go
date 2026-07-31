@@ -37,6 +37,15 @@ func PresetNames() []string {
 	return names
 }
 
+// BuiltInProfiles returns sorted names of all built-in profiles for display.
+func BuiltInProfiles() []string {
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		return nil
+	}
+	return cat.Names()
+}
+
 func validatePreset(name string, p profile.RawProfile) error {
 	if p.Extends != "" || p.Image != "" || p.Build != nil || len(p.Command) > 0 || p.Version != 0 {
 		return fmt.Errorf("preset %q must not set extends/image/build/command/version", name)

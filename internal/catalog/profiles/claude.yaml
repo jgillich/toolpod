@@ -1,0 +1,16 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+command: ["claude"]
+tools:
+  claude-code: latest
+mounts:
+  ~/.claude:
+    source: ~/.claude
+    read_only: true
+  ~/.cache/claude-code:
+    source: ~/.cache/claude-code
+    read_only: false
+labels:
+  profile: claude
+network: bridge
+tty: auto

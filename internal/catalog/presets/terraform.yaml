@@ -1,0 +1,4 @@
+tools:
+  terraform: latest
+caches:
+  terraform: ~/.terraform.d/plugin-cache

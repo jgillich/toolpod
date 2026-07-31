@@ -1,0 +1,4 @@
+tools:
+  java: latest
+caches:
+  maven: ~/.m2

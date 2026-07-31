@@ -1,0 +1,13 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+command: ["gemini"]
+tools:
+  gemini: latest
+mounts:
+  ~/.gemini:
+    source: ~/.gemini
+    read_only: true
+labels:
+  profile: gemini
+network: bridge
+tty: auto

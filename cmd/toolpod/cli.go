@@ -176,6 +176,7 @@ func runInit(args []string) int {
 
 func usage() {
 	presetList := strings.Join(scaffold.PresetNames(), ", ")
+	profileList := strings.Join(scaffold.BuiltInProfiles(), ", ")
 	fmt.Printf(`toolpod — ephemeral dev environments
 
 Usage:
@@ -188,7 +189,7 @@ Usage:
 Commands:
   shell                          Launch the built-in "shell" profile
   init [profile]                 Generate a user profile override with presets
-                                 (profile: opencode, shell, codex)
+                                 (profile: %s)
   doctor                         Check runtime, profiles, workspace, and project tools
   prune                          Remove toolpod-prefixed volumes and images
 
@@ -208,5 +209,5 @@ Examples:
   toolpod init opencode --presets npm,go,gitconfig,ssh
   toolpod doctor
   toolpod prune --force --volumes
-`, presetList)
+  `, profileList, presetList)
 }
