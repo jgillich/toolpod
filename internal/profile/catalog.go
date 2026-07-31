@@ -240,12 +240,12 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 	return Catalog{entries: entries, builtins: builtins}
 }
 
-// LoadPresets loads YAML preset files from an embedded filesystem (e.g.
-// catalog.Presets) and returns them keyed by preset name. Each file must
+// LoadFragments loads YAML fragment files from an embedded filesystem (e.g.
+// catalog.Fragments) and returns them keyed by fragment name. Each file must
 // be a bare profile fragment (caches/mounts/tools/labels/env) without
-// extends/image/build/command/version — validatePreset enforces this.
-func LoadPresets(fsys fs.ReadFileFS, root string) (map[string]RawProfile, error) {
-	presets := map[string]RawProfile{}
+// extends/image/build/command/version — validateFragmentName enforces this.
+func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, error) {
+	fragments := map[string]RawProfile{}
 	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -258,17 +258,17 @@ func LoadPresets(fsys fs.ReadFileFS, root string) (map[string]RawProfile, error)
 			return err
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
-		rc, err := parseRaw(data, "preset:"+name)
+		rc, err := parseRaw(data, "fragment:"+name)
 		if err != nil {
 			return err
 		}
-		presets[name] = rc
+		fragments[name] = rc
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return presets, nil
+	return fragments, nil
 }
 
 // DefaultProfileDir returns the default user profile directory for the current OS.

@@ -160,12 +160,12 @@ func checkProfileValidity(userDir string) Check {
 
 func checkUserOverrides(userDir string) []Check {
 	if userDir == "" {
-		return []Check{{Name: "presets", Status: Skip, Message: "no user profile directory"}}
+		return []Check{{Name: "fragments", Status: Skip, Message: "no user profile directory"}}
 	}
 
 	catMerged, err := profile.LoadProfiles(userDir)
 	if err != nil {
-		return []Check{{Name: "presets", Status: Warn, Message: err.Error()}}
+		return []Check{{Name: "fragments", Status: Warn, Message: err.Error()}}
 	}
 
 	var checks []Check
@@ -196,16 +196,16 @@ func checkUserOverrides(userDir string) []Check {
 			checks = append(checks, Check{
 				Name:    "gitconfig",
 				Status:  Info,
-				Message: fmt.Sprintf("%s: not mounted (run `toolpod init %s --presets gitconfig`)", name, name),
+				Message: fmt.Sprintf("%s: not mounted (run `toolpod init %s --fragments gitconfig`)", name, name),
 			})
 		}
 	}
 
 	if userFileCount == 0 {
-		return []Check{{Name: "presets", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `toolpod init <profile>` to add them"}}
+		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `toolpod init <profile>` to add them"}}
 	}
 	if len(checks) == 0 {
-		return []Check{{Name: "presets", Status: Pass, Message: "all user overrides have caches and gitconfig"}}
+		return []Check{{Name: "fragments", Status: Pass, Message: "all user overrides have caches and gitconfig"}}
 	}
 	return checks
 }

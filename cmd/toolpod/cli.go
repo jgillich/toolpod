@@ -6,122 +6,125 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alecthomas/kong"
 	"github.com/jgillich/toolpod/internal/doctor"
 	"github.com/jgillich/toolpod/internal/prune"
 	"github.com/jgillich/toolpod/internal/scaffold"
 	"github.com/jgillich/toolpod/internal/ui"
 	"github.com/jgillich/toolpod/pkg/toolpod"
-	"github.com/spf13/pflag"
 )
 
-// globalFlags holds toolpod-owned flags parsed BEFORE the profile name.
-// Everything after the profile name is passed through verbatim to the
-// profile's command — no flag parsing, no collisions with agent flags.
-type globalFlags struct {
-	workspace string
-	command   string
-	dryRun    bool
-	verbose   bool
-	rebuild   bool
+type LaunchCmd struct {
+	// Toolpod-owned flags. They appear before the profile name; kong
+	// parses them as part of the default command.
+	Command   string `short:"c" help:"Command to run in the profile (shell only)."`
+	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
+	DryRun    bool   `help:"Print the spec without launching."`
+	Verbose   bool   `help:"Print the spec before launching."`
+	Rebuild   bool   `help:"Rebuild the image even if cached."`
+
+	// Profile-and-args holds the profile name followed by everything
+	// passed verbatim to the profile's command. passthrough:"" stops
+	// flag parsing at the first positional, so agent flags like
+	// "--model foo" survive unescaped.
+	ProfileAndArgs []string `arg:"" name:"profile-and-args" passthrough:"partial" help:"Profile name followed by args passed verbatim to the profile."`
+}
+
+type InitCmd struct {
+	Profile   string   `arg:"" optional:"" help:"Built-in profile to extend (${profiles})."`
+	Fragments []string `sep:"," help:"Comma-separated fragment names (${fragments})." aliases:"presets"`
+	Force     bool     `help:"Overwrite an existing user profile file."`
+	DryRun    bool     `help:"Print the generated file without writing it."`
+}
+
+type DoctorCmd struct {
+	Workspace string `help:"Workspace to check."`
+}
+
+type PruneCmd struct {
+	Volumes bool `help:"Remove toolpod-managed volumes."`
+	Images  bool `help:"Remove toolpod-tagged images."`
+	Force   bool `help:"Skip confirmation prompt."`
+	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
+}
+
+type CLI struct {
+	Launch LaunchCmd `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
+	Init   InitCmd   `cmd:"" help:"Generate a user profile override with fragments."`
+	Doctor DoctorCmd `cmd:"" help:"Run environment diagnostics."`
+	Prune  PruneCmd  `cmd:"" help:"Remove toolpod-managed volumes and images."`
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+	var cli CLI
+	ctx := kong.Parse(&cli,
+		kong.Name("toolpod"),
+		kong.Description("ephemeral dev environments"),
+		kong.Vars{
+			"profiles": strings.Join(scaffold.BuiltInProfiles(), ", "),
+			"fragments": strings.Join(scaffold.FragmentNames(), ", "),
+		},
+	)
+	err := ctx.Run()
+	ctx.FatalIfErrorf(err)
+	if err != nil {
+		// Non-parse errors from Run are handled per-command for exit codes;
+		// anything that reaches here is already printed.
+		os.Exit(1)
 	}
-
-	cmd := os.Args[1]
-
-	// Subcommands with their own flag sets.
-	switch cmd {
-	case "doctor":
-		os.Exit(runDoctor(os.Args[2:]))
-	case "init":
-		os.Exit(runInit(os.Args[2:]))
-	case "prune":
-		os.Exit(runPrune(os.Args[2:]))
-	case "help", "-h", "--help":
-		usage()
-		return
-	}
-
-	// Default: launch a profile. toolpod-owned flags come before the
-	// profile name; everything after is passthrough to the profile command.
-	//   toolpod [--workspace X] [--verbose] [--dry-run] [--rebuild] [-c CMD] <profile> [args...]
-	gf, profileName, passthrough, ok := parseGlobalFlags(os.Args[1:])
-	if !ok {
-		os.Exit(2)
-	}
-	os.Exit(runProfile(gf, profileName, passthrough))
 }
 
-// parseGlobalFlags scans os.Args[1:] for toolpod-owned flags, stopping at the
-// first non-flag argument (the profile name). Everything after the profile
-// name is returned verbatim as passthrough. Returns ok=false on parse error
-// (error already printed).
-func parseGlobalFlags(args []string) (gf globalFlags, profileName string, passthrough []string, ok bool) {
-	fs := pflag.NewFlagSet("toolpod", pflag.ContinueOnError)
-	fs.StringVarP(&gf.command, "command", "c", "", "command to run in the profile (shell only)")
-	fs.StringVar(&gf.workspace, "workspace", "", "workspace directory to mount")
-	fs.BoolVar(&gf.dryRun, "dry-run", false, "print the spec without launching")
-	fs.BoolVar(&gf.verbose, "verbose", false, "print the spec before launching")
-	fs.BoolVar(&gf.rebuild, "rebuild", false, "rebuild the image even if cached")
-	// Stop at the first non-flag arg; treat everything from there on as the
-	// profile name + passthrough. pflag.InterspersedFlags=false makes Parse
-	// return at the first positional, leaving the rest in fs.Args().
-	fs.SetInterspersed(false)
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return gf, "", nil, false
+func (l *LaunchCmd) Run() error {
+	if len(l.ProfileAndArgs) == 0 {
+		return fmt.Errorf("profile name required")
 	}
-	remaining := fs.Args()
-	if len(remaining) == 0 {
-		fmt.Fprintln(os.Stderr, "profile name required")
-		fmt.Fprintln(os.Stderr, "Usage: toolpod [flags] <profile> [args...]")
-		fmt.Fprintln(os.Stderr, "Run 'toolpod help' for details.")
-		return gf, "", nil, false
-	}
-	return gf, remaining[0], remaining[1:], true
-}
+	profileName := l.ProfileAndArgs[0]
+	passthrough := l.ProfileAndArgs[1:]
 
-func runProfile(gf globalFlags, profileName string, passthrough []string) int {
-	opts := toolpod.LaunchOpts{
-		ProfileName: profileName,
-		Workspace:   gf.workspace,
-		DryRun:      gf.dryRun,
-		Verbose:     gf.verbose,
-		Rebuild:     gf.rebuild,
-		Command:     gf.command,
-		Args:        passthrough,
-	}
-	if opts.Workspace == "" {
+	workspace := l.Workspace
+	if workspace == "" {
 		wd, _ := os.Getwd()
-		opts.Workspace = wd
+		workspace = wd
 	}
 
-	result := toolpod.Launch(context.Background(), opts)
+	result := toolpod.Launch(context.Background(), toolpod.LaunchOpts{
+		ProfileName: profileName,
+		Workspace:   workspace,
+		DryRun:      l.DryRun,
+		Verbose:     l.Verbose,
+		Rebuild:     l.Rebuild,
+		Command:     l.Command,
+		Args:        passthrough,
+	})
 	if result.Err != nil {
 		fmt.Fprintln(os.Stderr, result.Err)
 	}
-	return result.ExitCode
+	os.Exit(result.ExitCode)
+	return nil
 }
 
-func runDoctor(args []string) int {
-	opts := doctor.Options{}
-	fs := pflag.NewFlagSet("doctor", pflag.ContinueOnError)
-	fs.StringVar(&opts.Workspace, "workspace", "", "workspace to check")
-	if err := fs.Parse(args); err != nil {
+func (i *InitCmd) Run() error {
+	opts := scaffold.Options{
+		Profile:     i.Profile,
+		Fragments:   i.Fragments,
+		Force:       i.Force,
+		DryRun:      i.DryRun,
+		Interactive: scaffold.IsTTY(os.Stdin),
+	}
+	if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 2
+		os.Exit(2)
 	}
-	if opts.Workspace == "" {
+	return nil
+}
+
+func (d *DoctorCmd) Run() error {
+	workspace := d.Workspace
+	if workspace == "" {
 		wd, _ := os.Getwd()
-		opts.Workspace = wd
+		workspace = wd
 	}
-
-	result := doctor.Run(context.Background(), opts)
-
+	result := doctor.Run(context.Background(), doctor.Options{Workspace: workspace})
 	out := ui.NewOutput(ui.IsTTY(os.Stdout))
 	for _, c := range result.Checks {
 		color := "reset"
@@ -139,28 +142,22 @@ func runDoctor(args []string) int {
 	}
 	fmt.Println()
 	fmt.Println(out.Color("reset", result.Summary()))
-
 	if result.HasFailure() {
-		return 1
+		os.Exit(1)
 	}
-	return 0
+	return nil
 }
 
-func runPrune(args []string) int {
-	var opts prune.Options
-	fs := pflag.NewFlagSet("prune", pflag.ContinueOnError)
-	fs.BoolVar(&opts.Volumes, "volumes", false, "remove toolpod-managed volumes")
-	fs.BoolVar(&opts.Images, "images", false, "remove toolpod-tagged images")
-	fs.BoolVar(&opts.Force, "force", false, "skip confirmation prompt")
-	fs.BoolVarP(&opts.Force, "yes", "y", false, "skip confirmation prompt (short)")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+func (p *PruneCmd) Run() error {
+	opts := prune.Options{
+		Volumes: p.Volumes,
+		Images:  p.Images,
+		Force:   p.Force || p.Yes,
 	}
 	result, err := prune.Run(context.Background(), opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 3
+		os.Exit(3)
 	}
 	if len(result.VolumesRemoved) > 0 {
 		fmt.Printf("Removed %d volume(s):\n", len(result.VolumesRemoved))
@@ -177,83 +174,5 @@ func runPrune(args []string) int {
 	if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
 		fmt.Println("Nothing to prune.")
 	}
-	return 0
-}
-
-func runInit(args []string) int {
-	var opts scaffold.Options
-	fs := pflag.NewFlagSet("init", pflag.ContinueOnError)
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: toolpod init [profile] [flags]")
-		fmt.Fprintln(os.Stderr, "  profile  Built-in profile to extend (e.g. opencode, shell, codex)")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Flags:")
-		fs.PrintDefaults()
-	}
-	fs.StringSliceVar(&opts.Presets, "presets", nil, "comma-separated preset names")
-	fs.BoolVar(&opts.Force, "force", false, "overwrite an existing user profile file")
-	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the generated file without writing it")
-	if err := fs.Parse(args); err != nil {
-		if err == pflag.ErrHelp {
-			return 0
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	opts.Profile = fs.Arg(0)
-	opts.Interactive = scaffold.IsTTY(os.Stdin)
-
-	err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	return 0
-}
-
-func usage() {
-	presetList := strings.Join(scaffold.PresetNames(), ", ")
-	profileList := strings.Join(scaffold.BuiltInProfiles(), ", ")
-	fmt.Printf(`toolpod — ephemeral dev environments
-
-Usage:
-  toolpod [flags] <profile> [args...]  Launch a profile (e.g. "shell")
-  toolpod init [<profile>] [flags]      Generate a user profile override with presets
-  toolpod doctor [flags]                Run environment diagnostics
-  toolpod prune [flags]                 Remove toolpod-managed volumes and images
-  toolpod help                          Show this help
-
-Flags (must come before the profile name):
-  -c, --command <cmd>            Run a command in the profile (shell only)
-  --workspace <path>             Workspace directory to mount (default: $PWD)
-  --dry-run                      Print the spec without launching
-  --verbose                       Print the spec before launching
-  --rebuild                      Rebuild the image even if cached
-
-Everything after the profile name is passed verbatim to the profile's command,
-so agent flags like "--model foo" work without any escaping:
-  toolpod opencode --model foo
-
-Commands:
-  shell                          Launch the built-in "shell" profile
-  init [profile]                 Generate a user profile override with presets
-                                 (profile: %s)
-  doctor                         Check runtime, profiles, workspace, and project tools
-  prune                          Remove toolpod-prefixed volumes and images
-
-Init/prune flags:
-  --presets <names>              Init: comma-separated preset names (%s)
-  --force                        Init: overwrite existing profile file
-  --volumes, --images            Prune: what to remove (default: both)
-
-Examples:
-  toolpod shell
-  toolpod -c "echo hello" shell
-  toolpod --workspace ~/p2 shell
-  toolpod opencode --model foo
-  toolpod opencode config view
-  toolpod init opencode --presets npm,go,gitconfig,ssh
-  toolpod doctor
-  toolpod prune --force --volumes
-  `, profileList, presetList)
+	return nil
 }

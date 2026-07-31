@@ -11,28 +11,28 @@ import (
 	"github.com/jgillich/toolpod/internal/profile"
 )
 
-func TestPresetsAreValid(t *testing.T) {
-	for name, p := range Presets() {
-		if err := validatePreset(name, p); err != nil {
-			t.Errorf("preset %q: %v", name, err)
+func TestFragmentsAreValid(t *testing.T) {
+	for name, p := range Fragments() {
+		if err := validateFragment(name, p); err != nil {
+			t.Errorf("fragment %q: %v", name, err)
 		}
 	}
 }
 
-func TestValidatePresetRejectsIdentityFields(t *testing.T) {
-	for name := range Presets() {
+func TestValidateFragmentRejectsIdentityFields(t *testing.T) {
+	for name := range Fragments() {
 		t.Run(name, func(t *testing.T) {
-			p := Presets()[name]
+			p := Fragments()[name]
 			// Mutate a copy to set a forbidden field and verify rejection.
 			bad := p
 			bad.Image = "evil:latest"
-			if err := validatePreset(name, bad); err == nil {
-				t.Errorf("expected error for preset %q with image set", name)
+			if err := validateFragment(name, bad); err == nil {
+				t.Errorf("expected error for fragment %q with image set", name)
 			}
 			bad = p
 			bad.Extends = "shell"
-			if err := validatePreset(name, bad); err == nil {
-				t.Errorf("expected error for preset %q with extends set", name)
+			if err := validateFragment(name, bad); err == nil {
+				t.Errorf("expected error for fragment %q with extends set", name)
 			}
 		})
 	}
@@ -43,13 +43,13 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm", "go", "gitconfig", "ssh"},
+		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
-	// Note: this test uses mount presets (gitconfig, ssh) so checkPresetFiles
+	// Note: this test uses mount fragments (gitconfig, ssh) so checkFragmentFiles
 	// may emit warnings to stderr if those host files are absent. This test
 	// only asserts on the generated file content, not stderr.
 
@@ -102,7 +102,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm", "go", "gitconfig", "ssh"},
+		Fragments:  []string{"npm", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -141,12 +141,12 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	if len(cfg.Command) != 1 || cfg.Command[0] != "opencode" {
 		t.Errorf("Command = %v, want [opencode] inherited from built-in", cfg.Command)
 	}
-	// Presets install mise tools alongside their caches
+	// Fragments install mise tools alongside their caches
 	if cfg.Tools["node"] != "latest" {
-		t.Errorf("Tools[node] = %q, want latest (from npm preset)", cfg.Tools["node"])
+		t.Errorf("Tools[node] = %q, want latest (from npm fragment)", cfg.Tools["node"])
 	}
 	if cfg.Tools["go"] != "latest" {
-		t.Errorf("Tools[go] = %q, want latest (from go preset)", cfg.Tools["go"])
+		t.Errorf("Tools[go] = %q, want latest (from go fragment)", cfg.Tools["go"])
 	}
 	if cfg.Tools["opencode"] != "latest" {
 		t.Errorf("Tools[opencode] = %q, want latest (inherited from built-in)", cfg.Tools["opencode"])
@@ -161,7 +161,7 @@ func TestSkipExistingWithoutForce(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -179,7 +179,7 @@ func TestForceOverwritesExisting(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		Force:      true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -197,7 +197,7 @@ func TestDryRunDoesNotWrite(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		DryRun:     true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -223,7 +223,7 @@ func TestDryRunWithForceDoesNotPrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		DryRun:     true,
 		Force:      true,
 		ProfileDir: dir,
@@ -243,7 +243,7 @@ func TestForceInteractiveDeclinePrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:     "opencode",
-		Presets:     []string{"npm"},
+		Fragments:     []string{"npm"},
 		Force:       true,
 		Interactive: true,
 		ProfileDir:  dir,
@@ -265,7 +265,7 @@ func TestInteractiveOverwritePromptDecline(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(headerMarker+"\nversion: 1\nextends: opencode\n"), 0o644)
 	var stdout, stderr bytes.Buffer
-	// No Profile/Presets provided → wizard triggers → overwrite prompt shows
+	// No Profile/Fragments provided → wizard triggers → overwrite prompt shows
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
@@ -286,7 +286,7 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(headerMarker+"\nversion: 1\nextends: opencode\n"), 0o644)
 	var stdout, stderr bytes.Buffer
-	// No Profile/Presets provided → wizard triggers → overwrite prompt shows
+	// No Profile/Fragments provided → wizard triggers → overwrite prompt shows
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
@@ -310,7 +310,7 @@ func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
 	// All args provided explicitly in a TTY-like test → no wizard → no prompt
 	err := Run(context.Background(), Options{
 		Profile:     "opencode",
-		Presets:     []string{"npm"},
+		Fragments:     []string{"npm"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -338,8 +338,8 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 	if !strings.Contains(stderr.String(), "Profile:") {
 		t.Error("should prompt for profile on stderr")
 	}
-	if !strings.Contains(stderr.String(), "Presets") {
-		t.Error("should prompt for presets on stderr")
+	if !strings.Contains(stderr.String(), "Fragments") {
+		t.Errorf("should prompt for fragments on stderr")
 	}
 	// YAML goes to stdout
 	if !strings.Contains(stdout.String(), "extends: opencode") {
@@ -351,23 +351,23 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 	}
 }
 
-func TestUnknownPresetRejected(t *testing.T) {
+func TestUnknownFragmentRejected(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm", "yarn"},
+		Fragments:    []string{"npm", "yarn"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
-		t.Fatal("expected error for unknown preset")
+		t.Fatal("expected error for unknown fragment")
 	}
-	if !strings.Contains(err.Error(), "unknown preset: yarn") {
-		t.Errorf("error should mention 'unknown preset: yarn', got: %v", err)
+	if !strings.Contains(err.Error(), "unknown fragment: yarn") {
+		t.Errorf("error should mention 'unknown fragment: yarn', got: %v", err)
 	}
 	// File should not be written
 	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); !os.IsNotExist(err) {
-		t.Error("file should not be written when preset is unknown")
+		t.Error("file should not be written when fragment is unknown")
 	}
 }
 
@@ -376,7 +376,7 @@ func TestUnknownProfileRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "rustdev",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -401,7 +401,7 @@ func TestNonInteractiveMissingProfile(t *testing.T) {
 	}
 }
 
-func TestNoPresetsProducesJustExtends(t *testing.T) {
+func TestNoFragmentsProducesJustExtends(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
@@ -420,19 +420,19 @@ func TestNoPresetsProducesJustExtends(t *testing.T) {
 		t.Errorf("should contain extends: shell, got:\n%s", output)
 	}
 	if strings.Contains(output, "caches:") {
-		t.Errorf("should not contain caches with no presets, got:\n%s", output)
+		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
 	}
 	if strings.Contains(output, "mounts:") {
-		t.Errorf("should not contain mounts with no presets, got:\n%s", output)
+		t.Errorf("should not contain mounts with no fragments, got:\n%s", output)
 	}
 }
 
-func TestPresetMergeProducesCorrectResult(t *testing.T) {
+func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm", "ssh"},
+		Fragments:    []string{"npm", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -455,12 +455,12 @@ func TestPresetMergeProducesCorrectResult(t *testing.T) {
 func TestPromptsGoToStderr(t *testing.T) {
 	dir := t.TempDir()
 	// Non-interactive mode (Interactive not set, defaults to false) should
-	// not write prompts. Uses "npm" preset which has no file mounts, so
-	// checkPresetFiles produces no stderr output either.
+	// not write prompts. Uses "npm" fragment which has no file mounts, so
+	// checkFragmentFiles produces no stderr output either.
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -473,7 +473,7 @@ func TestPromptsGoToStderr(t *testing.T) {
 
 func TestInteractiveWizard(t *testing.T) {
 	dir := t.TempDir()
-	// Simulated stdin: first line = profile name, second line = preset names.
+	// Simulated stdin: first line = profile name, second line = fragment names.
 	input := strings.NewReader("opencode\nnpm,gitconfig\n")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
@@ -508,7 +508,7 @@ func TestDirectoryCreatedIfAbsent(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -537,7 +537,7 @@ func TestPostWriteValidationSurvivesBrokenSibling(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"npm"},
+	Fragments:  []string{"npm"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -557,21 +557,22 @@ func TestPostWriteValidationSurvivesBrokenSibling(t *testing.T) {
 	}
 }
 
-func TestPresetFileExistenceWarning(t *testing.T) {
-	// Point HOME at an empty temp dir so mount preset sources don't exist.
+func TestFragmentFileExistenceWarning(t *testing.T) {
+	// Point HOME at an empty temp dir so mount fragment sources don't exist.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Profile:    "opencode",
-		Presets:    []string{"gitconfig", "ssh", "netrc"},
+		Fragments:    []string{"gitconfig", "ssh", "netrc"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "warning:") {
-		t.Errorf("stderr should contain file-existence warnings, got: %q", stderr.String())
+	// All fragment mounts are optional, so missing sources should not produce warnings.
+	if strings.Contains(stderr.String(), "does not exist") {
+		t.Errorf("stderr should not contain file-existence warnings for optional mounts, got: %q", stderr.String())
 	}
 }

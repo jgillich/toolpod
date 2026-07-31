@@ -17,7 +17,7 @@ import (
 
 type Options struct {
 	Profile     string
-	Presets     []string
+	Fragments   []string
 	Force       bool
 	DryRun      bool
 	Interactive bool
@@ -45,7 +45,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// to simple text prompts so tests with strings.NewReader still work.
 	tty := IsTTY(stdin)
 
-	// wizardUsed tracks whether interactive prompts for profile/presets were
+	// wizardUsed tracks whether interactive prompts for profile/fragments were
 	// actually shown. When the user provides all args explicitly (even in a
 	// TTY), we skip the overwrite prompt to avoid surprising prompts.
 	wizardUsed := false
@@ -88,40 +88,40 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return fmt.Errorf("unknown built-in profile: %s\navailable built-in profiles: %s", profileName, strings.Join(builtinCat.Names(), ", "))
 	}
 
-	// Resolve presets (prompt if interactive and not provided via flag)
-	presetNamesList := PresetNames()
-	selectedPresets := opts.Presets
-	if len(selectedPresets) == 0 && interactive {
+	// Resolve fragments (prompt if interactive and not provided via flag)
+	fragmentNamesList := FragmentNames()
+	selectedFragments := opts.Fragments
+	if len(selectedFragments) == 0 && interactive {
 		if tty {
-			selectedPresets, err = promptPresetsHuh(presetNamesList, stdin, stdout)
+			selectedFragments, err = promptFragmentsHuh(fragmentNamesList, stdin, stdout)
 			if err != nil {
 				return err
 			}
 		} else {
-			selectedPresets = promptPresets(presetNamesList, reader, stderr)
+			selectedFragments = promptFragments(fragmentNamesList, reader, stderr)
 		}
 		wizardUsed = true
 	}
 
-	// Validate preset names
-	for _, p := range selectedPresets {
-		if _, ok := Presets()[p]; !ok {
+	// Validate fragment names
+	for _, p := range selectedFragments {
+		if _, ok := Fragments()[p]; !ok {
 			hint := ""
 			if p == "all" {
-				hint = "\nnote: there is no \"all\" shorthand; specify presets explicitly"
+				hint = "\nnote: there is no \"all\" shorthand; specify fragments explicitly"
 			}
-			return fmt.Errorf("unknown preset: %s\navailable presets: %s%s", p, strings.Join(presetNamesList, ", "), hint)
+			return fmt.Errorf("unknown fragment: %s\navailable fragments: %s%s", p, strings.Join(fragmentNamesList, ", "), hint)
 		}
 	}
 
-	// Dedup presets
-	selectedPresets = dedup(selectedPresets)
+	// Dedup fragments
+	selectedFragments = dedup(selectedFragments)
 
-	// Check host-side existence of file preset sources (spec §10b)
-	checkPresetFiles(selectedPresets, stderr)
+	// Check host-side existence of file fragment sources (spec §10b)
+	checkFragmentFiles(selectedFragments, stderr)
 
 	// Generate the profile content
-	content, err := generate(profileName, selectedPresets)
+	content, err := generate(profileName, selectedFragments)
 	if err != nil {
 		return fmt.Errorf("generating profile: %w", err)
 	}
@@ -206,12 +206,12 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	return nil
 }
 
-func generate(profileName string, selectedPresets []string) (string, error) {
+func generate(profileName string, selectedFragments []string) (string, error) {
 	base := profile.RawProfile{Profile: profile.Profile{
 		Version: 1,
 	}}
-	for _, name := range selectedPresets {
-		base = profile.MergeProfiles(base, Presets()[name])
+	for _, name := range selectedFragments {
+		base = profile.MergeProfiles(base, Fragments()[name])
 	}
 	base.Extends = profileName // set after merge; MergeProfiles clears Extends
 
@@ -278,8 +278,8 @@ func promptProfile(names []string, reader *bufio.Reader, stderr io.Writer) strin
 	return strings.TrimSpace(line)
 }
 
-func promptPresets(names []string, reader *bufio.Reader, stderr io.Writer) []string {
-	fmt.Fprintf(stderr, "Presets (%s) [none]: ", strings.Join(names, ", "))
+func promptFragments(names []string, reader *bufio.Reader, stderr io.Writer) []string {
+	fmt.Fprintf(stderr, "Fragments (%s) [none]: ", strings.Join(names, ", "))
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -308,7 +308,7 @@ func promptProfileHuh(names []string, stdin io.Reader, stdout io.Writer) (string
 	return selected, nil
 }
 
-func promptPresetsHuh(names []string, stdin io.Reader, stdout io.Writer) ([]string, error) {
+func promptFragmentsHuh(names []string, stdin io.Reader, stdout io.Writer) ([]string, error) {
 	var selected []string
 	opts := make([]huh.Option[string], len(names))
 	for i, n := range names {
@@ -317,7 +317,7 @@ func promptPresetsHuh(names []string, stdin io.Reader, stdout io.Writer) ([]stri
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Select presets (space to toggle, enter to confirm)").
+				Title("Select fragments (space to toggle, enter to confirm)").
 				Options(opts...).
 				Value(&selected),
 		),
@@ -349,20 +349,23 @@ func promptOverwriteHuh(targetPath string, managed bool, stdin io.Reader, stdout
 	return confirmed, nil
 }
 
-// checkPresetFiles warns to stderr when a file preset's source path does
+// checkFragmentFiles warns to stderr when a file fragment's source path does
 // not exist on the host (spec §10b). Only leading "~" is expanded; absolute
 // paths and paths without "~" are skipped (no host-side check needed).
-func checkPresetFiles(selectedPresets []string, stderr io.Writer) {
+func checkFragmentFiles(selectedFragments []string, stderr io.Writer) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	for _, name := range selectedPresets {
-		p, ok := Presets()[name]
+	for _, name := range selectedFragments {
+		p, ok := Fragments()[name]
 		if !ok {
 			continue
 		}
-		for target, mount := range p.Mounts {
+		for _, mount := range p.Mounts {
+			if mount.Optional {
+				continue
+			}
 			// Only expand a leading "~/" or exact "~" — don't touch
 			// absolute paths or paths with "~" in the middle.
 			var src string
@@ -374,7 +377,7 @@ func checkPresetFiles(selectedPresets []string, stderr io.Writer) {
 				continue
 			}
 			if _, err := os.Stat(src); err != nil {
-				fmt.Fprintf(stderr, "warning: %s does not exist; the mount %s will create an empty directory.\n         Create the file first or remove this preset.\n", mount.Source, target)
+				fmt.Fprintf(stderr, "note: %s does not exist; this mount will be skipped at launch (it is marked optional).\n", mount.Source)
 			}
 		}
 	}
