@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/jgillich/toolpod/internal/doctor"
+	"github.com/jgillich/toolpod/internal/profile"
 	"github.com/jgillich/toolpod/internal/prune"
 	"github.com/jgillich/toolpod/internal/scaffold"
 	"github.com/jgillich/toolpod/internal/ui"
 	"github.com/jgillich/toolpod/pkg/toolpod"
+	"gopkg.in/yaml.v3"
 )
 
 type LaunchCmd struct {
@@ -49,11 +53,29 @@ type PruneCmd struct {
 }
 
 type CLI struct {
-	Launch LaunchCmd `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
-	Init   InitCmd   `cmd:"" help:"Generate a user profile override with fragments."`
-	Doctor DoctorCmd `cmd:"" help:"Run environment diagnostics."`
-	Prune  PruneCmd  `cmd:"" help:"Remove toolpod-managed volumes and images."`
+	Launch  LaunchCmd  `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
+	Init    InitCmd    `cmd:"" help:"Generate a user profile override with fragments."`
+	Profile ProfileCmd `cmd:"" help:"Inspect and edit profiles and fragments."`
+	Doctor  DoctorCmd  `cmd:"" help:"Run environment diagnostics."`
+	Prune   PruneCmd   `cmd:"" help:"Remove toolpod-managed volumes and images."`
 }
+
+type ProfileCmd struct {
+	Show ProfileShowCmd `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
+	Edit ProfileEditCmd `cmd:"" help:"Open the user profile file in $EDITOR."`
+	List ProfileListCmd `cmd:"" help:"List all profiles and fragments."`
+}
+
+type ProfileShowCmd struct {
+	Name     string `arg:"" help:"Profile name to show."`
+	Resolved bool   `help:"Inline all extends and show the fully merged profile."`
+}
+
+type ProfileEditCmd struct {
+	Name string `arg:"" help:"Profile name to edit."`
+}
+
+type ProfileListCmd struct{}
 
 func main() {
 	var cli CLI
@@ -173,6 +195,92 @@ func (p *PruneCmd) Run() error {
 	}
 	if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
 		fmt.Println("Nothing to prune.")
+	}
+	return nil
+}
+
+func (c *ProfileShowCmd) Run() error {
+	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+		return nil
+	}
+	if c.Resolved {
+		resolved, err := profile.ResolveProfile(cat, c.Name)
+		if err != nil {
+			return err
+		}
+		out, err := yaml.Marshal(resolved)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+			return nil
+		}
+		fmt.Print(string(out))
+		return nil
+	}
+	rc, ok := cat.Get(c.Name)
+	if !ok {
+		return fmt.Errorf("profile not found: %s", c.Name)
+	}
+	out, err := yaml.Marshal(rc.Profile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+		return nil
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+func (c *ProfileEditCmd) Run() error {
+	userDir := profile.DefaultProfileDir()
+	targetPath := filepath.Join(userDir, c.Name+".yaml")
+	if _, err := os.Stat(targetPath); err == nil {
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+		cmd := exec.Command(editor, targetPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	builtin, err := profile.LoadProfiles("")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+		return nil
+	}
+	if _, ok := builtin.Get(c.Name); ok {
+		return fmt.Errorf("this is a built-in profile. Run 'toolpod init %s' to create a user override.", c.Name)
+	}
+	return fmt.Errorf("profile not found: %s", c.Name)
+}
+
+func (c *ProfileListCmd) Run() error {
+	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+		return nil
+	}
+	for _, name := range cat.Names() {
+		rc, _ := cat.Get(name)
+		var label string
+		switch {
+		case cat.IsFragment(name):
+			label = "built-in:fragment"
+		case cat.IsUserShadow(name):
+			label = "user-shadow"
+		case strings.HasPrefix(rc.Path, "built-in"):
+			label = "built-in"
+		default:
+			label = "user"
+		}
+		fmt.Printf("%-20s %s\n", name, label)
 	}
 	return nil
 }
