@@ -38,7 +38,11 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	hookEnvCmd := `eval "$(mise hook-env 2>/dev/null)" || true`
 
 	var parts []string
-	parts = append(parts, activateCmd, installCmd, hookEnvCmd)
+	for _, p := range []string{activateCmd, installCmd, hookEnvCmd} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
 
 	if isShellCommand(spec.Command) {
 		miseBin := "/usr/local/bin/mise"

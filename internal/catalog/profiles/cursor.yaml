@@ -1,5 +1,5 @@
 version: 1
-image: ghcr.io/jdx/mise:latest
+extends: mise
 command: ["cursor"]
 tools:
   cursor: latest

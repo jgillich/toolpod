@@ -33,9 +33,16 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	// IsUserShadow implies a built-in exists, so GetBuiltin should always succeed
 	// here; the !ok branch is a defensive guard.
 	if rc.Extends == name && cat.IsUserShadow(name) {
-		parent, ok := cat.GetBuiltin(name)
+		builtin, ok := cat.GetBuiltin(name)
 		if !ok {
 			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+		}
+		// Resolve the built-in's own extends chain (e.g. opencode -> mise)
+		// before merging the user shadow on top. Use a fresh seen map so
+		// the built-in's chain doesn't conflict with the current name.
+		parent, err := resolveBuiltinChain(cat, builtin, seen)
+		if err != nil {
+			return RawProfile{}, err
 		}
 		merged := MergeProfiles(parent, rc)
 		merged.Path = rc.Path
@@ -53,7 +60,37 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	return merged, nil
 }
 
-// MergeProfiles merges child on top of parent per spec §4.3:
+// resolveBuiltinChain resolves the extends chain of a built-in profile using
+// GetBuiltin at each step (so user shadows don't interfere). inheritedSeen
+// carries names already visited in the outer resolution to detect cycles
+// that span the shadow boundary.
+func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bool) (RawProfile, error) {
+	if rc.Extends == "" {
+		return rc, nil
+	}
+	name := rc.Extends
+	if inheritedSeen[name] {
+		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+	}
+	parent, ok := cat.GetBuiltin(name)
+	if !ok {
+		return RawProfile{}, ProfileError{Path: rc.Path, Message: "built-in profile not found: " + name}
+	}
+	// Copy seen so the built-in chain has its own scope but still detects
+	// cycles back to the original shadow name.
+	seen := make(map[string]bool, len(inheritedSeen)+1)
+	for k := range inheritedSeen {
+		seen[k] = true
+	}
+	seen[name] = true
+	resolved, err := resolveBuiltinChain(cat, parent, seen)
+	if err != nil {
+		return RawProfile{}, err
+	}
+	merged := MergeProfiles(resolved, rc)
+	merged.Path = rc.Path
+	return merged, nil
+}
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace,
 // image/build treated as a single slot.
 func MergeProfiles(parent, child RawProfile) RawProfile {

@@ -95,25 +95,24 @@ type ProgressWriter interface {
 func ActivateCommand(configDir string, tools map[string]string) string {
 	configFile := filepath.Join(configDir, "config.toml")
 
-	var b strings.Builder
-
-	if len(tools) > 0 {
-		fmt.Fprintf(&b, "mkdir -p %s && cat > %s << 'TOOLPOD_EOF'\n", configDir, configFile)
-		b.WriteString("[tools]\n")
-
-		names := make([]string, 0, len(tools))
-		for name := range tools {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			fmt.Fprintf(&b, "%s = \"%s\"\n", name, tools[name])
-		}
-		b.WriteString("TOOLPOD_EOF\n")
+	if len(tools) == 0 {
+		return ""
 	}
 
-	fmt.Fprintf(&b, "eval \"$(mise hook-env)\"")
+	var b strings.Builder
+	fmt.Fprintf(&b, "mkdir -p %s && printf '%%s' '", configDir)
+	b.WriteString("[tools]\n")
 
+	names := make([]string, 0, len(tools))
+	for name := range tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(&b, "%s = \"%s\"\n", name, tools[name])
+	}
+	b.WriteString("' > ")
+	b.WriteString(configFile)
 	return b.String()
 }
 

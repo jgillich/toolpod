@@ -1,0 +1,6 @@
+version: 1
+image: ghcr.io/jdx/mise:latest
+mounts:
+  /etc/mise:
+    source: ~/.config/mise
+    read_only: true

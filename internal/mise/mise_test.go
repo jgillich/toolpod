@@ -18,18 +18,12 @@ func TestActivateCommand_WithTools(t *testing.T) {
 	if !strings.Contains(cmd, `python = "3.12"`) {
 		t.Errorf("missing python pin in %q", cmd)
 	}
-	if !strings.Contains(cmd, "mise hook-env") {
-		t.Errorf("missing activate in %q", cmd)
-	}
 }
 
 func TestActivateCommand_NoTools(t *testing.T) {
 	cmd := ActivateCommand("/root/.config/mise", nil)
 	if strings.Contains(cmd, "config.toml") {
 		t.Errorf("should not write config when no tools: %q", cmd)
-	}
-	if !strings.Contains(cmd, "mise hook-env") {
-		t.Errorf("missing activate in %q", cmd)
 	}
 }
 
