@@ -76,6 +76,38 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			}
 		}
 	}
+	if len(spec.PortSpecs) > 0 {
+		_, err = fmt.Fprintln(w, "ports:")
+		if err != nil {
+			return err
+		}
+		for _, p := range spec.PortSpecs {
+			hostIP := p.HostIP
+			if hostIP == "" {
+				hostIP = "0.0.0.0"
+			}
+			_, err = fmt.Fprintf(w, "  %s/%s -> %s:%s\n", p.Container, p.Protocol, hostIP, p.HostPort)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if len(spec.DeviceSpecs) > 0 {
+		_, err = fmt.Fprintln(w, "devices:")
+		if err != nil {
+			return err
+		}
+		for _, d := range spec.DeviceSpecs {
+			suffix := ""
+			if d.Cgroup {
+				suffix = " cgroup"
+			}
+			_, err = fmt.Fprintf(w, "  %s <- %s (%s%s)\n", d.Container, d.Host, d.Perms, suffix)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	if len(spec.Env) > 0 {
 		_, err = fmt.Fprintln(w, "environment:")
 		if err != nil {

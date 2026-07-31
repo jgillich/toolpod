@@ -148,6 +148,47 @@ Every field is optional except `version` and `command`.
 | `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
 | `tty` | string | `auto` (default), `true`, or `false`. |
 
+### ports / devices
+
+`ports` publishes container ports to the host. The key is the container port;
+`host` is optional (missing or `0` = random, auto-allocated host port).
+
+```yaml
+ports:
+  8080: {}          # random host port -> 8080/tcp
+  5432:
+    host: 5432      # fixed host port
+  53:
+    protocol: udp
+  5433:
+    host: 5433
+    host_ip: 127.0.0.1
+```
+
+Allocated (and fixed) host ports are available to `{{ }}` templates via
+`.Ports` — keyed by container port — in `command`, `args_if_none`, and
+`environment`:
+
+```yaml
+command: ["opencode", "web", "--port", "{{ index .Ports \"8080\" }}"]
+environment:
+  PORT: '{{ index .Ports "8080" }}'
+```
+
+`devices` attaches host device nodes into the container:
+
+```yaml
+devices:
+  /dev/fuse: {}            # source defaults to the same path on the host
+  /dev/nvidia0: { permissions: rw }
+  /dev/bus/usb: { source: /dev/bus/usb, cgroup: true }
+```
+
+`source` defaults to the key path; `permissions` is `r`, `rw`, or `rwm`
+(default `rwm`); `cgroup: true` additionally emits a device-cgroup allow-rule
+scoped to the device's major:minor (advanced; leave off unless the container
+needs to create arbitrary device nodes).
+
 ### Merge semantics
 
 - **Scalars:** child replaces parent.
