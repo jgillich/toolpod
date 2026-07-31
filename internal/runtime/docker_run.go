@@ -312,16 +312,25 @@ func buildDeviceCgroupRules(spec Spec) []string {
 			fmt.Fprintf(os.Stderr, "warning: device %s: cannot stat %s, no cgroup rule emitted\n", d.Container, d.Host)
 			continue
 		}
-		rule := fmt.Sprintf("c %d:%d rwm", major, minor)
-		if _, err := os.Lstat(fmt.Sprintf("/sys/dev/char/%d:%d", major, minor)); err != nil {
-			if _, err2 := os.Lstat(fmt.Sprintf("/sys/dev/block/%d:%d", major, minor)); err2 != nil {
-				rule = fmt.Sprintf("c %d:* rwm", major)
-				fmt.Fprintf(os.Stderr, "warning: device %s: no sysfs entry for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
-			}
+		prefix := deviceRulePrefix(major, minor)
+		rule := fmt.Sprintf("%s %d:%d rwm", prefix, major, minor)
+		if prefix == "" {
+			rule = fmt.Sprintf("c %d:* rwm", major)
+			fmt.Fprintf(os.Stderr, "warning: device %s: no sysfs entry for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
 		}
 		out = append(out, rule)
 	}
 	return out
+}
+
+func deviceRulePrefix(major, minor int) string {
+	if _, err := os.Lstat(fmt.Sprintf("/sys/dev/char/%d:%d", major, minor)); err == nil {
+		return "c"
+	}
+	if _, err := os.Lstat(fmt.Sprintf("/sys/dev/block/%d:%d", major, minor)); err == nil {
+		return "b"
+	}
+	return ""
 }
 
 func deviceMajorMinor(path string) (int, int, bool) {

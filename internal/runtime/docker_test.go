@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestIsLikelyRootlessSocket(t *testing.T) {
@@ -138,6 +140,37 @@ func TestBuildDeviceCgroupRulesScoped(t *testing.T) {
 	}
 	if strings.Contains(rules[0], "*:*") {
 		t.Errorf("blanket c *:* rule must never be emitted, got %q", rules[0])
+	}
+}
+
+func TestDeviceRulePrefix(t *testing.T) {
+	var st unix.Stat_t
+	if err := unix.Stat("/dev/null", &st); err != nil {
+		t.Fatalf("stat /dev/null: %v", err)
+	}
+	major := int(unix.Major(uint64(st.Rdev)))
+	minor := int(unix.Minor(uint64(st.Rdev)))
+	if p := deviceRulePrefix(major, minor); p != "c" {
+		t.Errorf("deviceRulePrefix(%d:%d) = %q, want \"c\"", major, minor, p)
+	}
+
+	entries, err := os.ReadDir("/sys/dev/block")
+	if err != nil || len(entries) == 0 {
+		t.Skip("no block device sysfs entries to test")
+	}
+	for _, e := range entries {
+		parts := strings.SplitN(e.Name(), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		m, err1 := strconv.Atoi(parts[0])
+		n, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if p := deviceRulePrefix(m, n); p != "b" {
+			t.Errorf("deviceRulePrefix(%d:%d) = %q, want \"b\"", m, n, p)
+		}
 	}
 }
 
