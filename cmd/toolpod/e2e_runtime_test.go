@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,7 +16,12 @@ func runToolpod(t *testing.T, args ...string) (string, error) {
 	if err != nil {
 		buildPath := "/tmp/toolpod"
 		if _, err := os.Stat(buildPath); os.IsNotExist(err) {
-			cmd := exec.Command("go", "build", "-o", buildPath, "./cmd/toolpod")
+			_, src, _, ok := runtime.Caller(0)
+			if !ok {
+				t.Fatal("unable to locate test source file")
+			}
+			pkgPath := filepath.Join(filepath.Dir(filepath.Dir(src)), "cmd", "toolpod")
+			cmd := exec.Command("go", "build", "-o", buildPath, pkgPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("go build: %v\n%s", err, out)
 			}
