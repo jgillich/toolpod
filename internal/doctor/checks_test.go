@@ -17,6 +17,9 @@ func TestCheckWorkspaceWritable(t *testing.T) {
 }
 
 func TestCheckWorkspaceNotWritable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions are not enforced")
+	}
 	dir := t.TempDir()
 	err := os.Chmod(dir, 0o444)
 	if err != nil {
