@@ -202,20 +202,19 @@ func (p *PruneCmd) Run() error {
 func (c *ProfileShowCmd) Run() error {
 	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-		return nil
+		return fmt.Errorf("loading profiles: %w", err)
 	}
 	if c.Resolved {
+		if cat.IsFragment(c.Name) {
+			return fmt.Errorf("%s is a fragment, not a profile (use 'profile show %s' without --resolved to view it)", c.Name, c.Name)
+		}
 		resolved, err := profile.ResolveProfile(cat, c.Name)
 		if err != nil {
 			return err
 		}
 		out, err := yaml.Marshal(resolved)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-			return nil
+			return err
 		}
 		fmt.Print(string(out))
 		return nil
@@ -226,9 +225,7 @@ func (c *ProfileShowCmd) Run() error {
 	}
 	out, err := yaml.Marshal(rc.Profile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-		return nil
+		return err
 	}
 	fmt.Print(string(out))
 	return nil
@@ -236,6 +233,9 @@ func (c *ProfileShowCmd) Run() error {
 
 func (c *ProfileEditCmd) Run() error {
 	userDir := profile.DefaultProfileDir()
+	if userDir == "" {
+		return fmt.Errorf("cannot determine profile directory (set XDG_CONFIG_HOME)")
+	}
 	targetPath := filepath.Join(userDir, c.Name+".yaml")
 	if _, err := os.Stat(targetPath); err == nil {
 		editor := os.Getenv("EDITOR")
@@ -250,12 +250,13 @@ func (c *ProfileEditCmd) Run() error {
 	}
 	builtin, err := profile.LoadProfiles("")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-		return nil
+		return fmt.Errorf("loading profiles: %w", err)
 	}
 	if _, ok := builtin.Get(c.Name); ok {
 		return fmt.Errorf("this is a built-in profile. Run 'toolpod init %s' to create a user override.", c.Name)
+	}
+	if builtin.IsFragment(c.Name) {
+		return fmt.Errorf("%s is a fragment, not an editable profile file", c.Name)
 	}
 	return fmt.Errorf("profile not found: %s", c.Name)
 }
@@ -263,16 +264,16 @@ func (c *ProfileEditCmd) Run() error {
 func (c *ProfileListCmd) Run() error {
 	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-		return nil
+		return fmt.Errorf("loading profiles: %w", err)
 	}
 	for _, name := range cat.Names() {
 		rc, _ := cat.Get(name)
 		var label string
 		switch {
+		case cat.IsFragment(name) && strings.HasPrefix(rc.Path, "built-in"):
+			label = "fragment"
 		case cat.IsFragment(name):
-			label = "built-in:fragment"
+			label = "user-fragment"
 		case cat.IsUserShadow(name):
 			label = "user-shadow"
 		case strings.HasPrefix(rc.Path, "built-in"):

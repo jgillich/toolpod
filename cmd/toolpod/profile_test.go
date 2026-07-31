@@ -40,8 +40,11 @@ func TestProfileList(t *testing.T) {
 	if !strings.Contains(out, "shell") {
 		t.Errorf("expected profile list to contain 'shell', got:\n%s", out)
 	}
-	if !strings.Contains(out, "built-in") && !strings.Contains(out, "fragment") {
-		t.Errorf("expected profile list to include a label like 'built-in' or 'fragment', got:\n%s", out)
+	if !strings.Contains(out, "built-in") {
+		t.Errorf("expected profile list to label built-in profiles, got:\n%s", out)
+	}
+	if !strings.Contains(out, "fragment") {
+		t.Errorf("expected profile list to label fragments, got:\n%s", out)
 	}
 }
 
@@ -49,5 +52,12 @@ func TestProfileEditBuiltInErrors(t *testing.T) {
 	out, _ := runToolpod(t, "profile", "edit", "shell")
 	if !strings.Contains(out, "built-in") || !strings.Contains(out, "init") {
 		t.Errorf("expected built-in + init hint for editing a built-in profile, got:\n%s", out)
+	}
+}
+
+func TestProfileShowResolvedFragmentRefused(t *testing.T) {
+	out, _ := runToolpod(t, "profile", "show", "--resolved", "ssh")
+	if !strings.Contains(out, "fragment") {
+		t.Errorf("expected --resolved on a fragment to be refused with a 'fragment' message, got:\n%s", out)
 	}
 }

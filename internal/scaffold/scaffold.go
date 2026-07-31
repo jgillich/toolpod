@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -124,10 +125,10 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return fmt.Errorf("generating profile: %w", err)
 	}
 
-	// Resolve the profile to generate a summary.
+	// Resolve the generated profile to generate a summary and validate it.
 	resolved, err := resolveGeneratedProfile(content, profileName)
 	if err != nil {
-		return fmt.Errorf("resolving profile for summary: %w", err)
+		return fmt.Errorf("generated config failed validation: %w", err)
 	}
 
 	printSummary(stdout, profileName, selectedFragments, resolved)
@@ -161,10 +162,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	if opts.DryRun {
 		fmt.Fprintf(stdout, "# dry-run: would write %s\n", targetPath)
 		fmt.Fprint(stdout, content)
-		// Validate via temp dir
-		if err := validateViaTempDir(content, profileName); err != nil {
-			return fmt.Errorf("generated config failed validation: %w", err)
-		}
 		return nil
 	}
 
@@ -222,13 +219,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return fmt.Errorf("writing %s: %w", targetPath, err)
 	}
 
-	// Validate after writing via isolated temp dir to avoid collateral
-	// deletion from pre-existing broken sibling YAML files in userDir.
-	if err := validateViaTempDir(content, profileName); err != nil {
-		os.Remove(targetPath)
-		return fmt.Errorf("generated config failed validation: %w", err)
-	}
-
 	fmt.Fprintf(stdout, "created %s\n", targetPath)
 	fmt.Fprintln(stdout, "generated config is valid")
 	return nil
@@ -254,26 +244,6 @@ func generate(profileName string, selectedFragments []string) (string, error) {
 		"# Remove this file to restore the built-in default.\n\n"
 
 	return header + string(data), nil
-}
-
-func validateViaTempDir(content, profileName string) error {
-	tmpDir, err := os.MkdirTemp("", "toolpod-init-validate-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Write the full content (YAML comments are valid YAML, no stripping needed)
-	if err := os.WriteFile(filepath.Join(tmpDir, profileName+".yaml"), []byte(content), 0o644); err != nil {
-		return err
-	}
-
-	cat, err := profile.LoadProfiles(tmpDir)
-	if err != nil {
-		return err
-	}
-	_, err = profile.ResolveProfile(cat, profileName)
-	return err
 }
 
 func dedup(items []string) []string {
@@ -378,40 +348,6 @@ func promptOverwriteHuh(targetPath string, managed bool, stdin io.Reader, stdout
 	return confirmed, nil
 }
 
-// checkFragmentFiles warns to stderr when a file fragment's source path does
-// not exist on the host (spec §10b). Only leading "~" is expanded; absolute
-// paths and paths without "~" are skipped (no host-side check needed).
-func checkFragmentFiles(selectedFragments []string, stderr io.Writer) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	for _, name := range selectedFragments {
-		p, ok := Fragments()[name]
-		if !ok {
-			continue
-		}
-		for _, mount := range p.Mounts {
-			if mount.Optional {
-				continue
-			}
-			// Only expand a leading "~/" or exact "~" — don't touch
-			// absolute paths or paths with "~" in the middle.
-			var src string
-			if strings.HasPrefix(mount.Source, "~/") {
-				src = home + mount.Source[1:]
-			} else if mount.Source == "~" {
-				src = home
-			} else {
-				continue
-			}
-			if _, err := os.Stat(src); err != nil {
-				fmt.Fprintf(stderr, "note: %s does not exist; this mount will be skipped at launch (it is marked optional).\n", mount.Source)
-			}
-		}
-	}
-}
-
 func resolveGeneratedProfile(content, profileName string) (profile.Profile, error) {
 	tmpDir, err := os.MkdirTemp("", "toolpod-init-summary-*")
 	if err != nil {
@@ -438,24 +374,36 @@ func printSummary(stdout io.Writer, profileName string, fragments []string, reso
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Container access:")
 
-	hasMounts := len(resolved.Mounts) > 0
-	hasEnv := len(resolved.Env) > 0
-
-	for target := range resolved.Mounts {
+	for _, target := range sortedKeys(resolved.Mounts) {
 		fmt.Fprintf(stdout, "  • mounts %s\n", target)
 	}
-	for k := range resolved.Env {
+	for _, k := range sortedStringMapKeys(resolved.Env) {
 		fmt.Fprintf(stdout, "  • passes %s\n", k)
 	}
-	for name := range resolved.Tools {
+	for _, name := range sortedStringMapKeys(resolved.Tools) {
 		fmt.Fprintf(stdout, "  • installs %s\n", name)
 	}
-	for name := range resolved.Caches {
+	for _, name := range sortedStringMapKeys(resolved.Caches) {
 		fmt.Fprintf(stdout, "  • caches %s\n", name)
 	}
+}
 
-	_ = hasMounts
-	_ = hasEnv
+func sortedKeys(m map[string]profile.Mount) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedStringMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func openEditorWithResolved(resolved profile.Profile, stdout io.Writer) error {

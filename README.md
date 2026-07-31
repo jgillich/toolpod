@@ -223,7 +223,7 @@ $ toolpod init opencode --fragments npm,go,gitconfig,ssh   # --presets is accept
 
 **Package caches** (tool + shared cache volume):
 
-| Preset | Tool | Cache |
+| Fragment | Tool | Cache |
 | --- | --- | --- |
 | `npm` | `node` | `~/.npm` |
 | `bun` | `bun` | `~/.bun/install/global` |
@@ -239,7 +239,7 @@ $ toolpod init opencode --fragments npm,go,gitconfig,ssh   # --presets is accept
 
 **Host config / credentials** (mount + tool):
 
-| Preset | Tool | Mounts |
+| Fragment | Tool | Mounts |
 | --- | --- | --- |
 | `aws` | `aws` | `~/.aws` (ro) |
 | `gh` | `gh` | `~/.config/gh` (rw — auth tokens refresh) |
