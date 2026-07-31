@@ -1,0 +1,12 @@
+version: 1
+extends: mise
+command: ["crush"]
+tools:
+  crush: latest
+mounts:
+  ~/.config/crush:
+    source: ~/.config/crush
+    read_only: true
+  ~/.local/share/crush:
+    source: ~/.local/share/crush
+    read_only: false

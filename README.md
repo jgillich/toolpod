@@ -123,6 +123,9 @@ caches:
 | `codex` | `codex` | OpenAI Codex CLI |
 | `claude` | `claude` | Anthropic Claude Code |
 | `gemini` | `gemini` | Google Gemini CLI |
+| `pi` | `pi` | Pi, the minimal terminal coding agent (earendil-works) |
+| `crush` | `crush` | Crush, the Charmbracelet terminal coding agent |
+| `qwen` | `qwen` | Qwen Code CLI (Alibaba) |
 | `shell` | `bash` | Disposable, project-aware shell. Useful as a base to `extends:` |
 
 All built-ins extend a shared `mise` base profile and install their agent as a `tools:` entry. None mount `~/.ssh` or `~/.gitconfig` by default — add those via `init` fragments or by hand.

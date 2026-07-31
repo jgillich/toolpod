@@ -1,0 +1,9 @@
+version: 1
+extends: mise
+command: ["qwen"]
+tools:
+  qwen: latest
+mounts:
+  ~/.qwen:
+    source: ~/.qwen
+    read_only: false

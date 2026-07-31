@@ -1,0 +1,9 @@
+version: 1
+extends: mise
+command: ["pi"]
+tools:
+  pi: latest
+mounts:
+  ~/.pi:
+    source: ~/.pi
+    read_only: false
