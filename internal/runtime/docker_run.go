@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -161,25 +162,55 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 			}
 		}
 	}()
+
+	// stdinPump copies os.Stdin to the hijacked connection. Unlike io.Copy,
+	// it guards writes with a mutex so that shutdown can close the
+	// connection without the goroutine writing to a closed socket (which
+	// produces "broken pipe" / "use of closed network connection" errors).
+	var connMu sync.Mutex
+	connClosed := false
 	stdinDone := make(chan struct{})
 	go func() {
 		defer close(stdinDone)
-		if _, err := io.Copy(hijacked.Conn, os.Stdin); err != nil {
-			fmt.Fprintf(os.Stderr, "stdin pump: %v\n", err)
+		buf := make([]byte, 32*1024)
+		for {
+			n, readErr := os.Stdin.Read(buf)
+			if n > 0 {
+				connMu.Lock()
+				if connClosed {
+					connMu.Unlock()
+					return
+				}
+				_, writeErr := hijacked.Conn.Write(buf[:n])
+				connMu.Unlock()
+				if writeErr != nil {
+					return
+				}
+			}
+			if readErr != nil {
+				return
+			}
 		}
 	}()
+
+	// closeConn safely closes the hijacked connection, ensuring the stdin
+	// pump goroutine stops writing before the connection is torn down.
+	closeConn := func() {
+		connMu.Lock()
+		connClosed = true
+		hijacked.Close()
+		connMu.Unlock()
+	}
 
 	statusCh, errCh := d.cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		<-pumpDone
-		hijacked.Close()
-		<-stdinDone
+		closeConn()
 		return 3, fmt.Errorf("container wait: %w", err)
 	case status := <-statusCh:
 		<-pumpDone
-		hijacked.Close()
-		<-stdinDone
+		closeConn()
 		return int(status.StatusCode), nil
 	}
 }
