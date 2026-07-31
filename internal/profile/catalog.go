@@ -48,10 +48,23 @@ func (c Catalog) IsUserShadow(name string) bool {
 	return c.entries[name].Path != c.builtins[name].Path
 }
 
-// Names returns all profile names in the catalog, sorted.
+// Names returns all names in the catalog (profiles and fragments), sorted.
 func (c Catalog) Names() []string {
 	names := make([]string, 0, len(c.entries))
 	for n := range c.entries {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ProfileNames returns only profile names (excluding fragments), sorted.
+func (c Catalog) ProfileNames() []string {
+	names := make([]string, 0, len(c.entries))
+	for n := range c.entries {
+		if c.fragments[n] {
+			continue
+		}
 		names = append(names, n)
 	}
 	sort.Strings(names)

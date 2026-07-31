@@ -37,13 +37,14 @@ func FragmentNames() []string {
 	return names
 }
 
-// BuiltInProfiles returns sorted names of all built-in profiles for display.
+// BuiltInProfiles returns sorted names of all built-in profiles (excluding
+// fragments) for display.
 func BuiltInProfiles() []string {
 	cat, err := profile.LoadProfiles("")
 	if err != nil {
 		return nil
 	}
-	return cat.Names()
+	return cat.ProfileNames()
 }
 
 func validateFragment(name string, p profile.RawProfile) error {
