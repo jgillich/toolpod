@@ -12,7 +12,7 @@ import (
 // $HOME; runtimeHome is the in-container user's home (/home/<user> in Mode A,
 // /root in Mode B).
 func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) (Spec, error) {
-	cfg, err := profile.ResolveTildes(cfg, mode, hostHome, runtimeHome)
+	cfg, err := profile.ResolveTildes(cfg, mode, hostHome, runtimeHome, nil)
 	if err != nil {
 		return Spec{}, fmt.Errorf("resolve paths: %w", err)
 	}
