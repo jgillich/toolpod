@@ -86,19 +86,9 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		cmd = append(cmd, cfg.ArgsIfNone...)
 	}
 
-	var buildCfg *BuildSpec
-	if cfg.Build != nil {
-		buildCfg = &BuildSpec{
-			Dockerfile: cfg.Build.Dockerfile,
-			Context:    cfg.Build.Context,
-			DependsOn:  cfg.Build.DependsOn,
-		}
-	}
-
 	return Spec{
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
-		Build:       buildCfg,
 		Command:     cmd,
 		Mounts:      mounts,
 		PortSpecs:   portSpecs,

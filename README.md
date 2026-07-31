@@ -16,13 +16,13 @@ This is the key difference from [devcontainers](https://containers.dev/), which 
 | --- | --- | --- |
 | **Who owns it** | the project (`.devcontainer/`) | the user (`~/.config/toolpod/`) |
 | **Requires repo changes** | yes | never |
-| **Tool versions** | baked into the image or features | per-project via `mise.toml`, shared across runs |
+| **Tool versions** | baked into the image or features | declared in profiles, shared across runs |
 | **Lifecycle** | long-lived, attach/reattach | ephemeral — fresh container each run, removed on exit |
 | **Engine** | Docker (VS Code extension) | any Docker-API engine (Docker or Podman via `DOCKER_HOST`) |
 
 The two are complementary. What toolpod adds:
 
-- **mise as the foundation.** Tools (and the agents themselves) are `mise` entries, not image layers. One base image serves every project; per-project tool versions come from the project's own `mise.toml`. No per-language image, no rebuild when a tool version bumps.
+- **mise as the foundation.** Tools (and the agents themselves) are `mise` entries declared in profiles, not image layers. One base image serves every profile; no per-language image, no rebuild when a tool version bumps. Per-project versions are optional via the project's own `mise.toml`.
 - **Persistent shared volumes.** The mise install dir and package caches (npm, cargo, pip, go…) live in Docker named volumes shared across *all* profiles and runs. First launch of a tool is slow; every subsequent launch is instant.
 - **Rootless-Podman parity.** When `DOCKER_HOST` points at a rootless Podman socket, the workspace is mounted at its host absolute path and the agent runs as your host user — paths and file ownership match exactly. No `sudo chown` cleanup.
 
@@ -30,19 +30,12 @@ AI coding agents are the flagship use case, but because the architecture is gene
 
 ## A quick intro to mise
 
-[mise](https://mise.jdx.dev/) is a polyglot version manager. The two ideas that matter for toolpod:
+[mise](https://mise.jdx.dev/) is a polyglot version manager — and in toolpod, profiles are where tools get declared:
 
-1. **Tools are declared, not baked in.** A project lists what it needs in a `mise.toml`:
-   ```toml
-   [tools]
-   node = "22"
-   python = "3.13"
-   ```
-   mise puts those exact versions on `PATH`. Different projects get different toolchains automatically, with no image rebuild.
+- A profile's `tools:` map lists what to install and which version; the agents themselves are entries too. No per-agent Dockerfile, no rebuild when a version bumps.
+- mise installs each tool into a shared directory that toolpod mounts via a Docker named volume — install once, reuse across every profile and run.
 
-2. **Tools install to a shared directory.** mise installs each tool once and reuses it across every project that asks for the same version. toolpod mounts that directory in a Docker named volume, so the same property holds across container runs: install once, reuse forever. The AI agents themselves are also mise entries — no per-agent Dockerfile.
-
-You don't need to be a mise expert. If a project has a `mise.toml`, toolpod's shell picks up its tools automatically. If it doesn't, your profile's `tools:` map provides the baseline.
+Per-project versions are optional: if a project has its own `mise.toml`, toolpod's shell picks it up automatically as an override; otherwise the profile's `tools:` map stands alone. You don't need to be a mise expert to use either.
 
 ## Install
 
@@ -131,14 +124,13 @@ All built-ins extend a shared `mise` base profile and install their agent as a `
 
 ### Schema reference
 
-Every field is optional except `version` and `command`.
+Every field is optional except `version`, `image`, and `command`.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `version` | int | Config schema version. Currently `1`. |
 | `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. List form: `extends: [opencode, ssh, javascript]` (resolved left-to-right; body wins last). Cycles are rejected. Fragments may only extend other fragments, never profiles. |
-| `image` | string | Container image. Mutually exclusive with `build`. |
-| `build` | object | Escape hatch: `{ dockerfile, context, depends_on }`. |
+| `image` | string | Container image. |
 | `command` | string[] | Command to run. CLI args are appended verbatim. |
 | `args_if_none` | string[] | Default args used only if the user passes none. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only`, `optional`. `~` → runtime home (target) / host `$HOME` (source). `{{ }}` template expressions evaluated against `.Env`, `uid`, and `trimPrefix`/`printf` helpers. |

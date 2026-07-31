@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"golang.org/x/term"
@@ -16,13 +15,11 @@ import (
 
 type Options struct {
 	Volumes bool
-	Images  bool
 	Force   bool
 }
 
 type Result struct {
 	VolumesRemoved []string
-	ImagesRemoved  []string
 }
 
 func Run(ctx context.Context, opts Options) (Result, error) {
@@ -33,44 +30,21 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	var result Result
 
-	if opts.Volumes || (!opts.Volumes && !opts.Images) {
-		vols, err := listToolpodVolumes(ctx, cli)
-		if err != nil {
-			return result, fmt.Errorf("list volumes: %w", err)
-		}
-		if len(vols) > 0 {
-			if !opts.Force {
-				if !confirm("volumes", volNames(vols), os.Stdin) {
-					return result, nil
-				}
-			}
-			for _, v := range vols {
-				if err := cli.VolumeRemove(ctx, v.Name, true); err != nil {
-					fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", v.Name, err)
-				} else {
-					result.VolumesRemoved = append(result.VolumesRemoved, v.Name)
-				}
-			}
-		}
+	vols, err := listToolpodVolumes(ctx, cli)
+	if err != nil {
+		return result, fmt.Errorf("list volumes: %w", err)
 	}
-
-	if opts.Images || (!opts.Volumes && !opts.Images) {
-		imgs, err := listToolpodImages(ctx, cli)
-		if err != nil {
-			return result, fmt.Errorf("list images: %w", err)
-		}
-		if len(imgs) > 0 {
-			if !opts.Force {
-				if !confirm("images", imgTags(imgs), os.Stdin) {
-					return result, nil
-				}
+	if len(vols) > 0 {
+		if !opts.Force {
+			if !confirm("volumes", volNames(vols), os.Stdin) {
+				return result, nil
 			}
-			for _, img := range imgs {
-				if _, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: true}); err != nil {
-					fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", img.ID, err)
-				} else {
-					result.ImagesRemoved = append(result.ImagesRemoved, img.ID)
-				}
+		}
+		for _, v := range vols {
+			if err := cli.VolumeRemove(ctx, v.Name, true); err != nil {
+				fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", v.Name, err)
+			} else {
+				result.VolumesRemoved = append(result.VolumesRemoved, v.Name)
 			}
 		}
 	}
@@ -92,29 +66,8 @@ func listToolpodVolumes(ctx context.Context, cli *client.Client) ([]*volume.Volu
 	return found, nil
 }
 
-func listToolpodImages(ctx context.Context, cli *client.Client) ([]image.Summary, error) {
-	imgs, err := cli.ImageList(ctx, image.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	var found []image.Summary
-	for _, img := range imgs {
-		for _, tag := range img.RepoTags {
-			if isToolpodImage(tag) {
-				found = append(found, img)
-				break
-			}
-		}
-	}
-	return found, nil
-}
-
 func isToolpodVolume(name string) bool {
 	return strings.HasPrefix(name, "toolpod-")
-}
-
-func isToolpodImage(ref string) bool {
-	return strings.HasPrefix(ref, "toolpod/")
 }
 
 func confirm(kind string, items []string, r io.Reader) bool {
@@ -136,14 +89,6 @@ func volNames(vols []*volume.Volume) []string {
 	out := make([]string, len(vols))
 	for i, v := range vols {
 		out[i] = v.Name
-	}
-	return out
-}
-
-func imgTags(imgs []image.Summary) []string {
-	var out []string
-	for _, img := range imgs {
-		out = append(out, img.RepoTags...)
 	}
 	return out
 }

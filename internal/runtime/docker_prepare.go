@@ -3,28 +3,17 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 
-	"github.com/jgillich/toolpod/internal/build"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 	"github.com/jgillich/toolpod/internal/mise"
 )
 
 func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
 	runtimeHome := spec.RuntimeHome
 
-	buildSpec := build.Spec{
-		ProfileName: spec.ProfileName,
-		Image:       spec.Image,
-	}
-	if spec.Build != nil {
-		buildSpec.Build = &build.BuildSpec{
-			Dockerfile: spec.Build.Dockerfile,
-			Context:    spec.Build.Context,
-			DependsOn:  spec.Build.DependsOn,
-		}
-	}
-
-	imageRef, err := build.EnsureImage(ctx, d.cli, buildSpec, w, d.Rebuild)
-	if err != nil {
+	if err := ensureImagePulled(ctx, d.cli, spec.Image, w); err != nil {
 		return "", fmt.Errorf("ensure image: %w", err)
 	}
 
@@ -46,7 +35,38 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		return "", fmt.Errorf("mise tools: %w", err)
 	}
 
-	return imageRef, nil
+	return spec.Image, nil
+}
+
+func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) error {
+	exists, err := imageExists(ctx, cli, ref)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	w.WriteProgress("pull: " + ref)
+	reader, err := cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	defer reader.Close()
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		return fmt.Errorf("drain pull response: %w", err)
+	}
+	return nil
+}
+
+func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, error) {
+	_, _, err := cli.ImageInspectWithRaw(ctx, ref)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 var _ mise.ContainerRunner = (*DockerRuntime)(nil)

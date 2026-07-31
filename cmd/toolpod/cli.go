@@ -26,7 +26,6 @@ type LaunchCmd struct {
 	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
 	DryRun    bool   `help:"Print the spec without launching."`
 	Verbose   bool   `help:"Print the spec before launching."`
-	Rebuild   bool   `help:"Rebuild the image even if cached."`
 
 	// Profile-and-args holds the profile name followed by everything
 	// passed verbatim to the profile's command. passthrough:"" stops
@@ -48,7 +47,6 @@ type DoctorCmd struct {
 
 type PruneCmd struct {
 	Volumes bool `help:"Remove toolpod-managed volumes."`
-	Images  bool `help:"Remove toolpod-tagged images."`
 	Force   bool `help:"Skip confirmation prompt."`
 	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
 }
@@ -111,7 +109,6 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 		Workspace:   workspace,
 		DryRun:      l.DryRun,
 		Verbose:     l.Verbose,
-		Rebuild:     l.Rebuild,
 		Command:     l.Command,
 		Args:        passthrough,
 	})
@@ -170,7 +167,6 @@ func (d *DoctorCmd) Run() error {
 func (p *PruneCmd) Run() error {
 	opts := prune.Options{
 		Volumes: p.Volumes,
-		Images:  p.Images,
 		Force:   p.Force || p.Yes,
 	}
 	result, err := prune.Run(context.Background(), opts)
@@ -184,13 +180,7 @@ func (p *PruneCmd) Run() error {
 			fmt.Printf("  %s\n", v)
 		}
 	}
-	if len(result.ImagesRemoved) > 0 {
-		fmt.Printf("Removed %d image(s):\n", len(result.ImagesRemoved))
-		for _, img := range result.ImagesRemoved {
-			fmt.Printf("  %s\n", img)
-		}
-	}
-	if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
+	if len(result.VolumesRemoved) == 0 {
 		fmt.Println("Nothing to prune.")
 	}
 	return nil

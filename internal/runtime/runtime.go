@@ -5,7 +5,6 @@ import "context"
 type Spec struct {
 	ProfileName string
 	Image       string
-	Build       *BuildSpec
 	Command     []string
 	Mounts      []MountSpec
 	PortSpecs   []PortSpec
@@ -18,12 +17,6 @@ type Spec struct {
 	Workspace   WorkspaceSpec
 	TTY         string
 	RuntimeHome string
-}
-
-type BuildSpec struct {
-	Dockerfile string
-	Context    string
-	DependsOn  []string
 }
 
 type MountSpec struct {

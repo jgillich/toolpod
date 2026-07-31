@@ -21,19 +21,11 @@ func TestValidateMissingCommand(t *testing.T) {
 	}
 }
 
-func TestValidateBothImageAndBuild(t *testing.T) {
-	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Build: &Build{Dockerfile: "Dockerfile"}, Command: []string{"sh"}}}
-	err := validate(rc)
-	if err == nil {
-		t.Fatal("expected error for both image and build")
-	}
-}
-
-func TestValidateNeitherImageNorBuild(t *testing.T) {
+func TestValidateMissingImage(t *testing.T) {
 	rc := RawProfile{Profile: Profile{Version: 1, Command: []string{"sh"}}}
 	err := validate(rc)
 	if err == nil {
-		t.Fatal("expected error for neither image nor build")
+		t.Fatal("expected error for missing image")
 	}
 }
 

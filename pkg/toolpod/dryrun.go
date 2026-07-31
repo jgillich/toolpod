@@ -13,8 +13,6 @@ func RenderSpec(w io.Writer, spec Spec) error {
 	}
 	if spec.Image != "" {
 		_, err = fmt.Fprintf(w, "image: %s\n", spec.Image)
-	} else if spec.Build != nil {
-		_, err = fmt.Fprintf(w, "build:\n  dockerfile: %s\n", spec.Build.Dockerfile)
 	}
 	if err != nil {
 		return err

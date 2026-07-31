@@ -41,8 +41,8 @@ func validateFragment(name string, p profile.RawProfile) error {
 	if p.Version != 1 {
 		return fmt.Errorf("fragment %q must set version: 1", name)
 	}
-	if p.Image != "" || p.Build != nil || len(p.Command) > 0 {
-		return fmt.Errorf("fragment %q must not set image/build/command", name)
+	if p.Image != "" || len(p.Command) > 0 {
+		return fmt.Errorf("fragment %q must not set image/command", name)
 	}
 	return nil
 }

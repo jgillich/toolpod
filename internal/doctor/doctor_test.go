@@ -10,8 +10,8 @@ func TestCheckPassFormat(t *testing.T) {
 }
 
 func TestCheckWarnFormat(t *testing.T) {
-	c := Check{Name: "buildkit", Status: Warn, Message: "available"}
-	if c.Format() != "[warn] buildkit: available" {
+	c := Check{Name: "mise base image", Status: Warn, Message: "present"}
+	if c.Format() != "[warn] mise base image: present" {
 		t.Errorf("Format() = %q", c.Format())
 	}
 }

@@ -31,7 +31,6 @@ type Profile struct {
 	Version     int                   `yaml:"version"`
 	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
 	Image       string                `yaml:"image,omitempty"`
-	Build       *Build                `yaml:"build,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
 	ArgsIfNone  []string              `yaml:"args_if_none,omitempty"`
 	Caches      map[string]string     `yaml:"caches,omitempty"`
@@ -44,13 +43,6 @@ type Profile struct {
 	Tools       map[string]string     `yaml:"tools,omitempty"`
 	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
-}
-
-// Build is the escape-hatch image source: a Dockerfile + optional depends_on.
-type Build struct {
-	Dockerfile string   `yaml:"dockerfile"`
-	Context    string   `yaml:"context,omitempty"`
-	DependsOn  []string `yaml:"depends_on,omitempty"`
 }
 
 // Mount is a single bind mount, keyed by container target path.

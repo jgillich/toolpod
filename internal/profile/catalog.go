@@ -400,8 +400,8 @@ func validateFragmentName(name string, rc RawProfile) error {
 	if rc.Version != 1 {
 		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must set version: 1"}
 	}
-	if rc.Image != "" || rc.Build != nil || len(rc.Command) > 0 {
-		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set image/build/command"}
+	if rc.Image != "" || len(rc.Command) > 0 {
+		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set image/command"}
 	}
 	return nil
 }

@@ -20,21 +20,3 @@ func TestIsToolpodVolume(t *testing.T) {
 		}
 	}
 }
-
-func TestIsToolpodImage(t *testing.T) {
-	tests := []struct {
-		ref  string
-		want bool
-	}{
-		{"toolpod/opencode:latest", true},
-		{"toolpod/shell:latest", true},
-		{"toolpod/myprof:latest", true},
-		{"alpine:latest", false},
-		{"ghcr.io/jdx/mise:latest", false},
-	}
-	for _, tt := range tests {
-		if got := isToolpodImage(tt.ref); got != tt.want {
-			t.Errorf("isToolpodImage(%q) = %v, want %v", tt.ref, got, tt.want)
-		}
-	}
-}

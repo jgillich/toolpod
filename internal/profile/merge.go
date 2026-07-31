@@ -126,6 +126,7 @@ func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bo
 	merged.Path = rc.Path
 	return merged, nil
 }
+
 // withParentPath attaches the referencing profile's path to a child resolution
 // error that doesn't already name a source, so "profile not found" pinpoints
 // which file has the bad extends target.
@@ -138,8 +139,7 @@ func withParentPath(err error, rc RawProfile) error {
 	return err
 }
 
-// scalars replace, maps merge key-by-key with null-to-delete, lists replace,
-// image/build treated as a single slot.
+// scalars replace, maps merge key-by-key with null-to-delete, lists replace.
 func MergeProfiles(parent, child RawProfile) RawProfile {
 	out := parent
 
@@ -156,9 +156,8 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 		out.TTY = child.TTY
 	}
 
-	if child.Image != "" || child.Build != nil {
+	if child.Image != "" {
 		out.Image = child.Image
-		out.Build = child.Build
 	}
 
 	if child.Command != nil {

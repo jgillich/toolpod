@@ -80,7 +80,6 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			if err != nil {
 				return Result{ExitCode: 3, Err: fmt.Errorf("runtime unavailable: %w (is Docker running?)", err)}
 			}
-			constructed.Rebuild = opts.Rebuild
 			rt = constructed
 		}
 

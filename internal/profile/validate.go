@@ -26,13 +26,8 @@ func validate(rc RawProfile) error {
 	if len(rc.Command) == 0 {
 		return ProfileError{Path: rc.Path, Message: "missing required field: command"}
 	}
-	hasImage := rc.Image != ""
-	hasBuild := rc.Build != nil
-	if hasImage && hasBuild {
-		return ProfileError{Path: rc.Path, Message: "exactly one of image or build is required (both set)"}
-	}
-	if !hasImage && !hasBuild {
-		return ProfileError{Path: rc.Path, Message: "exactly one of image or build is required (neither set)"}
+	if rc.Image == "" {
+		return ProfileError{Path: rc.Path, Message: "missing required field: image"}
 	}
 	if err := validatePorts(rc); err != nil {
 		return err

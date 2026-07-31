@@ -21,7 +21,6 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 
 	checks = append(checks, checkRuntimeReachable(ctx, rt))
 	checks = append(checks, checkRootless(ctx, rt))
-	checks = append(checks, checkBuildKit(ctx, rt))
 	checks = append(checks, checkMiseBaseImage(ctx, rt))
 	checks = append(checks, checkVolumes(ctx, rt))
 	checks = append(checks, checkPermissions(ctx, rt))
@@ -64,17 +63,6 @@ func checkRootless(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "rootless", Status: Pass, Message: "no → Mode B (/workspace fallback)"}
 	}
 	return Check{Name: "rootless", Status: Pass, Message: "yes → Mode A (full mirroring)"}
-}
-
-func checkBuildKit(ctx context.Context, rt *dockerRT) Check {
-	ping, err := rt.cli.Ping(ctx)
-	if err != nil {
-		return Check{Name: "buildkit", Status: Warn, Message: "unreachable"}
-	}
-	if ping.BuilderVersion != "" {
-		return Check{Name: "buildkit", Status: Pass, Message: "available (" + string(ping.BuilderVersion) + ")"}
-	}
-	return Check{Name: "buildkit", Status: Warn, Message: "not detected (build: profiles require it)"}
 }
 
 const miseBaseImage = "ghcr.io/jdx/mise:latest"

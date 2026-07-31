@@ -4,7 +4,6 @@ import "github.com/jgillich/toolpod/internal/runtime"
 
 type (
 	Spec          = runtime.Spec
-	BuildSpec     = runtime.BuildSpec
 	MountSpec     = runtime.MountSpec
 	PortSpec      = runtime.PortSpec
 	DeviceSpec    = runtime.DeviceSpec
@@ -19,7 +18,6 @@ type LaunchOpts struct {
 	Workspace   string
 	ProfileDir  string
 	ExtraTools  []string
-	Rebuild     bool
 	DryRun      bool
 	Verbose     bool
 	Runtime     runtime.Runtime
