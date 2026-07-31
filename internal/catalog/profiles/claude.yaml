@@ -10,5 +10,3 @@ mounts:
   ~/.cache/claude-code:
     source: ~/.cache/claude-code
     read_only: false
-labels:
-  profile: claude

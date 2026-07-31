@@ -18,7 +18,7 @@ func TestBuildSpecBasic(t *testing.T) {
 		Caches:  map[string]string{"npm": "~/.npm"},
 		Network: "bridge",
 	}
-	opts := LaunchOpts{Args: []string{"--model", "foo"}, Workspace: "/home/me/proj"}
+	opts := LaunchOpts{ProfileName: "opencode", Args: []string{"--model", "foo"}, Workspace: "/home/me/proj"}
 	spec := buildSpec(opts, cfg, "A", "/home/me", "/home/me")
 
 	if spec.Image != "myimage:latest" {
@@ -51,6 +51,10 @@ func TestBuildSpecBasic(t *testing.T) {
 	mount := spec.Mounts[0]
 	if mount.Target != "/home/me/.config/opencode" {
 		t.Errorf("mount[0].Target = %q, want /home/me/.config/opencode", mount.Target)
+	}
+	// Profile label is set dynamically from opts.ProfileName, not from YAML
+	if spec.Labels["profile"] != "opencode" {
+		t.Errorf("Labels[profile] = %q, want \"opencode\" (set dynamically from ProfileName)", spec.Labels["profile"])
 	}
 }
 

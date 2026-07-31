@@ -7,5 +7,3 @@ mounts:
   ~/.config/codex:
     source: ~/.config/codex
     read_only: true
-labels:
-  profile: codex

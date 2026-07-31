@@ -13,5 +13,3 @@ mounts:
   ~/.local/share/opencode:
     source:  ~/.local/share/opencode
     read_only: false
-labels:
-  profile: opencode

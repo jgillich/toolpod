@@ -7,5 +7,3 @@ mounts:
   ~/.cursor:
     source: ~/.cursor
     read_only: true
-labels:
-  profile: cursor
