@@ -44,6 +44,9 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 	if lockDir == "" {
 		lockDir = filepath.Join(os.TempDir(), fmt.Sprintf("toolpod-%d", os.Getuid()))
 	}
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		return fmt.Errorf("create mise lock dir: %w", err)
+	}
 	lockFile := filepath.Join(lockDir, fmt.Sprintf("mise-%d.lock", os.Getuid()))
 	fl := flock.New(lockFile)
 	locked, err := fl.TryLockContext(ctx, 0)
@@ -61,7 +64,11 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 	w.WriteProgress(fmt.Sprintf("mise: installing %d tools", len(spec.Tools)))
 
 	configDir := filepath.Join(runtimeHome, ".config", "mise")
-	cmd := ActivateCommand(configDir, spec.Tools) + " && mise install"
+	cmd := ""
+	if needsEmbeddedPlugin(spec.Tools) {
+		cmd = PluginInstallCommand() + " && "
+	}
+	cmd += ActivateCommand(configDir, spec.Tools) + " && mise install"
 	volumes := []VolumeMount{
 		{Name: miseVol.Name, Target: miseVol.Target},
 	}
@@ -82,6 +89,17 @@ func EnsureTools(ctx context.Context, runner ContainerRunner, spec ToolsSpec, ru
 
 	w.WriteProgress("mise: tools ready")
 	return nil
+}
+
+// needsEmbeddedPlugin reports whether spec.Tools references a tool that needs
+// an embedded mise plugin (currently the generic appimage backend).
+func needsEmbeddedPlugin(tools map[string]string) bool {
+	for name := range tools {
+		if strings.HasPrefix(name, appimageBackendPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProgressWriter reports progress lines during Prepare/Run.
@@ -106,7 +124,7 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "mkdir -p %s && printf '%%s' '", configDir)
+	fmt.Fprintf(&b, "mkdir -p %s && printf '%%s' '", shq(configDir))
 	b.WriteString("[tools]\n")
 
 	names := make([]string, 0, len(tools))
@@ -118,6 +136,11 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 		fmt.Fprintf(&b, "%q = \"%s\"\n", name, tools[name])
 	}
 	b.WriteString("' > ")
-	b.WriteString(configFile)
+	b.WriteString(shq(configFile))
 	return b.String()
+}
+
+// shq single-quotes s for embedding in a shell command.
+func shq(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

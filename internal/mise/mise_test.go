@@ -2,6 +2,9 @@ package mise
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,5 +104,26 @@ func TestEnsureToolsConfigDrivenInstall(t *testing.T) {
 	}
 	if strings.Contains(cmd, "mise install azure@latest") || strings.Contains(cmd, "mise install pipx@latest") {
 		t.Errorf("cmd %q must not install per-tool (mise must resolve ordering)", cmd)
+	}
+}
+
+func TestEnsureToolsLockWithoutXDGRuntimeDir(t *testing.T) {
+	// Regression: with XDG_RUNTIME_DIR unset the fallback lock dir is under
+	// $TMPDIR and must be created, otherwise the lock open fails with ENOENT
+	// and every profile errors out with "acquire mise lock".
+	base := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("TMPDIR", base)
+	runner := &fakeContainerRunner{}
+	spec := ToolsSpec{
+		Image: "img",
+		Tools: map[string]string{"node": "20"},
+	}
+	if err := EnsureTools(context.Background(), runner, spec, "/root", discardProgress{}); err != nil {
+		t.Fatalf("EnsureTools: %v", err)
+	}
+	lock := filepath.Join(base, fmt.Sprintf("toolpod-%d", os.Getuid()), fmt.Sprintf("mise-%d.lock", os.Getuid()))
+	if _, err := os.Stat(lock); err != nil {
+		t.Errorf("lock file %s not created: %v", lock, err)
 	}
 }
