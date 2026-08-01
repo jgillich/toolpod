@@ -128,7 +128,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	if cfg.Mounts["~/.ssh/known_hosts"].ReadOnly {
 		t.Error("known_hosts should be read-write")
 	}
-	if cfg.Image != "ghcr.io/jdx/mise:latest" {
+	if cfg.Image != "ghcr.io/jgillich/toolpod-mise:latest" {
 		t.Errorf("Image = %q, want inherited from built-in", cfg.Image)
 	}
 	if len(cfg.Command) != 1 || cfg.Command[0] != "opencode" {
