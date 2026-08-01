@@ -65,10 +65,17 @@ func checkRootless(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "rootless", Status: Pass, Message: "yes → Mode A (full mirroring)"}
 }
 
-const miseBaseImage = "ghcr.io/jdx/mise:latest"
-
 func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
-	_, _, err := rt.cli.ImageInspectWithRaw(ctx, miseBaseImage)
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		return Check{Name: "mise base image", Status: Warn, Message: err.Error()}
+	}
+	base, ok := cat.GetBuiltin("mise")
+	if !ok {
+		return Check{Name: "mise base image", Status: Warn, Message: "built-in mise profile not found"}
+	}
+	image := base.Image
+	_, _, err = rt.cli.ImageInspectWithRaw(ctx, image)
 	if err != nil {
 		if client.IsErrNotFound(err) {
 			return Check{Name: "mise base image", Status: Info, Message: "not present (will pull on first launch)"}
