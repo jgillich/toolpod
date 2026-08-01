@@ -307,38 +307,41 @@ func buildDeviceCgroupRules(spec Spec) []string {
 		if !d.Cgroup {
 			continue
 		}
-		major, minor, ok := deviceMajorMinor(d.Host)
+		major, minor, prefix, ok := deviceMajorMinor(d.Host)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "warning: device %s: cannot stat %s, no cgroup rule emitted\n", d.Container, d.Host)
 			continue
 		}
-		prefix := deviceRulePrefix(major, minor)
 		rule := fmt.Sprintf("%s %d:%d rwm", prefix, major, minor)
 		if prefix == "" {
 			rule = fmt.Sprintf("c %d:* rwm", major)
-			fmt.Fprintf(os.Stderr, "warning: device %s: no sysfs entry for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
+			fmt.Fprintf(os.Stderr, "warning: device %s: no device type for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
 		}
 		out = append(out, rule)
 	}
 	return out
 }
 
-func deviceRulePrefix(major, minor int) string {
-	if _, err := os.Lstat(fmt.Sprintf("/sys/dev/char/%d:%d", major, minor)); err == nil {
+// deviceTypePrefix maps a device node's stat mode to a cgroup device rule
+// prefix. The type comes from st_mode rather than /sys/dev lookups because
+// major numbers are shared across device classes (major 7 is both the loop
+// block family and the vcs char family).
+func deviceTypePrefix(mode uint32) string {
+	switch mode & unix.S_IFMT {
+	case unix.S_IFCHR:
 		return "c"
-	}
-	if _, err := os.Lstat(fmt.Sprintf("/sys/dev/block/%d:%d", major, minor)); err == nil {
+	case unix.S_IFBLK:
 		return "b"
 	}
 	return ""
 }
 
-func deviceMajorMinor(path string) (int, int, bool) {
+func deviceMajorMinor(path string) (int, int, string, bool) {
 	var st unix.Stat_t
 	if err := unix.Stat(path, &st); err != nil {
-		return 0, 0, false
+		return 0, 0, "", false
 	}
-	return int(unix.Major(uint64(st.Rdev))), int(unix.Minor(uint64(st.Rdev))), true
+	return int(unix.Major(uint64(st.Rdev))), int(unix.Minor(uint64(st.Rdev))), deviceTypePrefix(st.Mode), true
 }
 
 func buildEnv(spec Spec, runtimeHome string) []string {

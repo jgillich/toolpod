@@ -146,34 +146,32 @@ func TestBuildDeviceCgroupRulesScoped(t *testing.T) {
 	}
 }
 
-func TestDeviceRulePrefix(t *testing.T) {
-	var st unix.Stat_t
-	if err := unix.Stat("/dev/null", &st); err != nil {
-		t.Fatalf("stat /dev/null: %v", err)
+func TestDeviceTypePrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		mode uint32
+		want string
+	}{
+		{"block", unix.S_IFBLK | 0o660, "b"},
+		{"char", unix.S_IFCHR | 0o666, "c"},
+		{"other", 0o644, ""},
 	}
-	major := int(unix.Major(uint64(st.Rdev)))
-	minor := int(unix.Minor(uint64(st.Rdev)))
-	if p := deviceRulePrefix(major, minor); p != "c" {
-		t.Errorf("deviceRulePrefix(%d:%d) = %q, want \"c\"", major, minor, p)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deviceTypePrefix(tt.mode); got != tt.want {
+				t.Errorf("deviceTypePrefix(mode=%#x) = %q, want %q", tt.mode, got, tt.want)
+			}
+		})
 	}
+}
 
-	entries, err := os.ReadDir("/sys/dev/block")
-	if err != nil || len(entries) == 0 {
-		t.Skip("no block device sysfs entries to test")
+func TestDeviceTypeFromRealNode(t *testing.T) {
+	_, _, prefix, ok := deviceMajorMinor("/dev/null")
+	if !ok {
+		t.Fatal("stat /dev/null failed")
 	}
-	for _, e := range entries {
-		parts := strings.SplitN(e.Name(), ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		m, err1 := strconv.Atoi(parts[0])
-		n, err2 := strconv.Atoi(parts[1])
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		if p := deviceRulePrefix(m, n); p != "b" {
-			t.Errorf("deviceRulePrefix(%d:%d) = %q, want \"b\"", m, n, p)
-		}
+	if prefix != "c" {
+		t.Errorf("deviceMajorMinor(/dev/null) prefix = %q, want \"c\"", prefix)
 	}
 }
 
