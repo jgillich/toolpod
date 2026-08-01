@@ -6,6 +6,10 @@ mounts:
     source: /run/dbus/system_bus_socket
     read_only: true
     optional: true
+  /tmp/.X11-unix:
+    source: /tmp/.X11-unix
+    read_only: true
+    optional: true
   '{{ .Env.XDG_RUNTIME_DIR }}':
     source: '{{ .Env.XDG_RUNTIME_DIR }}'
     read_only: true
@@ -13,4 +17,5 @@ mounts:
 environment:
   XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'
   WAYLAND_DISPLAY: '{{ .Env.WAYLAND_DISPLAY }}'
+  DISPLAY: '{{ .Env.DISPLAY }}'
   DBUS_SESSION_BUS_ADDRESS: '{{ .Env.DBUS_SESSION_BUS_ADDRESS }}'

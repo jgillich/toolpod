@@ -1,5 +1,6 @@
 version: 1
 image: ghcr.io/jgillich/toolpod-mise:latest
+command: ["/usr/bin/mise"]
 mounts:
   /etc/mise:
     source: ~/.config/mise

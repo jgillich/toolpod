@@ -28,12 +28,37 @@ func TestNewProfileDefaultBaseMise(t *testing.T) {
 	if !strings.Contains(string(data), "- mise") {
 		t.Errorf("generated file should extend mise, got:\n%s", string(data))
 	}
-	// A base with no command (mise) gets a bash default so the profile runs.
-	if !strings.Contains(string(data), "- bash") {
-		t.Errorf("generated file should default the command to bash, got:\n%s", string(data))
+	// mise provides a command, so the generated profile inherits it and needs
+	// no explicit bash default.
+	if strings.Contains(string(data), "- bash") {
+		t.Errorf("generated file should not default to bash when mise provides a command, got:\n%s", string(data))
 	}
 	if strings.Contains(stderr.String(), "not runnable") {
-		t.Errorf("profile with a bash command should not be flagged not runnable, got stderr: %q", stderr.String())
+		t.Errorf("profile inheriting mise's command should not be flagged not runnable, got stderr: %q", stderr.String())
+	}
+}
+
+func TestNewProfileBaseWithoutCommandDefaultsBash(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "nocmd.yaml"), []byte("version: 1\nimage: img:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "myagent",
+		Extends:    []string{"nocmd"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "myagent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A base with no command gets a bash default so the profile runs.
+	if !strings.Contains(string(data), "- bash") {
+		t.Errorf("generated file should default the command to bash, got:\n%s", string(data))
 	}
 }
 

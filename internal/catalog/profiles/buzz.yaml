@@ -1,0 +1,20 @@
+version: 1
+extends:
+  - mise
+  - gui
+  - codex
+  - claude
+command: ["buzz"]
+network: host # fixme callback url on random port
+tools:
+  "appimage:block/buzz": latest
+mounts:
+  ~/.local/share/xyz.block.buzz.app:
+    source: ~/.local/share/xyz.block.buzz.app
+    create: true
+  ~/.config/xyz.block.buzz.app:
+    source: ~/.config/xyz.block.buzz.app
+    create: true
+  ~/.buzz:
+    source: ~/.buzz
+    create: true

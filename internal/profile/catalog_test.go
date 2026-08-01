@@ -182,6 +182,29 @@ func TestBuiltinsDoNotMountGitconfig(t *testing.T) {
 	}
 }
 
+func TestResolveBuzzProfile(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "buzz")
+	if err != nil {
+		t.Fatalf("ResolveProfile(buzz): %v", err)
+	}
+	if len(cfg.Command) != 1 || cfg.Command[0] != "buzz" {
+		t.Errorf("command = %v, want [buzz]", cfg.Command)
+	}
+	if cfg.Tools["appimage:block/buzz"] != "latest" {
+		t.Errorf("tools = %v, want appimage:block/buzz=latest", cfg.Tools)
+	}
+	if _, ok := cfg.Mounts["~/.local/share/xyz.block.buzz.app"]; !ok {
+		t.Error("missing app data mount ~/.local/share/xyz.block.buzz.app")
+	}
+	if cfg.Env["WAYLAND_DISPLAY"] == "" {
+		t.Error("missing gui fragment env WAYLAND_DISPLAY")
+	}
+}
+
 func TestDefaultProfileDirHonorsXDG(t *testing.T) {
 	// os.UserConfigDir honors XDG_CONFIG_HOME only on Linux; macOS uses
 	// ~/Library/Application Support and Windows uses %AppData%.

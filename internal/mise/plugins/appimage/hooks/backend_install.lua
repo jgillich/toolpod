@@ -10,16 +10,41 @@ function PLUGIN:BackendInstall(ctx)
   local download_path = ctx.download_path
   local options = ctx.options
 
-  local resp, err = http.get({
-    url = "https://api.github.com/repos/" .. repo .. "/releases/tags/v" .. version,
-  })
-  if err ~= nil then
-    error("failed to fetch release: " .. err)
+  local function find_release(repo, version)
+    local resp, err = http.get({
+      url = "https://api.github.com/repos/" .. repo .. "/releases/tags/v" .. version,
+    })
+    if err == nil then
+      local release = json.decode(resp.body)
+      if type(release) == "table" and release.assets then
+        return release
+      end
+    end
+    local list, lerr = http.get({
+      url = "https://api.github.com/repos/" .. repo .. "/releases?per_page=100",
+    })
+    if lerr ~= nil then
+      error("failed to fetch releases: " .. lerr)
+    end
+    local releases = json.decode(list.body)
+    if type(releases) == "table" then
+      for _, r in ipairs(releases) do
+        if not r.prerelease then
+          local ver = r.tag_name:match("v(%d[%w%._+-]*)$")
+          if ver == version then
+            for _, a in ipairs(r.assets or {}) do
+              if a.name:match("%.AppImage$") then
+                return r
+              end
+            end
+          end
+        end
+      end
+    end
+    error("no release found for " .. repo .. "@" .. version)
   end
-  local release = json.decode(resp.body)
-  if type(release) ~= "table" or not release.assets then
-    error("no release found for " .. repo .. "@v" .. version)
-  end
+
+  local release = find_release(repo, version)
 
   local asset
   if options.asset_pattern then
@@ -70,6 +95,11 @@ function PLUGIN:BackendInstall(ctx)
 
   cmd.exec("mkdir -p " .. file.join_path(install_path, "app"))
   cmd.exec("cp -a " .. download_path .. "/squashfs-root/." .. " " .. file.join_path(install_path, "app") .. "/")
+
+  -- Swap the bundled xdg-open for the image wrapper that forwards URLs to the
+  -- host's XDG desktop portal (AppRun prepends the bundle's usr/bin to PATH).
+  local xdg = file.join_path(install_path, "app", "usr", "bin", "xdg-open")
+  cmd.exec("[ -f " .. xdg .. " ] && [ -f /usr/local/bin/xdg-open ] && mv " .. xdg .. " " .. xdg .. ".real && cp /usr/local/bin/xdg-open " .. xdg .. " && chmod +x " .. xdg .. " || true")
 
   local exe = options.exe or "AppRun"
   local name = options.name or repo:match("([^/]+)$")
