@@ -1,0 +1,17 @@
+version: 1
+mounts:
+  ~/.bashrc:
+    source: ~/.bashrc
+    optional: true
+  ~/.bash_profile:
+    source: ~/.bash_profile
+    optional: true
+  ~/.bash_aliases:
+    source: ~/.bash_aliases
+    optional: true
+  ~/.profile:
+    source: ~/.profile
+    optional: true
+  ~/.inputrc:
+    source: ~/.inputrc
+    optional: true

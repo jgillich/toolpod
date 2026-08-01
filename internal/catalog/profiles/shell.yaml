@@ -1,4 +1,3 @@
 version: 1
 extends: mise
-command: ["bash"]
-
+command: ["bash", "-l"]

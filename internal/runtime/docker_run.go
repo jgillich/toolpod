@@ -55,15 +55,6 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	parts = append(parts, "mise install")
 	parts = append(parts, `eval "$(mise hook-env 2>/dev/null)" || true`)
 
-	if isShellCommand(spec.Command) {
-		miseBin := "/usr/bin/mise"
-		shellType := shellTypeOf(spec.Command[0])
-		bashrc := filepath.Join(runtimeHome, ".bashrc")
-		// Best-effort: a pre-existing image .bashrc (root-owned) may be
-		// unwritable by the dropped user; the hook must not block launch.
-		parts = append(parts, fmt.Sprintf("echo 'eval \"$(%s activate %s)\"' >> %s || true", miseBin, shellType, shq(bashrc)))
-	}
-
 	parts = append(parts, "exec "+shellQuote(spec.Command))
 	userCmd := strings.Join(parts, " && ")
 
@@ -109,7 +100,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		AttachStderr: true,
 		WorkingDir:   spec.Workspace.Target,
 		Labels:       spec.Labels,
-		Hostname:     "tpod",
+		Hostname:     spec.ProfileName,
 		Entrypoint:   []string{},
 		ExposedPorts: exposedPorts,
 	}, &container.HostConfig{
@@ -509,23 +500,4 @@ func randomID(n int) string {
 		return strconv.Itoa(os.Getpid())
 	}
 	return hex.EncodeToString(b)
-}
-
-func isShellCommand(cmd []string) bool {
-	if len(cmd) == 0 {
-		return false
-	}
-	base := filepath.Base(cmd[0])
-	return base == "sh" || base == "bash" || base == "zsh" || base == "fish"
-}
-
-// shellTypeOf maps a shell binary basename to the value mise accepts for
-// `mise activate <shell>`. `sh` has no activation mode in mise.
-func shellTypeOf(bin string) string {
-	switch filepath.Base(bin) {
-	case "bash", "zsh", "fish":
-		return filepath.Base(bin)
-	default:
-		return "bash"
-	}
 }
