@@ -15,10 +15,9 @@ This is the key difference from [devcontainers](https://containers.dev/), which 
 | | devcontainers | toolpod |
 | --- | --- | --- |
 | **Who owns it** | the project (`.devcontainer/`) | the user (`~/.config/toolpod/`) |
-| **Requires repo changes** | yes | never |
-| **Tool versions** | baked into the image or features | declared in profiles, shared across runs |
+| **Requires repo changes** | yes | no |
+| **Tool versions** | baked into the image or features | declared in profiles or your project, shared across runs |
 | **Lifecycle** | long-lived, attach/reattach | ephemeral — fresh container each run, removed on exit |
-| **Engine** | Docker (VS Code extension) | any Docker-API engine (Docker or Podman via `DOCKER_HOST`) |
 
 The two are complementary. What toolpod adds:
 
