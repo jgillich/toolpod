@@ -27,14 +27,6 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		}
 	}
 
-	toolsSpec := mise.ToolsSpec{
-		Image: spec.Image,
-		Tools: spec.Tools,
-	}
-	if err := mise.EnsureTools(ctx, d, toolsSpec, runtimeHome, w); err != nil {
-		return "", fmt.Errorf("mise tools: %w", err)
-	}
-
 	return spec.Image, nil
 }
 
@@ -68,5 +60,3 @@ func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, err
 	}
 	return true, nil
 }
-
-var _ mise.ContainerRunner = (*DockerRuntime)(nil)

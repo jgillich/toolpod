@@ -1,7 +1,6 @@
 package mise
 
 import (
-	"context"
 	"encoding/base64"
 	"io/fs"
 	"strings"
@@ -53,28 +52,5 @@ func TestPluginInstallCommandEmbedsFileContents(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestEnsureToolsInstallsAppImagePlugin(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	runner := &fakeContainerRunner{}
-	spec := ToolsSpec{
-		Image: "img",
-		Tools: map[string]string{"appimage:pingdotgg/t3code": "latest"},
-	}
-	if err := EnsureTools(context.Background(), runner, spec, "/root", discardProgress{}); err != nil {
-		t.Fatalf("EnsureTools: %v", err)
-	}
-
-	cmd := runner.cmd[2]
-	if !strings.HasPrefix(cmd, "rm -rf /mise/plugins/appimage") {
-		t.Errorf("cmd %q should start with the appimage plugin install (rm -rf stale, then write)", cmd)
-	}
-	if !strings.Contains(cmd, "/mise/plugins/appimage/metadata.lua") {
-		t.Errorf("cmd %q should install the embedded appimage plugin", cmd)
-	}
-	if !strings.HasSuffix(cmd, " && mise install") {
-		t.Errorf("cmd %q should still end with mise install", cmd)
 	}
 }

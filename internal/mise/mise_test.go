@@ -1,10 +1,6 @@
 package mise
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,66 +60,22 @@ func TestActivateCommand_ScopedToolKeysAreQuoted(t *testing.T) {
 	}
 }
 
-type fakeContainerRunner struct {
-	env []string
-	cmd []string
-}
-
-func (f *fakeContainerRunner) RunInContainer(_ context.Context, _ string, _ []VolumeMount, env []string, cmd []string) (int, error) {
-	f.env = env
-	f.cmd = cmd
-	return 0, nil
-}
-
-type discardProgress struct{}
-
-func (discardProgress) WriteProgress(string) {}
-
-func TestEnsureToolsConfigDrivenInstall(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	runner := &fakeContainerRunner{}
-	spec := ToolsSpec{
-		Image: "img",
-		Tools: map[string]string{"azure": "latest", "pipx": "latest"},
+func TestNeedsEmbeddedPlugin(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools map[string]string
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"plain-tools-only", map[string]string{"node": "20", "python": "3.12"}, false},
+		{"appimage-prefix", map[string]string{"appimage:pingdotgg/t3code": "latest"}, true},
+		{"mixed", map[string]string{"node": "20", "appimage:foo": "1.0"}, true},
 	}
-	if err := EnsureTools(context.Background(), runner, spec, "/root", discardProgress{}); err != nil {
-		t.Fatalf("EnsureTools: %v", err)
-	}
-
-	env := strings.Join(runner.env, " ")
-	if !strings.Contains(env, "MISE_CONFIG_DIR=/root/.config/mise") {
-		t.Errorf("env %q missing MISE_CONFIG_DIR=/root/.config/mise", env)
-	}
-
-	cmd := strings.Join(runner.cmd, " ")
-	if !strings.Contains(cmd, "config.toml") {
-		t.Errorf("cmd %q should write a mise config", cmd)
-	}
-	if !strings.HasSuffix(cmd, " && mise install") {
-		t.Errorf("cmd %q should end with a single config-driven mise install", cmd)
-	}
-	if strings.Contains(cmd, "mise install azure@latest") || strings.Contains(cmd, "mise install pipx@latest") {
-		t.Errorf("cmd %q must not install per-tool (mise must resolve ordering)", cmd)
-	}
-}
-
-func TestEnsureToolsLockWithoutXDGRuntimeDir(t *testing.T) {
-	// Regression: with XDG_RUNTIME_DIR unset the fallback lock dir is under
-	// $TMPDIR and must be created, otherwise the lock open fails with ENOENT
-	// and every profile errors out with "acquire mise lock".
-	base := t.TempDir()
-	t.Setenv("XDG_RUNTIME_DIR", "")
-	t.Setenv("TMPDIR", base)
-	runner := &fakeContainerRunner{}
-	spec := ToolsSpec{
-		Image: "img",
-		Tools: map[string]string{"node": "20"},
-	}
-	if err := EnsureTools(context.Background(), runner, spec, "/root", discardProgress{}); err != nil {
-		t.Fatalf("EnsureTools: %v", err)
-	}
-	lock := filepath.Join(base, fmt.Sprintf("toolpod-%d", os.Getuid()), fmt.Sprintf("mise-%d.lock", os.Getuid()))
-	if _, err := os.Stat(lock); err != nil {
-		t.Errorf("lock file %s not created: %v", lock, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NeedsEmbeddedPlugin(tc.tools); got != tc.want {
+				t.Errorf("NeedsEmbeddedPlugin(%v) = %v, want %v", tc.tools, got, tc.want)
+			}
+		})
 	}
 }

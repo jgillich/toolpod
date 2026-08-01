@@ -45,15 +45,15 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// 5. exec the profile command
 	configDir := filepath.Join(runtimeHome, ".config", "mise")
 	activateCmd := mise.ActivateCommand(configDir, spec.Tools)
-	installCmd := "mise install 2>/dev/null || true"
-	hookEnvCmd := `eval "$(mise hook-env 2>/dev/null)" || true`
-
-	var parts []string
-	for _, p := range []string{activateCmd, installCmd, hookEnvCmd} {
-		if p != "" {
-			parts = append(parts, p)
-		}
+	parts := []string{}
+	if activateCmd != "" {
+		parts = append(parts, activateCmd)
 	}
+	if mise.NeedsEmbeddedPlugin(spec.Tools) {
+		parts = append(parts, mise.PluginInstallCommand())
+	}
+	parts = append(parts, "mise install")
+	parts = append(parts, `eval "$(mise hook-env 2>/dev/null)" || true`)
 
 	if isShellCommand(spec.Command) {
 		miseBin := "/usr/bin/mise"
