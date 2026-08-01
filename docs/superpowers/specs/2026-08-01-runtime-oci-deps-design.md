@@ -206,16 +206,23 @@ identically for build and runtime deps because nothing is relocated.
 
 Derived images are tagged `tpod/packages:<hash>` where `<hash>` is the first
 16 hex chars of `sha256(<base-image-id> + \u0000 +
-sorted(<packages>).join(\u0001))`. Deterministic and reproducible across
-machines. The tag namespace `tpod/packages:<hash>` (not `tpod/<profile>:<hash>`)
-deliberately excludes `spec.ProfileName` from the tag: the cache key is
-`(base-image-id, package set)`, not `(profile, base-image-id, package set)`.
-Two profiles that declare the same `packages:` (or whose merged package sets
-match) share one derived image — one filesystem, one build, one cache entry,
-one apt transaction. The mental model is "exactly one derived image for a
-given base image and package set"; OCI's content-addressed layers dedupe the
-storage, and a single tag per (base, packages) combo keeps tag metadata and
-pruning simple.
+sorted(<packages>).join(\u0001))`. Deterministic for a given base image and
+package set. The tag namespace `tpod/packages:<hash>` (not
+`tpod/<profile>:<hash>`) deliberately excludes `spec.ProfileName` from the
+tag: the cache key is `(base-image-id, package set)`, not `(profile,
+base-image-id, package set)`. Two profiles that declare the same `packages:`
+(or whose merged package sets match) share one derived image — one
+filesystem, one build, one cache entry, one apt transaction. The mental
+model is "exactly one derived image for a given base image and package set";
+OCI's content-addressed layers dedupe the storage, and a single tag per
+(base, packages) combo keeps tag metadata and pruning simple.
+
+The cache key is `(base image, package names)` — not `(base image, exact
+package contents)`. The same hash built months apart can produce different
+filesystem contents because Debian mirrors drift over time. This is
+intentional and acceptable: the contract is "the base image plus the named
+packages, as apt resolves them at build time," not a bit-for-bit
+reproducible artifact across years.
 
 `<base-image-id>` is the content-addressed image-config SHA returned by
 `ImageInspectWithRaw(ctx, baseRef).ID` — the actual filesystem identity of
@@ -240,16 +247,23 @@ Generated in-memory by Go and piped to the Docker daemon via
 `cli.ImageBuild`. No on-disk Dockerfile is written. Body:
 
 ```dockerfile
-FROM <base-image-id>
+FROM <base-ref>
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         <sorted package list, shell-quoted> \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-`FROM` pins to the image ID (e.g. `sha256:abc123...`), so a given `<hash>` is
-exactly reproducible: same base + same package list ⇒ same image, without tag
-drift.
+`FROM` uses the original base-image **reference** (e.g.
+`ghcr.io/jgillich/tpod-mise:latest`), not the image ID. `ensureImagePulled`
+has already pulled the exact image, so Docker resolves `FROM <base-ref>` to
+that local image — we build against the same filesystem we hashed. The image
+ID is used only as a hash input, not as a `FROM` target, because image IDs
+are local implementation details (not portable across registries or build
+frontends, and not guaranteed to share semantics between Docker and Podman
+long-term). Using `baseRef` in `FROM` keeps the synthesized Dockerfile
+backend-agnostic; using `baseID` in the hash preserves automatic
+invalidation when the local base image changes.
 
 **Sort-and-emit invariant**: package list is sorted lexicographically before
 hashing *and* before emitting in the `RUN` step. So `[git, curl]` and
@@ -260,6 +274,10 @@ Each name is shell-quoted (Go's `strconv.Quote` or equivalent `shlex.quote`
 semantics) before being interpolated into the `apt-get install` line so a
 typo in a catalog entry can't inject into the RUN step. Validation already
 rejects metacharacters, so quoting is defense-in-depth.
+
+The build implementation is intentionally opaque. Future versions may
+replace Dockerfile synthesis with direct BuildKit APIs or another OCI
+builder without affecting the external behavior or the cache-key contract.
 
 Build output is streamed via the same response-reader pattern `ImagePull`
 already uses in `docker_prepare.go:42-49` (drain `cli.ImageBuild`'s reader,
@@ -293,7 +311,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
             return "", err
         }
         if !exists {
-            if err := buildDerivedImage(ctx, d.cli, derivedRef, baseID, spec.Packages, w); err != nil {
+            if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, spec.Packages, w); err != nil {
                 return "", fmt.Errorf("build derived image: %w", err)
             }
         }
@@ -396,7 +414,7 @@ Sequential; each step is independently shippable.
    `DockerRuntime` covering the new code paths: `derivedTag` determinism (same
    inputs ⇒ same tag, sort-normalisation, no `ProfileName` in tag), different
    package order ⇒ same tag, Dockerfile-body synthesis (contains sorted,
-   shell-quoted packages, no shell metachar injection, FROM uses image ID),
+   shell-quoted packages, no shell metachar injection, FROM uses baseRef),
    empty-packages short-circuit.
 3. **Catalog migration.** Move the apt list in `Dockerfile` to catalog:
    `lib*-dev` and PHP build deps → `php.yaml`; GUI/GStreamer/X11/nss/alsa
@@ -433,7 +451,7 @@ Sequential; each step is independently shippable.
   `ProfileName` in tag; sort-normalisation (different input order ⇒ same tag);
   identical package lists from different hypothetical profiles produce the
   same tag (cross-profile sharing invariant); Dockerfile-body synthesis
-  contains the sorted, shell-quoted package list and the image-ID-pinned
+  contains the sorted, shell-quoted package list and the base-ref pinned
   `FROM`; empty-packages short-circuit; build invocation exercised against a
   fake `client.Client` like the existing `internal/runtime` fake.
 - `cmd/tpod/cli_test.go` (or a new `internal/prune/prune_test.go`) —
