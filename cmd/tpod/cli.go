@@ -46,7 +46,9 @@ type DoctorCmd struct {
 }
 
 type PruneCmd struct {
-	Volumes bool `help:"Remove tpod-managed volumes."`
+	All     bool `help:"Remove all tpod-managed resources, even ones the catalog still references."`
+	Volumes bool `help:"Scope to tpod-managed volumes only (default: both volumes and images)."`
+	Images  bool `help:"Scope to tpod/packages:* derived images only (default: both volumes and images)."`
 	Force   bool `help:"Skip confirmation prompt."`
 	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
 }
@@ -166,7 +168,9 @@ func (d *DoctorCmd) Run() error {
 
 func (p *PruneCmd) Run() error {
 	opts := prune.Options{
+		All:     p.All,
 		Volumes: p.Volumes,
+		Images:  p.Images,
 		Force:   p.Force || p.Yes,
 	}
 	result, err := prune.Run(context.Background(), opts)
@@ -180,7 +184,13 @@ func (p *PruneCmd) Run() error {
 			fmt.Printf("  %s\n", v)
 		}
 	}
-	if len(result.VolumesRemoved) == 0 {
+	if len(result.ImagesRemoved) > 0 {
+		fmt.Printf("Removed %d image(s):\n", len(result.ImagesRemoved))
+		for _, r := range result.ImagesRemoved {
+			fmt.Printf("  %s\n", r)
+		}
+	}
+	if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
 		fmt.Println("Nothing to prune.")
 	}
 	return nil

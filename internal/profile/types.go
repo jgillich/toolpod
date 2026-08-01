@@ -31,6 +31,7 @@ type Profile struct {
 	Version     int                   `yaml:"version"`
 	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
 	Image       string                `yaml:"image,omitempty"`
+	Packages    []string              `yaml:"packages,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
 	Caches      map[string]string     `yaml:"caches,omitempty"`
 	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`

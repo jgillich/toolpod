@@ -12,3 +12,7 @@ tools:
   jq: latest
   ripgrep: latest
   yq: latest
+packages:
+  - libedit-dev
+  - gettext
+  - openssl

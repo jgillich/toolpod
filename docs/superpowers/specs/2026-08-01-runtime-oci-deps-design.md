@@ -132,12 +132,21 @@ identically for build and runtime deps because nothing is relocated.
   (extended `Prepare`) and a new helper file
   `internal/runtime/docker_build.go` (image-id resolution, tag derivation,
   in-memory Dockerfile synthesis, `cli.ImageBuild` invocation).
-- A new `tpod prune --images` flag in `cmd/tpod/cli.go` and a new branch in
-  `internal/prune/prune.go` to remove `tpod/packages:<tag>` derived images,
-  with `docker image prune` semantics (remove all `tpod/packages:*` images
-  when the flag is invoked; no catalog-liveness inference, so a stale
-  user-created profile that's temporarily absent from the catalog isn't
-  surprised by having its derived image deleted out from under it).
+- A redesigned `tpod prune` in `cmd/tpod/cli.go` and
+  `internal/prune/prune.go`. Today `tpod prune` removes **all** tpod-managed
+  volumes (the existing `--volumes` flag is parsed but ignored); this design
+  changes the default to remove only **unused** resources and adds an
+  `--all` flag to remove everything. Liveness is catalog-inferred: a
+  resource is "used" if it would be produced by some currently resolvable
+  profile (built-in + user) — `tpod-mise` if any profile resolves;
+  `tpod-cache-<name>` if any profile declares `caches.<name>`;
+  `tpod/packages:<hash>` if any profile's `(base-image-id, merged-packages)`
+  hash matches (computed from locally-inspected base images; profiles whose
+  base image isn't local contribute no "used" image hashes since the
+  derived image can't exist either). Scope with `--volumes` / `--images`
+  (default: both). `--all` removes every tpod-managed volume and every
+  `tpod/packages:*` image regardless of liveness. `--force`/`-y` skip the
+  confirmation prompt, unchanged.
 - `tpod doctor` reports the count and total reclaimable size of
   `tpod/packages:*` derived images (best-effort via `cli.ImageList`).
 
@@ -386,15 +395,15 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
    `libxml/HTMLparser.h` isn't there. Same failure mode a misnamed apt entry
    causes today. Validation catches syntactic bad names but not
    archive-existence; the missing header surfaces at compile time.
-8. **Disk space accumulation** — `tpod prune --images` removes all
-   `tpod/packages:<tag>` images in the local Docker store, with
-   `docker image prune` semantics. The flag deliberately does **not** infer
-   liveness from the catalog: recomputing "expected hashes" from currently
-   resolvable profiles would surprise a user whose stale user-created profile
-   temporarily isn't loadable. Explicit-only cleanup keeps the contract
-   simple: `tpod prune --images` means "delete all cached derived images,
-   rebuild them on next use." Users who want finer control can use
-   `docker image prune` directly.
+8. **Disk space accumulation** — `tpod prune` (default) removes only
+   unused tpod-managed resources: volumes and `tpod/packages:<hash>` images
+   whose `(profile, packages)` combo doesn't match any currently resolvable
+   profile's computed hash (or `caches.<name>` for volumes). `tpod prune --all`
+   removes everything tpod-managed regardless of liveness. `--volumes` /
+   `--images` scope to one resource type; `--force`/`-y` skip the prompt.
+   Liveness inference is catalog-driven, so a user-created profile that's
+   momentarily unresolvable (typo, missing fragment) *does* lose its
+   derived image — acceptable for a cache, and the user can always rebuild.
 
 ## Migration plan
 
@@ -428,10 +437,11 @@ Sequential; each step is independently shippable.
    image built once per `(base-image-id, packages)` combo. First run of any
    profile after migration pays the one-time build cost; subsequent runs are
    instant. `Dockerfile` shrinks accordingly.
-4. **Prune + doctor extensions.** `tpod prune --images` in `cmd/tpod/cli.go`
-   and `internal/prune/prune.go` with `docker image prune` semantics: removes
-   all `tpod/packages:<tag>` images in the local Docker store, no catalog
-   liveness inference. `tpod doctor` reports `tpod/packages:*` image count
+4. **Prune + doctor extensions.** Redesign `tpod prune` in
+   `cmd/tpod/cli.go` and `internal/prune/prune.go`: default = remove
+   catalog-unused volumes and `tpod/packages:<hash>` images; `--all` =
+   remove all tpod-managed resources; `--volumes`/`--images` scope; reuse
+   `--force`/`-y`. `tpod doctor` reports `tpod/packages:*` image count
    and reclaimable space.
 5. **Docs.** Update `README.md` schema reference, merge semantics,
    `tpod prune --images`, and the "host lacks build permission" escape hatch.
@@ -455,8 +465,9 @@ Sequential; each step is independently shippable.
   `FROM`; empty-packages short-circuit; build invocation exercised against a
   fake `client.Client` like the existing `internal/runtime` fake.
 - `cmd/tpod/cli_test.go` (or a new `internal/prune/prune_test.go`) —
-  `tpod prune --images` removes `tpod/packages:<tag>` images, no
-  catalog-liveness inference.
+  `tpod prune` (default) removes only catalog-unused volumes and
+  `tpod/packages:<hash>` images; `--all` removes everything tpod-managed;
+  `--volumes` / `--images` scope; `--force`/`-y` skip the prompt.
 - `go test ./...` and `go vet ./...` must pass.
 
 ## Open sub-decisions (small; resolved by implementer)

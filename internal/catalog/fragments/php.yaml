@@ -3,3 +3,16 @@ tools:
   php: latest
 caches:
   composer: ~/.composer/cache
+packages:
+  - libxml2-dev
+  - libicu-dev
+  - libonig-dev
+  - libpq-dev
+  - libxslt1-dev
+  - libzip-dev
+  - libmariadb-dev
+  - libgd-dev
+  - libpng-dev
+  - libjpeg-dev
+  - bison
+  - re2c
