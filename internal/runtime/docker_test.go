@@ -291,6 +291,94 @@ func TestDeviceTypeFromRealNode(t *testing.T) {
 	}
 }
 
+func TestContainerIdentity(t *testing.T) {
+	userns, rootUser, uid, gid := containerIdentity(true)
+	if rootUser != "0:0" {
+		t.Errorf("podman container user = %q, want 0:0 (root bootstrap)", rootUser)
+	}
+	if uid != os.Getuid() || gid != os.Getgid() {
+		t.Errorf("podman uid/gid = %d/%d, want %d/%d", uid, gid, os.Getuid(), os.Getgid())
+	}
+	if userns != "keep-id" {
+		t.Errorf("podman userns = %q, want keep-id", userns)
+	}
+
+	userns, rootUser, uid, gid = containerIdentity(false)
+	if rootUser != "0:0" {
+		t.Errorf("docker container user = %q, want 0:0 (root bootstrap)", rootUser)
+	}
+	if uid != os.Getuid() || gid != os.Getgid() {
+		t.Errorf("docker uid/gid = %d/%d, want %d/%d", uid, gid, os.Getuid(), os.Getgid())
+	}
+	if userns != "" {
+		t.Errorf("docker userns = %q, want empty", userns)
+	}
+}
+
+func TestHomeParents(t *testing.T) {
+	got := homeParents("/home/me", []string{
+		"/home/me/.config/t3code",
+		"/home/me/.local/share/app/data",
+		"/workspace",    // outside home — ignored
+		"/home/me/.npm", // direct child — no parents
+	})
+	want := map[string]bool{
+		"/home/me/.config":          true,
+		"/home/me/.local":           true,
+		"/home/me/.local/share":     true,
+		"/home/me/.local/share/app": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("homeParents = %v, want %v", got, want)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("homeParents returned unexpected %q", p)
+		}
+	}
+}
+
+func TestHomeParentsSkipsMountLeafParents(t *testing.T) {
+	// A mount leaf at /home/me/.config (a bind mount of a host dir) must not
+	// be chowned even when a deeper mount makes it appear as a parent.
+	got := homeParents("/home/me", []string{
+		"/home/me/.config",
+		"/home/me/.config/foo",
+	})
+	if len(got) != 0 {
+		t.Errorf("homeParents = %v, want [] (only mount leaves under home)", got)
+	}
+}
+
+func TestWrapAsUser(t *testing.T) {
+	cmd := wrapAsUser("mkdir -p /home/me && chown 1000:1000 /home/me", 1000, 1000, []string{"sh", "-c", "echo hi"})
+	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" {
+		t.Fatalf("wrapAsUser returned %v, want [sh -c ...]", cmd)
+	}
+	if !strings.Contains(cmd[2], "mkdir -p /home/me") {
+		t.Errorf("missing bootstrap in %q", cmd[2])
+	}
+	if !strings.Contains(cmd[2], "setpriv --reuid=1000 --regid=1000") {
+		t.Errorf("missing setpriv drop in %q", cmd[2])
+	}
+	if !strings.Contains(cmd[2], "--clear-groups") {
+		t.Errorf("missing group clearing in %q", cmd[2])
+	}
+	if !strings.Contains(cmd[2], "sh -c 'echo hi'") {
+		t.Errorf("missing inner command in %q", cmd[2])
+	}
+	if !strings.Contains(cmd[2], "command -v setpriv") {
+		t.Errorf("missing setpriv availability guard in %q", cmd[2])
+	}
+	if !strings.Contains(cmd[2], "exec sh -c 'echo hi'") {
+		t.Errorf("missing fallback (no setpriv) in %q", cmd[2])
+	}
+}
+
+// integrationImage is the production base image: it carries util-linux
+// setpriv (for the launch wrapper) and python3 (for the port listener).
+const integrationImage = "ghcr.io/jgillich/toolpod-mise:latest"
+
 func TestIntegrationRunShellEcho(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -304,9 +392,10 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 	}
 	spec := Spec{
 		ProfileName: "test-shell",
-		Image:       "alpine:latest",
-		Command:     []string{"sh", "-c", "echo hi"},
+		Image:       integrationImage,
+		Command:     []string{"sh", "-c", fmt.Sprintf("test \"$(id -u)\" = %d && test \"$(id -g)\" = %d && echo hi", os.Getuid(), os.Getgid())},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
 		Network:     "none",
 	}
 	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
@@ -343,9 +432,10 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	// ports cannot reach a container with no network interface.
 	spec := Spec{
 		ProfileName: "test-port",
-		Image:       "alpine:latest",
-		Command:     []string{"sh", "-c", "printf hi | nc -l -p 8080 -s 0.0.0.0"},
+		Image:       integrationImage,
+		Command:     []string{"sh", "-c", `python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',8080));s.listen(1);c,_=s.accept();c.send(b'hi')"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
 	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
@@ -357,7 +447,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 		done <- err
 	}()
 
-	// The container start + nc listen races the host dial; retry until the
+	// The container start + listener races the host dial; retry until the
 	// published port accepts (or the deadline expires).
 	//
 	// The published port is bound by the engine's userland proxy. When the
@@ -396,8 +486,8 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	if string(buf[:n]) != "hi" {
 		t.Errorf("got %q from published port, want \"hi\"", string(buf[:n]))
 	}
-	// Close the connection before waiting for Run to return. The container's
-	// busybox nc serves one connection and only exits once the client closes
+	// Close the connection before waiting for Run to return: the python
+	// listener serves one connection and only exits once the client closes
 	// it; Run blocks on ContainerWait until the container stops.
 	conn.Close()
 	if err := <-done; err != nil {

@@ -8,6 +8,7 @@ RUN apt-get update \
         clang \
         pkg-config \
         gdb \
+        python3 \
         libssl-dev \
         libcurl4-openssl-dev \
         zlib1g-dev \
@@ -22,6 +23,37 @@ RUN apt-get update \
         wget \
         ca-certificates \
         extrepo \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libcairo2 \
+        libcups2 \
+        libdbus-1-3 \
+        libegl1 \
+        libfontconfig1 \
+        libgbm1 \
+        libgl1 \
+        libgles2 \
+        libgtk-3-0 \
+        libnss3 \
+        libnspr4 \
+        libpango-1.0-0 \
+        libx11-6 \
+        libx11-xcb1 \
+        libxcb1 \
+        libxcomposite1 \
+        libxcursor1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxi6 \
+        libxrandr2 \
+        libxrender1 \
+        libxss1 \
+        libxtst6 \
+        xdg-utils \
     && extrepo enable mise \
     && apt-get update \
     && apt-get install -y --no-install-recommends mise \

@@ -70,7 +70,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	}
 
 	hostHome, _ := os.UserHomeDir()
-	runtimeHome := "/root"
+	if hostHome == "" {
+		hostHome = "/root"
+	}
+	runtimeHome := hostHome
 	mode := "B"
 
 	if !opts.DryRun {
@@ -87,9 +90,6 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			detected, err := dr.DetectMode(ctx)
 			if err == nil {
 				mode = detected
-			}
-			if mode == "A" {
-				runtimeHome = hostHome
 			}
 		}
 

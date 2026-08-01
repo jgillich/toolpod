@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -19,13 +20,43 @@ func (d *DockerRuntime) RunInContainer(ctx context.Context, image string, volume
 			Target: v.Target,
 		}
 	}
+
+	// Same identity handling as the Run path (see containerIdentity).
+	userns, rootUser, hostUID, hostGID := containerIdentity(d.podman)
+	home := ""
+	for _, e := range env {
+		if strings.HasPrefix(e, "HOME=") {
+			home = strings.TrimPrefix(e, "HOME=")
+			break
+		}
+	}
+	writable := make([]string, 0, len(volumes)+1)
+	if home != "" {
+		writable = append(writable, home)
+	}
+	for _, v := range volumes {
+		writable = append(writable, v.Target)
+	}
+	bootstrap := ""
+	if len(writable) > 0 {
+		bootstrap = fmt.Sprintf("chown %d:%d %s", hostUID, hostGID, quoteJoin(writable))
+		if home != "" {
+			bootstrap = "mkdir -p " + shq(home) + " && " + bootstrap
+		}
+	}
+	if bootstrap != "" {
+		cmd = wrapAsUser(bootstrap, hostUID, hostGID, cmd)
+	}
+
 	resp, err := d.cli.ContainerCreate(ctx, &container.Config{
 		Image:      image,
 		Cmd:        cmd,
 		Env:        env,
+		User:       rootUser,
 		Entrypoint: []string{},
 	}, &container.HostConfig{
 		Mounts:      mounts,
+		UsernsMode:  userns,
 		AutoRemove:  false,
 		NetworkMode: "bridge",
 	}, nil, nil, "")

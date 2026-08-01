@@ -15,7 +15,8 @@ import (
 var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
-	cli *client.Client
+	cli    *client.Client
+	podman bool // rootless Podman: containers need --userns=keep-id
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {
@@ -23,7 +24,9 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DockerRuntime{cli: cli}, nil
+	// Best guess until DetectMode queries /info; also used by callers that
+	// skip DetectMode (e.g. integration tests).
+	return &DockerRuntime{cli: cli, podman: isLikelyRootlessSocket(cli.DaemonHost())}, nil
 }
 
 // DetectMode queries the engine's /info endpoint and checks for the Podman
@@ -39,6 +42,7 @@ func (d *DockerRuntime) DetectMode(ctx context.Context) (string, error) {
 	if err != nil {
 		rootless = isLikelyRootlessSocket(d.cli.DaemonHost())
 	}
+	d.podman = rootless
 
 	if rootless || strings.Contains(info.Name, "podman") {
 		return "A", nil

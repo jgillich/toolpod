@@ -1,0 +1,19 @@
+version: 1
+extends:
+  - mise
+  - gui
+  - opencode
+  - claude
+  - codex
+command: ["t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"]
+tools:
+  "appimage:pingdotgg/t3code": latest
+mounts:
+  ~/.t3:
+    source: ~/.t3
+    create: true
+  ~/.config/t3code:
+    source: ~/.config/t3code
+    create: true
+environment:
+  ELECTRON_ENABLE_LOGGING: "1"
