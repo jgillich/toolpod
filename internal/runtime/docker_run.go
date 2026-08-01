@@ -194,7 +194,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		if ip == "" || ip == "0.0.0.0" {
 			ip = "127.0.0.1"
 		}
-		fmt.Fprintf(os.Stderr, "listening on %s://%s:%s\n", p.Protocol, ip, p.HostPort)
+		fmt.Fprintf(os.Stderr, "listening on %s://%s:%s\r\n", p.Protocol, ip, p.HostPort)
 	}
 
 	// Pump streams AFTER start. This blocks until the container exits and
