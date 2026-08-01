@@ -7,8 +7,7 @@ Status: Approved design
 
 Toolpod supports a `build:` escape hatch: a profile can point at a Dockerfile
 that is built on demand and tagged `toolpod/<name>:latest`, with optional
-`depends_on` dependencies and a `--rebuild` flag. The feature has no users
-and mise-based `tools:` covers tool provisioning. The `build:` machinery is
+`depends_on` dependencies and a `--rebuild` flag. The `build:` machinery is
 dead weight: an entire `internal/build` package, a topological dependency
 resolver, drift-detection hints, and the `--rebuild` flag — roughly 400 lines
 including tests.
@@ -18,7 +17,7 @@ of worms: per-profile Dockerfiles invert the "one base image serves every
 profile" pitch, push open-ended build responsibility onto users, and saddle
 tpod with build-context path resolution, `depends_on` cycles, drift
 detection, and `--rebuild` semantics — permanent support surface for a
-feature with no users.
+feature that works against the tool's grain.
 
 This spec removes the feature altogether. `image:` stays. The later design
 at `2026-08-01-runtime-oci-deps-design.md` reintroduces an *automated,
@@ -50,9 +49,9 @@ profile's `packages:` list — without bringing back the can-of-worms surface.
 
 - Historical docs under `docs/superpowers/` (design specs, implementation
   plans) stay untouched as archives.
-- No special validation for profiles that still declare `build:` — the app has
-  no users, and such profiles will simply fail validation with
-  "image is required". No extra error message for `build:` itself.
+- No special validation for profiles that still declare `build:` — such
+  profiles will simply fail validation with "image is required". No extra
+  error message for `build:` itself.
 - The mise volume/tools/`image:` pull path is unchanged.
 
 ## Docs
