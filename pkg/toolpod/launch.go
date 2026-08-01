@@ -107,6 +107,11 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
 		}
+		cleanupProxy, busAddr := startBusProxy(cfg)
+		if cleanupProxy != nil {
+			defer cleanupProxy()
+		}
+		spec.Env["DBUS_SESSION_BUS_ADDRESS"] = busAddr
 		runSpec := spec
 		if imageRef != "" {
 			runSpec.Image = imageRef

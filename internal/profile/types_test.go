@@ -88,3 +88,154 @@ func TestCachesBeforeMounts(t *testing.T) {
 		t.Errorf("expected caches before mounts in YAML output:\n%s", out)
 	}
 }
+
+func TestParseAndMergeDbus(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: true
+`)
+	mustWriteProfile(t, dir, "app.yaml", `version: 1
+extends: dbusbase
+command: ["app"]
+image: img:1
+dbus:
+  talk:
+    org.freedesktop.Notifications: true
+  own:
+    xyz.block.buzz.app: true
+`)
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dbus == nil {
+		t.Fatal("dbus missing after merge")
+	}
+	if !cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] {
+		t.Error("talk from parent (dbusbase) lost")
+	}
+	if !cfg.Dbus.Talk["org.freedesktop.Notifications"] {
+		t.Error("talk from child lost")
+	}
+	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+		t.Error("own from child lost")
+	}
+}
+
+func TestValidateDbusRejectsBadName(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "bad.yaml", `version: 1
+command: ["x"]
+image: img:1
+dbus:
+  talk:
+    "not a bus name!": true
+`)
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveProfile(cat, "bad"); err == nil {
+		t.Fatal("expected validation error for invalid dbus name")
+	} else if !strings.Contains(err.Error(), "dbus") {
+		t.Fatalf("error should mention dbus: %v", err)
+	}
+}
+
+func TestMergeDbusNullClears(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: true
+`)
+	mustWriteProfile(t, dir, "app.yaml", `version: 1
+extends: dbusbase
+command: ["app"]
+image: img:1
+dbus: null
+`)
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dbus != nil {
+		t.Errorf("dbus should be cleared by null, got %+v", cfg.Dbus)
+	}
+}
+
+func TestMergeDbusNullClearsTalkSubMap(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: true
+  own:
+    xyz.block.buzz.app: true
+`)
+	mustWriteProfile(t, dir, "app.yaml", `version: 1
+extends: dbusbase
+command: ["app"]
+image: img:1
+dbus:
+  talk: null
+`)
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dbus == nil {
+		t.Fatal("dbus should survive with own names remaining")
+	}
+	if len(cfg.Dbus.Talk) != 0 {
+		t.Errorf("dbus.talk should be cleared by null, got %v", cfg.Dbus.Talk)
+	}
+	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+		t.Error("dbus.own from base should survive talk: null")
+	}
+}
+
+func TestMergeDbusNullClearsPerName(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: true
+`)
+	mustWriteProfile(t, dir, "app.yaml", `version: 1
+extends: dbusbase
+command: ["app"]
+image: img:1
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: null
+`)
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dbus == nil {
+		t.Fatal("dbus should survive the per-name null")
+	}
+	if cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] {
+		t.Error("per-name null should clear the inherited talk entry")
+	}
+}

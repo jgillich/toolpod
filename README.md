@@ -140,6 +140,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
 | `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
 | `tty` | string | `auto` (default), `true`, or `false`. |
+| `dbus` | object | Flatpak-style session-bus allowlist: `talk` / `own`, each a map of bus names to `true`. `talk` allows contacting those names, `own` allows registering them. Merged key-by-key across `extends` (set a name to `null` to clear an inherited entry). |
 
 ### ports / devices
 
@@ -188,9 +189,13 @@ needs to create arbitrary device nodes).
 ### Merge semantics
 
 - **Scalars:** child replaces parent.
-- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`): merged key-by-key. Set a key to `null` to delete an inherited entry.
+- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `dbus`): merged key-by-key. Set a key to `null` to delete an inherited entry.
 - **Lists** (`command`): replaced, not concatenated.
 - **`image` / `build`:** single slot — setting either in a child clears the other.
+
+A profile that declares `dbus` must also mount `$XDG_RUNTIME_DIR` (the `gui` fragment does) — the session bus address points at a proxy socket under that dir, so without the mount the container can't reach the bus.
+
+In GUI containers the session bus is a **filtered view**, not a raw passthrough: toolpod spawns a per-launch host-side `xdg-dbus-proxy` and only the profile's `talk`/`own` names pass through it. The host system bus socket is not mounted into GUI containers at all.
 
 ### Inspecting profiles
 

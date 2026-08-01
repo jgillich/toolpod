@@ -376,6 +376,23 @@ func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
 			ReadOnly: mt.ReadOnly,
 		})
 	}
+	if rtDir := spec.Env["XDG_RUNTIME_DIR"]; rtDir != "" {
+		busPath := filepath.Join(rtDir, "bus")
+		overlaid := false
+		for _, existing := range m {
+			if existing.Target == busPath {
+				overlaid = true
+				break
+			}
+		}
+		if !overlaid {
+			m = append(m, mount.Mount{
+				Type:   mount.TypeBind,
+				Source: "/dev/null",
+				Target: busPath,
+			})
+		}
+	}
 	miseVol := mise.MiseVolume(runtimeHome)
 	m = append(m, mount.Mount{
 		Type:   mount.TypeVolume,

@@ -21,3 +21,8 @@ mounts:
     source: ~/.buzz
     create: true
     read_only: false
+dbus:
+  talk:
+    org.freedesktop.Notifications: true
+  own:
+    xyz.block.buzz.app: true

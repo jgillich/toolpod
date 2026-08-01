@@ -134,3 +134,23 @@ func TestLaunchPropagatesExitCode(t *testing.T) {
 		t.Errorf("ExitCode = %d, want 42 (profile exit code)", res.ExitCode)
 	}
 }
+
+func TestLaunchOverridesBusAddressWhenDisabled(t *testing.T) {
+	dir := writeBuiltinShell(t) // shell profile: no dbus config
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	var out strings.Builder
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		ProfileDir:  dir,
+		Runtime:     fr,
+	}, &out)
+	if res.Err != nil {
+		t.Fatalf("Launch: %v", res.Err)
+	}
+	if fr.RanSpec == nil {
+		t.Fatal("Run not called")
+	}
+	if got, ok := fr.RanSpec.Env["DBUS_SESSION_BUS_ADDRESS"]; !ok || got != "" {
+		t.Errorf("DBUS_SESSION_BUS_ADDRESS = %q, want empty (disabled)", got)
+	}
+}

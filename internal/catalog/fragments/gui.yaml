@@ -2,9 +2,6 @@ version: 1
 devices:
   /dev/dri: {}
 mounts:
-  /run/dbus/system_bus_socket:
-    source: /run/dbus/system_bus_socket
-    optional: true
   /tmp/.X11-unix:
     source: /tmp/.X11-unix
     optional: true
@@ -15,4 +12,6 @@ environment:
   XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'
   WAYLAND_DISPLAY: '{{ .Env.WAYLAND_DISPLAY }}'
   DISPLAY: '{{ .Env.DISPLAY }}'
-  DBUS_SESSION_BUS_ADDRESS: '{{ .Env.DBUS_SESSION_BUS_ADDRESS }}'
+dbus:
+  talk:
+    org.freedesktop.portal.Desktop: true

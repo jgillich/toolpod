@@ -3,9 +3,12 @@ package profile
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var busNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\.[*])?$`)
 
 var reservedNames = map[string]bool{
 	"config":     true,
@@ -33,6 +36,9 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateDevices(rc); err != nil {
+		return err
+	}
+	if err := validateDbus(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -73,6 +79,23 @@ func validateDevices(rc RawProfile) error {
 		case "", "r", "rw", "rwm":
 		default:
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("devices: %s: invalid permissions %q (want r, rw, or rwm)", key, bind.Permissions)}
+		}
+	}
+	return nil
+}
+
+func validateDbus(rc RawProfile) error {
+	if rc.Dbus == nil {
+		return nil
+	}
+	for name := range rc.Dbus.Talk {
+		if !busNameRe.MatchString(name) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("dbus.talk: invalid bus name %q", name)}
+		}
+	}
+	for name := range rc.Dbus.Own {
+		if !busNameRe.MatchString(name) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("dbus.own: invalid bus name %q", name)}
 		}
 	}
 	return nil

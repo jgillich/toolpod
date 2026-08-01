@@ -179,6 +179,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Labels = mergeStringMap(parent.Labels, child.Labels, child.NullKeys["labels"])
 	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
 	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
+	out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
 
 	if child.Resources != nil {
 		out.Resources = child.Resources
@@ -216,6 +217,36 @@ func mergePortMap(parent, child map[string]PortBind, nullKeys map[string]bool) m
 
 func mergeDeviceMap(parent, child map[string]DeviceBind, nullKeys map[string]bool) map[string]DeviceBind {
 	return mergeMap(parent, child, nullKeys)
+}
+
+// mergeDbus unions talk/own key-by-key (child wins per key; there are no
+// per-key values). nullKeys supports the repo's null-to-delete convention:
+// "*" clears the whole dbus config; "talk"/"own" clear that sub-map.
+func mergeDbus(parent, child *DbusConfig, nullKeys map[string]bool) *DbusConfig {
+	if nullKeys["*"] {
+		return nil
+	}
+	if child == nil {
+		return parent
+	}
+	if parent == nil {
+		parent = &DbusConfig{}
+	}
+	out := &DbusConfig{}
+	if nullKeys["talk"] {
+		out.Talk = map[string]bool{}
+	} else {
+		out.Talk = mergeMap(parent.Talk, child.Talk, nil)
+	}
+	if nullKeys["own"] {
+		out.Own = map[string]bool{}
+	} else {
+		out.Own = mergeMap(parent.Own, child.Own, nil)
+	}
+	if len(out.Talk) == 0 && len(out.Own) == 0 {
+		return nil
+	}
+	return out
 }
 
 func mergeStringMap(parent, child map[string]string, nullKeys map[string]bool) map[string]string {

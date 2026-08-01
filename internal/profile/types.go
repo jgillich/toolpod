@@ -42,6 +42,15 @@ type Profile struct {
 	Tools       map[string]string     `yaml:"tools,omitempty"`
 	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
+	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
+}
+
+// DbusConfig is a flatpak-style session-bus allowlist. Talk names may be
+// called; Own names may be acquired. Values are maps (not lists) so profiles
+// extending a base merge their names key-by-key.
+type DbusConfig struct {
+	Talk map[string]bool `yaml:"talk,omitempty"`
+	Own  map[string]bool `yaml:"own,omitempty"`
 }
 
 // Mount is a single bind mount, keyed by container target path.

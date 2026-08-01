@@ -534,3 +534,63 @@ func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	}
 	return "", fmt.Errorf("container for profile %s has no IP", profileName)
 }
+
+func TestBuildMountsHidesRealBusSocket(t *testing.T) {
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
+		Env:       map[string]string{"XDG_RUNTIME_DIR": "/run/user/1000"},
+	}
+	mounts, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range mounts {
+		if m.Target == "/run/user/1000/bus" {
+			found = true
+			if m.Source != "/dev/null" {
+				t.Errorf("bus overlay source = %q, want /dev/null", m.Source)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a mount over /run/user/1000/bus when XDG_RUNTIME_DIR is set")
+	}
+}
+
+func TestBuildMountsNoBusOverlayWithoutRuntimeDir(t *testing.T) {
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
+		Env:       map[string]string{},
+	}
+	mounts, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range mounts {
+		if strings.HasSuffix(m.Target, "/bus") {
+			t.Errorf("unexpected bus overlay mount: %+v", m)
+		}
+	}
+}
+
+func TestBuildMountsSkipsOverlayWhenBusAlreadyMounted(t *testing.T) {
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
+		Mounts:    []MountSpec{{Target: "/run/user/1000/bus", Source: "/host/socket", ReadOnly: true}},
+		Env:       map[string]string{"XDG_RUNTIME_DIR": "/run/user/1000"},
+	}
+	mounts, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devNull := 0
+	for _, m := range mounts {
+		if m.Target == "/run/user/1000/bus" && m.Source == "/dev/null" {
+			devNull++
+		}
+	}
+	if devNull != 0 {
+		t.Errorf("should not overlay /dev/null when a mount already targets the bus path (got %d overlays)", devNull)
+	}
+}

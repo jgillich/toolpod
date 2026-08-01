@@ -205,6 +205,31 @@ func TestResolveBuzzProfile(t *testing.T) {
 	}
 }
 
+func TestResolveBuzzDbusAllowlist(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "buzz")
+	if err != nil {
+		t.Fatalf("ResolveProfile(buzz): %v", err)
+	}
+	if cfg.Dbus == nil {
+		t.Fatal("buzz should resolve a dbus allowlist (via gui)")
+	}
+	for _, name := range []string{"org.freedesktop.portal.Desktop", "org.freedesktop.Notifications"} {
+		if !cfg.Dbus.Talk[name] {
+			t.Errorf("dbus.talk missing %q", name)
+		}
+	}
+	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+		t.Error("dbus.own missing xyz.block.buzz.app")
+	}
+	if cfg.Env["DBUS_SESSION_BUS_ADDRESS"] != "" {
+		t.Errorf("dbus env should be unset in resolved profile, got %q", cfg.Env["DBUS_SESSION_BUS_ADDRESS"])
+	}
+}
+
 func TestDefaultProfileDirHonorsXDG(t *testing.T) {
 	// os.UserConfigDir honors XDG_CONFIG_HOME only on Linux; macOS uses
 	// ~/Library/Application Support and Windows uses %AppData%.
