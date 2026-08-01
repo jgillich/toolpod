@@ -163,9 +163,6 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	if child.Command != nil {
 		out.Command = child.Command
 	}
-	if child.ArgsIfNone != nil {
-		out.ArgsIfNone = child.ArgsIfNone
-	}
 
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])

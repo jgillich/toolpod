@@ -4,5 +4,6 @@ tools:
 mounts:
   ~/.config/gcloud:
     source: ~/.config/gcloud
+    create: true
     read_only: false
     optional: true

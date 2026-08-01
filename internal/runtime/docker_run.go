@@ -55,7 +55,10 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	shellCmd := strings.Join(parts, " && ")
 	cmd := []string{"sh", "-c", shellCmd}
 
-	mounts := buildMounts(spec, runtimeHome)
+	mounts, err := buildMounts(spec, runtimeHome)
+	if err != nil {
+		return 3, fmt.Errorf("build mounts: %w", err)
+	}
 	envList := buildEnv(spec, runtimeHome)
 	containerName := "toolpod-" + spec.ProfileName + "-" + randomID(8)
 
@@ -66,7 +69,6 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
 
 	var oldState *term.State
-	var err error
 	if tty && term.IsTerminal(int(os.Stdin.Fd())) {
 		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
@@ -240,11 +242,23 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	}
 }
 
-func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
+func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
 	m := []mount.Mount{
 		{Type: mount.TypeBind, Source: spec.Workspace.HostPath, Target: spec.Workspace.Target},
 	}
 	for _, mt := range spec.Mounts {
+		if mt.Create {
+			if _, err := os.Stat(mt.Source); os.IsNotExist(err) {
+				if err := os.MkdirAll(mt.Source, 0o755); err != nil {
+					if mt.Optional {
+						fmt.Fprintf(os.Stderr, "warning: creating mount source %s: %v\n", mt.Source, err)
+						continue
+					}
+					return nil, fmt.Errorf("create mount source %s: %w", mt.Source, err)
+				}
+				fmt.Fprintf(os.Stderr, "creating mount source %s\n", mt.Source)
+			}
+		}
 		if mt.Optional {
 			if _, err := os.Stat(mt.Source); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping optional mount %s: %s not found\n", mt.Target, mt.Source)
@@ -271,7 +285,7 @@ func buildMounts(spec Spec, runtimeHome string) []mount.Mount {
 			Target: c.Target,
 		})
 	}
-	return m
+	return m, nil
 }
 
 func buildPortBindings(spec Spec) (nat.PortSet, nat.PortMap) {
@@ -348,15 +362,14 @@ func buildEnv(spec Spec, runtimeHome string) []string {
 	env := []string{
 		"HOME=" + runtimeHome,
 		"MISE_CONFIG_DIR=" + filepath.Join(runtimeHome, ".config", "mise"),
+		"MISE_DATA_DIR=/mise",
 	}
 	for k, v := range spec.Env {
 		if v == "" {
-			if hostVal, ok := os.LookupEnv(k); ok {
-				env = append(env, k+"="+hostVal)
-			}
-		} else {
-			env = append(env, k+"="+v)
+			// Empty values are not set; forward a host variable via {{ .Env.FOO }}.
+			continue
 		}
+		env = append(env, k+"="+v)
 	}
 	return env
 }

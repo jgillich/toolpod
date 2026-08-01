@@ -35,6 +35,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 			Source:   m.Source,
 			ReadOnly: m.ReadOnly,
 			Optional: m.Optional,
+			Create:   m.Create,
 		})
 	}
 
@@ -72,7 +73,8 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		wsTarget = "/workspace"
 	}
 
-	// Command = profile.Command + passthrough args (or args_if_none if no args)
+	// Command = binary + passthrough args; user args replace the profile's
+	// default args (command[1:]), which only apply when no args are given.
 	cmd := append([]string{}, cfg.Command...)
 	if opts.Command != "" {
 		if isShellCommand(cmd) {
@@ -81,9 +83,11 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 			cmd = []string{"sh", "-c", opts.Command}
 		}
 	} else if len(opts.Args) > 0 {
+		cmd = []string{}
+		if len(cfg.Command) > 0 {
+			cmd = append(cmd, cfg.Command[0])
+		}
 		cmd = append(cmd, opts.Args...)
-	} else if len(cfg.ArgsIfNone) > 0 {
-		cmd = append(cmd, cfg.ArgsIfNone...)
 	}
 
 	return Spec{

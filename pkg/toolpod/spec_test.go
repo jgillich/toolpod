@@ -172,6 +172,37 @@ func TestBuildSpecBasic(t *testing.T) {
 	}
 }
 
+func TestBuildSpecMountCreate(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "x",
+		Command: []string{"sh"},
+		Mounts: map[string]profile.Mount{
+			"~/.data":       {Source: "~/.data", Create: true},
+			"~/.config/app": {Source: "~/.config/app"},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "x", Workspace: "/tmp"}, cfg, "A", "/home/me", "/home/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dataCreate, cfgCreate bool
+	for _, m := range spec.Mounts {
+		switch m.Target {
+		case "/home/me/.data":
+			dataCreate = m.Create
+		case "/home/me/.config/app":
+			cfgCreate = m.Create
+		}
+	}
+	if !dataCreate {
+		t.Error("mount with create: true should set MountSpec.Create")
+	}
+	if cfgCreate {
+		t.Error("mount without create should leave MountSpec.Create unset")
+	}
+}
+
 func TestBuildSpecModeBWorkspace(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	opts := LaunchOpts{Workspace: "/home/me/proj"}
@@ -234,6 +265,42 @@ func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
 	for i, c := range spec.Command {
 		if c != wantCmd[i] {
 			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
+		}
+	}
+}
+
+func TestBuildSpecUserArgsReplaceDefaults(t *testing.T) {
+	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"}}
+	opts := LaunchOpts{ProfileName: "t3code", Args: []string{"--help"}, Workspace: "/p"}
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := []string{"t3code", "--help"}
+	if len(spec.Command) != len(wantCmd) {
+		t.Fatalf("Command = %v, want %v", spec.Command, wantCmd)
+	}
+	for i, c := range spec.Command {
+		if c != wantCmd[i] {
+			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
+		}
+	}
+}
+
+func TestBuildSpecBareRunKeepsFullCommand(t *testing.T) {
+	full := []string{"t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"}
+	cfg := profile.Profile{Version: 1, Image: "img", Command: full}
+	opts := LaunchOpts{ProfileName: "t3code", Workspace: "/p"}
+	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Command) != len(full) {
+		t.Fatalf("Command = %v, want %v (bare run keeps full command)", spec.Command, full)
+	}
+	for i, c := range spec.Command {
+		if c != full[i] {
+			t.Errorf("Command[%d] = %q, want %q", i, c, full[i])
 		}
 	}
 }

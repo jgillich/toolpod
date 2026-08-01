@@ -24,6 +24,7 @@ type MountSpec struct {
 	Source   string
 	ReadOnly bool
 	Optional bool
+	Create   bool
 }
 
 type PortSpec struct {

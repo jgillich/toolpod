@@ -6,4 +6,5 @@ tools:
 mounts:
   ~/.codex:
     source: ~/.codex
+    create: true
     read_only: false

@@ -6,4 +6,5 @@ tools:
 mounts:
   ~/.qwen:
     source: ~/.qwen
+    create: true
     read_only: false

@@ -7,6 +7,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestMountCreateParses(t *testing.T) {
+	var rc RawProfile
+	body := `
+version: 1
+image: ubuntu
+command: ["bash"]
+mounts:
+  ~/.data:
+    source: ~/.data
+    create: true
+  ~/.config/app:
+    source: ~/.config/app
+`
+	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !rc.Mounts["~/.data"].Create {
+		t.Error("mount with create: true should have Create set")
+	}
+	if rc.Mounts["~/.config/app"].Create {
+		t.Error("mount without create should have Create unset")
+	}
+}
+
 // TestCommandOmitempty verifies that an empty (nil) Command slice is omitted
 // from marshaled YAML output due to the omitempty tag. It also covers the
 // non-nil empty slice case ([]string{}), which yaml.v3 should also omit.

@@ -130,12 +130,11 @@ Every field is optional except `version`, `image`, and `command`.
 | `version` | int | Config schema version. Currently `1`. |
 | `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. List form: `extends: [opencode, ssh, javascript]` (resolved left-to-right; body wins last). Cycles are rejected. Fragments may only extend other fragments, never profiles. |
 | `image` | string | Container image. |
-| `command` | string[] | Command to run. CLI args are appended verbatim. |
-| `args_if_none` | string[] | Default args used only if the user passes none. |
-| `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only`, `optional`. `~` → runtime home (target) / host `$HOME` (source). `{{ }}` template expressions evaluated against `.Env`, `uid`, and `trimPrefix`/`printf` helpers. |
+| `command` | string[] | Command to run. First element is the binary; the rest are default args used only when the user passes none on the CLI. User args replace the defaults. |
+| `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only`, `optional`, `create`. `~` → runtime home (target) / host `$HOME` (source). `{{ }}` template expressions evaluated against `.Env`, `uid`, and `trimPrefix`/`printf` helpers. `create: true` mkdirs a missing source directory before launch. |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
-| `tools` | map | mise-managed tools, keyed by name. Value is the version. |
-| `environment` | map | Env vars. Empty string = passthrough from host. |
+| `tools` | map | mise-managed tools, keyed by name. Value is the version. Tools without a mise backend can use the built-in `appimage:` backend — `"appimage:pingdotgg/t3code": latest` downloads and extracts the stable GitHub-release AppImage (e.g. desktop apps). |
+| `environment` | map | Env vars. Forward a host variable explicitly with a template, e.g. `DISPLAY: '{{ .Env.DISPLAY }}'`; a value that resolves to empty is left unset in the container. |
 | `labels` | map | Container labels (`profile` is set automatically). |
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
 | `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
@@ -159,14 +158,17 @@ ports:
 ```
 
 Allocated (and fixed) host ports are available to `{{ }}` templates via
-`.Ports` — keyed by container port — in `command`, `args_if_none`, and
-`environment`:
+`.Ports` — keyed by container port — in `command` and `environment`:
 
 ```yaml
 command: ["opencode", "web", "--port", "{{ index .Ports \"8080\" }}"]
 environment:
   PORT: '{{ index .Ports "8080" }}'
 ```
+
+Host environment variables are exposed to templates as `.Env` — use this to
+forward a host value into the container (`'{{ .Env.FOO }}'`). A template that
+resolves to an empty value leaves the variable unset.
 
 `devices` attaches host device nodes into the container:
 
@@ -186,7 +188,7 @@ needs to create arbitrary device nodes).
 
 - **Scalars:** child replaces parent.
 - **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`): merged key-by-key. Set a key to `null` to delete an inherited entry.
-- **Lists** (`command`, `args_if_none`): replaced, not concatenated.
+- **Lists** (`command`): replaced, not concatenated.
 - **`image` / `build`:** single slot — setting either in a child clears the other.
 
 ### Inspecting profiles

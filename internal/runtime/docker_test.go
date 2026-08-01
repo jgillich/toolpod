@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +30,57 @@ func TestIsLikelyRootlessSocket(t *testing.T) {
 		if got := isLikelyRootlessSocket(tt.host); got != tt.want {
 			t.Errorf("isLikelyRootlessSocket(%q) = %v, want %v", tt.host, got, tt.want)
 		}
+	}
+}
+
+func TestBuildEnvDropsEmptyEnvValues(t *testing.T) {
+	// Empty-string values previously meant "passthrough from host". That is
+	// gone: passthrough must use a template (rendered before buildEnv), and
+	// any value that resolves empty is not set in the container.
+	t.Setenv("LEGACY_PASSTHROUGH", "host-value")
+	spec := Spec{
+		RuntimeHome: "/root",
+		Env: map[string]string{
+			"LEGACY_PASSTHROUGH": "", // host has a value; must NOT be forwarded
+			"RENDERED_EMPTY":     "", // template rendered to "" (host var missing)
+			"LITERAL":            "value",
+			"RENDERED":           "hello",
+		},
+	}
+	env := buildEnv(spec, "/root")
+
+	got := map[string]bool{}
+	for _, e := range env {
+		if i := strings.IndexByte(e, '='); i >= 0 {
+			got[e[:i]] = true
+		}
+	}
+	for _, absent := range []string{"LEGACY_PASSTHROUGH", "RENDERED_EMPTY"} {
+		if got[absent] {
+			t.Errorf("env should not contain %s (empty values are dropped); got %v", absent, env)
+		}
+	}
+	for _, present := range []string{"LITERAL", "RENDERED"} {
+		if !got[present] {
+			t.Errorf("env should contain %s; got %v", present, env)
+		}
+	}
+}
+
+func TestBuildEnvSetsMiseDataDir(t *testing.T) {
+	spec := Spec{RuntimeHome: "/root"}
+	env := buildEnv(spec, "/root")
+	var hasMiseDataDir bool
+	for _, e := range env {
+		if strings.HasPrefix(e, "MISE_DATA_DIR=") {
+			hasMiseDataDir = true
+			if e != "MISE_DATA_DIR=/mise" {
+				t.Errorf("MISE_DATA_DIR = %q, want MISE_DATA_DIR=/mise", e)
+			}
+		}
+	}
+	if !hasMiseDataDir {
+		t.Error("missing MISE_DATA_DIR=/mise in env")
 	}
 }
 
@@ -66,6 +118,67 @@ func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
 	}
 }
 
+func TestBuildMountsCreatesSourceWhenRequested(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "data")
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Mounts: []MountSpec{
+			{Target: "/data", Source: src, Create: true},
+		},
+	}
+	m, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatalf("buildMounts: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("mount with create should create source %s: %v", src, err)
+	}
+	found := false
+	for _, mt := range m {
+		if mt.Target == "/data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("created mount missing from list")
+	}
+}
+
+func TestBuildMountsDoesNotCreateWithoutFlag(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "data")
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Mounts: []MountSpec{
+			{Target: "/data", Source: src},
+		},
+	}
+	if _, err := buildMounts(spec, "/root"); err != nil {
+		t.Fatalf("buildMounts: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Errorf("mount without create should not create source; stat err=%v", err)
+	}
+}
+
+func TestBuildMountsFailsCreateForRequiredMount(t *testing.T) {
+	// A dangling symlink component makes MkdirAll fail (mkdir on the existing
+	// symlink → EEXIST) while os.Stat(source) still reports ENOENT; a required
+	// mount must fail the launch, not be silently dropped.
+	link := filepath.Join(t.TempDir(), "dangling")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), link); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Mounts: []MountSpec{
+			{Target: "/data", Source: filepath.Join(link, "sub"), Create: true},
+		},
+	}
+	if _, err := buildMounts(spec, "/root"); err == nil {
+		t.Fatal("required mount with failed create should error, got nil")
+	}
+}
+
 func TestBuildMountsSkipsOptionalMissing(t *testing.T) {
 	spec := Spec{
 		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
@@ -74,7 +187,10 @@ func TestBuildMountsSkipsOptionalMissing(t *testing.T) {
 			{Target: "/nonexistent", Source: "/this/does/not/exist", Optional: true},
 		},
 	}
-	m := buildMounts(spec, "/root")
+	m, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatalf("buildMounts: %v", err)
+	}
 	// Should contain workspace + /etc/hosts but skip the nonexistent optional mount.
 	found := map[string]bool{}
 	for _, mt := range m {

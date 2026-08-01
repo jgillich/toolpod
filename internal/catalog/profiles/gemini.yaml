@@ -6,4 +6,5 @@ tools:
 mounts:
   ~/.gemini:
     source: ~/.gemini
+    create: true
     read_only: false

@@ -56,8 +56,8 @@ func TestResolveMapMergeAndNullDelete(t *testing.T) {
 
 func TestResolveListReplaced(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"a\"]\nargs_if_none: [\"--x\"]\n")
-	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nargs_if_none: [\"--y\"]\n")
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"a\", \"--x\"]\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\ncommand: [\"b\", \"--y\"]\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +66,8 @@ func TestResolveListReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if len(cfg.ArgsIfNone) != 1 || cfg.ArgsIfNone[0] != "--y" {
-		t.Errorf("args_if_none = %v, want [--y] (replaced not concatenated)", cfg.ArgsIfNone)
+	if len(cfg.Command) != 2 || cfg.Command[0] != "b" || cfg.Command[1] != "--y" {
+		t.Errorf("command = %v, want [b --y] (replaced not concatenated)", cfg.Command)
 	}
 }
 

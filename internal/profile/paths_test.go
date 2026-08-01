@@ -69,6 +69,31 @@ func TestResolveTildesNoHomeSubstitution(t *testing.T) {
 	}
 }
 
+func TestResolveTildesEnvPassthroughTemplate(t *testing.T) {
+	// Forwarding a host variable into the container is explicit: reference it
+	// with a template. When the host variable is missing the value resolves
+	// to empty (and the runtime leaves the variable unset).
+	os.Setenv("TOOLPOD_PASSTHROUGH_VAR", "hello")
+	t.Cleanup(func() { os.Unsetenv("TOOLPOD_PASSTHROUGH_VAR") })
+
+	cfg := Profile{
+		Env: map[string]string{
+			"PASSTHROUGH": `{{ .Env.TOOLPOD_PASSTHROUGH_VAR }}`,
+			"MISSING":     `{{ .Env.TOOLPOD_PASSTHROUGH_MISSING }}`,
+		},
+	}
+	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Env["PASSTHROUGH"] != "hello" {
+		t.Errorf("PASSTHROUGH = %q, want hello", out.Env["PASSTHROUGH"])
+	}
+	if out.Env["MISSING"] != "" {
+		t.Errorf("MISSING = %q, want \"\" (host var missing)", out.Env["MISSING"])
+	}
+}
+
 func TestResolveTildesTemplateExpansion(t *testing.T) {
 	os.Setenv("TOOLPOD_TEST_SOCK", "/run/user/1000/podman/podman.sock")
 	t.Cleanup(func() { os.Unsetenv("TOOLPOD_TEST_SOCK") })
@@ -187,10 +212,47 @@ func TestResolveTildesPortsInEnvironment(t *testing.T) {
 	}
 }
 
+func TestResolveTildesEmptyMountSourceErrorsWhenRequired(t *testing.T) {
+	os.Unsetenv("TOOLPOD_UNSET_VAR")
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			"/data": {Source: `{{ or (index .Env "TOOLPOD_UNSET_VAR") "" }}`},
+		},
+	}
+	if _, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil); err == nil {
+		t.Fatal("non-optional mount with empty rendered source should error, got nil")
+	}
+}
+
+func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
+	os.Unsetenv("TOOLPOD_UNSET_VAR")
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			"/data": {Source: `{{ or (index .Env "TOOLPOD_UNSET_VAR") "" }}`, Optional: true},
+		},
+	}
+	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := out.Mounts["/data"]; exists {
+		t.Error("optional mount with empty source should be dropped, not kept")
+	}
+}
+
+func TestResolveTildesEmptyCacheTargetErrors(t *testing.T) {
+	os.Unsetenv("TOOLPOD_UNSET_VAR")
+	cfg := Profile{
+		Caches: map[string]string{"npm": `{{ or (index .Env "TOOLPOD_UNSET_VAR") "" }}`},
+	}
+	if _, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil); err == nil {
+		t.Fatal("cache with empty rendered target should error, got nil")
+	}
+}
+
 func TestResolveTildesPortsInCommand(t *testing.T) {
 	cfg := Profile{
-		Command:    []string{"opencode", "web", "--port", `{{ index .Ports "8080" }}`},
-		ArgsIfNone: []string{`{{ index .Ports "8080" }}`},
+		Command: []string{"opencode", "web", "--port", `{{ index .Ports "8080" }}`},
 	}
 	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", map[string]string{"8080": "39483"})
 	if err != nil {
@@ -198,9 +260,6 @@ func TestResolveTildesPortsInCommand(t *testing.T) {
 	}
 	if out.Command[3] != "39483" {
 		t.Errorf("command arg = %q, want 39483", out.Command[3])
-	}
-	if out.ArgsIfNone[0] != "39483" {
-		t.Errorf("args_if_none = %q, want 39483", out.ArgsIfNone[0])
 	}
 }
 

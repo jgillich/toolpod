@@ -47,7 +47,7 @@ func renderTemplate(s string, data tmplData) (string, error) {
 	tmpl, err := template.New("path").Funcs(template.FuncMap{
 		"trimPrefix": strings.TrimPrefix,
 		"uid":        currentUID,
-	}).Parse(s)
+	}).Option("missingkey=zero").Parse(s)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
@@ -78,6 +78,15 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 			if err != nil {
 				return out, err
 			}
+			// An empty rendered path is a config error (a bind mount with no
+			// source or target fails confusingly later); optional mounts
+			// degrade to absent.
+			if newTarget == "" || m.Source == "" {
+				if m.Optional {
+					continue
+				}
+				return out, fmt.Errorf("mount %q resolved to an empty path after template expansion (is the host variable set?)", target)
+			}
 			expanded[newTarget] = m
 		}
 		out.Mounts = expanded
@@ -90,6 +99,9 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 			expanded[name], err = expandTarget(target, runtimeHome, data)
 			if err != nil {
 				return out, err
+			}
+			if expanded[name] == "" {
+				return out, fmt.Errorf("cache %s resolved to an empty target after template expansion (is the host variable set?)", name)
 			}
 		}
 		out.Caches = expanded
@@ -114,13 +126,6 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 			return out, fmt.Errorf("command: %w", err)
 		}
 		out.Command = rendered
-	}
-	if out.ArgsIfNone != nil {
-		rendered, err := renderArgs(out.ArgsIfNone, data)
-		if err != nil {
-			return out, fmt.Errorf("args_if_none: %w", err)
-		}
-		out.ArgsIfNone = rendered
 	}
 
 	return out, nil

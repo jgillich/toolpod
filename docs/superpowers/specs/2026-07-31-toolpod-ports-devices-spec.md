@@ -58,7 +58,7 @@ devices:
    so `extends` works transparently.
 4. Expose allocated host ports to the existing `{{ }}` template machinery
    (`.Ports` keyed by container port) and extend template rendering to
-   `environment` values and `command`/`args_if_none` args so profiles can
+   `environment` values and `command` args so profiles can
    launch commands on the port they were given.
 5. Keep built-ins minimal — no field added to `shell`/`opencode`/`codex`.
 6. Surface bindings in `--dry-run`/`--verbose` output and in `doctor`/`config
@@ -159,7 +159,7 @@ Template rendering additionally extends to:
 - `environment` values: `PORT: '{{ index .Ports "8080" }}'`
   (empty value still means host-env passthrough; a value starting with `{{`
   is a template expression).
-- `command` and `args_if_none` args:
+- `command` args:
   `command: ["opencode", "web", "--port", "{{ index .Ports \"8080\" }}"]`.
 
 **Rule:** rendering has two modes, by field family:
@@ -167,7 +167,7 @@ Template rendering additionally extends to:
 | Field family | Template iff | Reason |
 |---|---|---|
 | `mounts` sources/targets, `caches` targets (existing) | contains `{{` | backward compatible with shipped profiles (`~/dev/{{ .Env.X }}` must keep working) |
-| `environment` values, `command`/`args_if_none` args (new) | starts with `{{` | literal `{{` mid-string is common in shell snippets (jq filters, heredocs); a leading `{{` is unambiguous |
+| `environment` values, `command` args (new) | starts with `{{` | literal `{{` mid-string is common in shell snippets (jq filters, heredocs); a leading `{{` is unambiguous |
 
 The asymmetry is intentional: the starts-with rule cannot be applied
 retroactively to mounts without breaking existing profiles, and the
@@ -276,7 +276,7 @@ container path) so `--dry-run`/`--verbose` output and tests are stable.
   normalization, `network: host` + non-empty `ports` warning.
 - `internal/profile/paths.go` — add `.Ports` to `tmplData`; thread the
   allocated ports map through `ResolveTildes`; extend rendering to
-  `environment` values and `command`/`args_if_none` args with the
+  `environment` values and `command` args with the
   starts-with-`{{` rule.
 - `pkg/toolpod/spec.go` (`runtime.Spec`) — add `PortSpecs []PortSpec` and
   `DeviceSpecs []DeviceSpec`; allocate auto host ports in `buildSpec` (before

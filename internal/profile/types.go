@@ -32,7 +32,6 @@ type Profile struct {
 	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
 	Image       string                `yaml:"image,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
-	ArgsIfNone  []string              `yaml:"args_if_none,omitempty"`
 	Caches      map[string]string     `yaml:"caches,omitempty"`
 	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
 	Env         map[string]string     `yaml:"environment,omitempty"`
@@ -50,6 +49,7 @@ type Mount struct {
 	Source   string `yaml:"source"`
 	ReadOnly bool   `yaml:"read_only"`
 	Optional bool   `yaml:"optional"`
+	Create   bool   `yaml:"create,omitempty"` // mkdir the source if missing (directories only)
 }
 
 // PortBind publishes a container port to the host. Empty Host means the

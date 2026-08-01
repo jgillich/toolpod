@@ -204,14 +204,11 @@ image: ghcr.io/opencode/opencode:latest
 #                                     # Used when this Dockerfile FROMs an
 #                                     # toolpod/<name>:latest image.
 
-# Required: the command to run inside the container. Passthrough args from
-# the CLI are appended after `command`. Stays a list — rarely overridden,
-# no natural key.
+# Required: the command to run inside the container. First element is the
+# binary; trailing elements are default args used only when the user passes
+# none on the CLI. User args replace the defaults (binary stays). Stays a
+# list — rarely overridden, no natural key.
 command: ["opencode"]
-
-# Optional: default args used only if the user passes none on the CLI.
-# If the user passes any args, `args_if_none` is ignored entirely.
-args_if_none: []
 
 # Additional mounts, as a map keyed by container target path. Keyed by
 # target so a child extending this config can override or remove a single
@@ -296,7 +293,7 @@ The container working directory is set to the workspace mount target (the host p
 **Merge rules:**
 - **Scalars** (strings, numbers, bools): child replaces parent's.
 - **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `resources`): merged key-by-key. A child key overrides the parent's value at that key. **Null-to-delete:** a child key set to `null` removes that key from the merged result entirely (lets a child drop an inherited mount, env var, cache, or tool without redeclaring the map). This is why the lists-converted-to-maps use natural keys (target path, var name, tool name, cache name): it gives stable identity per entry so override and delete are precise.
-- **Lists** (`command`, `args_if_none`): **replaced**, not concatenated. These are rarely overridden and have no natural key, so lists remain. A child that sets `command` fully replaces the parent's (uncommon; usually inherited).
+- **Lists** (`command`): **replaced**, not concatenated. These are rarely overridden and have no natural key, so lists remain. A child that sets `command` fully replaces the parent's (uncommon; usually inherited).
 - **`image`/`build` — the image-source slot — replace-semantics.** Because exactly one of `image` or `build` must be present in the resolved config, these two fields are treated as a single slot, not independent fields:
 
   | Parent has        | Child sets       | Resolved result                            |

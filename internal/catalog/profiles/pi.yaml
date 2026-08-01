@@ -6,4 +6,5 @@ tools:
 mounts:
   ~/.pi:
     source: ~/.pi
+    create: true
     read_only: false
