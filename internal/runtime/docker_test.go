@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"golang.org/x/sys/unix"
 )
 
@@ -593,4 +594,62 @@ func TestBuildMountsSkipsOverlayWhenBusAlreadyMounted(t *testing.T) {
 	if devNull != 0 {
 		t.Errorf("should not overlay /dev/null when a mount already targets the bus path (got %d overlays)", devNull)
 	}
+}
+
+func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	spec := Spec{
+		ProfileName: "test-packages",
+		Image:       integrationImage,
+		Packages:    []string{"hello"},
+		Command:     []string{"true"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
+		Network:     "none",
+	}
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if !strings.HasPrefix(imageRef, "tpod/packages:") {
+		t.Errorf("imageRef = %q, want tpod/packages: prefix", imageRef)
+	}
+	// Derived image must be present and inspectable.
+	if _, _, err := rt.cli.ImageInspectWithRaw(context.Background(), imageRef); err != nil {
+		t.Errorf("derived image %q not inspectable after Prepare: %v", imageRef, err)
+	}
+	// Second Prepare must reuse the cached image (idempotent).
+	imageRef2, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	if err != nil {
+		t.Fatalf("second Prepare: %v", err)
+	}
+	if imageRef2 != imageRef {
+		t.Errorf("second Prepare returned %q, want same %q (cache reuse)", imageRef2, imageRef)
+	}
+	// Run a container from the derived image to prove hello is installed.
+	code, err := rt.Run(context.Background(), Spec{
+		ProfileName: "test-packages",
+		Image:       imageRef,
+		Command:     []string{"sh", "-c", `command -v hello >/dev/null && hello | grep -q "Hello"`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
+		Network:     "none",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("hello run exit code = %d, want 0", code)
+	}
+	// Cleanup: remove the derived image we built.
+	rt.cli.ImageRemove(context.Background(), imageRef, image.RemoveOptions{Force: true, PruneChildren: true})
 }

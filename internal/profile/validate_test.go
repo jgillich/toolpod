@@ -127,3 +127,23 @@ func TestValidateIntKeysNormalizedToStrings(t *testing.T) {
 		t.Errorf("int YAML key 8080 should decode to string key \"8080\", got %v", rc.Ports)
 	}
 }
+
+func TestValidatePackages(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := []string{"libxml2-dev", "gstreamer1.0-plugins-bad", "zlib1g-dev", "libpq-dev"}
+	for _, pkg := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Packages = []string{pkg}
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(packages=%q) = %v, want nil", pkg, err)
+		}
+	}
+	invalid := []string{"lib xml2", "libxml2-dev=2.12", "libxml2;rm -rf /", "", "Libxml2", "libxml2-dev!"}
+	for _, pkg := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Packages = []string{pkg}
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(packages=%q) = nil, want error", pkg)
+		}
+	}
+}

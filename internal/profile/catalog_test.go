@@ -271,3 +271,54 @@ func TestDefaultProfileDirEmpty(t *testing.T) {
 		t.Errorf("DefaultProfileDir() = %q, want empty string", got)
 	}
 }
+
+
+func TestBuiltinProfilesResolvePackages(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	// Every profile extends mise, so every profile inherits the general C
+	// toolchain.
+	miseCfg, err := ResolveProfile(cat, "mise")
+	if err != nil {
+		t.Fatalf("resolve mise: %v", err)
+	}
+	if len(miseCfg.Packages) == 0 {
+		t.Fatal("mise profile must declare a packages list")
+	}
+	if !containsPkg(miseCfg.Packages, "build-essential") {
+		t.Errorf("mise packages must include build-essential, got %v", miseCfg.Packages)
+	}
+	if !containsPkg(miseCfg.Packages, "libssl-dev") {
+		t.Errorf("mise packages must include libssl-dev, got %v", miseCfg.Packages)
+	}
+}
+
+func TestBuiltinFragmentsDeclarePackages(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	for _, name := range []string{"php", "gui"} {
+		rc, ok := cat.Get(name)
+		if !ok {
+			t.Fatalf("fragment %q missing from catalog", name)
+		}
+		if !cat.IsFragment(name) {
+			t.Fatalf("%q should be a fragment", name)
+		}
+		if len(rc.Packages) == 0 {
+			t.Errorf("fragment %q must declare packages, got empty", name)
+		}
+	}
+}
+
+func containsPkg(pkgs []string, want string) bool {
+	for _, p := range pkgs {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}

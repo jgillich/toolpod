@@ -13,8 +13,28 @@ import (
 func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
 	runtimeHome := spec.RuntimeHome
 
-	if err := ensureImagePulled(ctx, d.cli, spec.Image, w); err != nil {
-		return "", fmt.Errorf("ensure image: %w", err)
+	baseRef := spec.Image
+	if err := ensureImagePulled(ctx, d.cli, baseRef, w); err != nil {
+		return "", fmt.Errorf("ensure base image: %w", err)
+	}
+	baseID, err := ResolveImageID(ctx, d.cli, baseRef)
+	if err != nil {
+		return "", fmt.Errorf("resolve base image ID: %w", err)
+	}
+
+	imageRef := baseRef
+	if len(spec.Packages) > 0 {
+		derivedRef := DerivedTag(baseID, spec.Packages)
+		exists, err := imageExists(ctx, d.cli, derivedRef)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, spec.Packages, w); err != nil {
+				return "", fmt.Errorf("build derived image: %w", err)
+			}
+		}
+		imageRef = derivedRef
 	}
 
 	miseVol := mise.MiseVolume(runtimeHome)
@@ -27,7 +47,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		}
 	}
 
-	return spec.Image, nil
+	return imageRef, nil
 }
 
 func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) error {

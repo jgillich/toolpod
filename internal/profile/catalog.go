@@ -260,6 +260,7 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 		"ports":       {},
 		"devices":     {},
 		"dbus":        {},
+		"packages":    {},
 	}
 	if root == nil || root.Kind != yaml.DocumentNode {
 		return nulls

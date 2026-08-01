@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"archive/tar"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -99,5 +102,67 @@ func TestDerivedTagNoProfileName(t *testing.T) {
 	pkgs := []string{"libssl-dev", "libxml2-dev"}
 	if a, b := DerivedTag(baseID, pkgs), DerivedTag(baseID, pkgs); a != b {
 		t.Errorf("identical (base, packages) must produce identical tags: %q vs %q", a, b)
+	}
+}
+func TestSynthesizeDockerfile(t *testing.T) {
+	const baseRef = "ghcr.io/jgillich/tpod-mise:latest"
+	got := synthesizeDockerfile(baseRef, []string{"libxml2-dev", "git"})
+	if !strings.Contains(got, "FROM "+baseRef+"\n") {
+		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)
+	}
+	// Package list sorted, each shell-quoted, single apt invocation.
+	wantInstall := "'git' \\\n        'libxml2-dev'"
+	if !strings.Contains(got, wantInstall) {
+		t.Errorf("dockerfile must contain sorted shell-quoted packages:\n%s\nwant substring:\n%s", got, wantInstall)
+	}
+	if !strings.Contains(got, "apt-get install -y --no-install-recommends") {
+		t.Errorf("dockerfile must use --no-install-recommends:\n%s", got)
+	}
+	if !strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
+		t.Errorf("dockerfile must clean apt lists:\n%s", got)
+	}
+}
+
+func TestSynthesizeDockerfileOrderIndependent(t *testing.T) {
+	const baseRef = "base:1"
+	a := synthesizeDockerfile(baseRef, []string{"git", "curl"})
+	b := synthesizeDockerfile(baseRef, []string{"curl", "git"})
+	if a != b {
+		t.Errorf("dockerfile synthesis must be sort-normalised:\nA:\n%s\nB:\n%s", a, b)
+	}
+}
+
+func TestSynthesizeDockerfileShellQuotesPackages(t *testing.T) {
+	// A hostile package name must not break out of the RUN step. Validation
+	// rejects these, but the emission path is defense-in-depth.
+	got := synthesizeDockerfile("base:1", []string{"libxml2-dev;rm -rf /"})
+	if strings.Contains(got, "libxml2-dev;rm -rf /") && !strings.Contains(got, "'libxml2-dev;rm -rf /'") {
+		t.Errorf("package name must be shell-quoted:\n%s", got)
+	}
+}
+
+func TestTarDockerfileProducesUsableTar(t *testing.T) {
+	body := []byte("FROM base:1\n")
+	r, err := tarDockerfile(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(r)
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Name != "Dockerfile" {
+		t.Errorf("tar entry name = %q, want Dockerfile", hdr.Name)
+	}
+	got, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("tar content = %q, want %q", got, body)
+	}
+	if _, err := tr.Next(); err != io.EOF {
+		t.Errorf("expected only one tar entry, got %v", err)
 	}
 }

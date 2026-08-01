@@ -214,3 +214,61 @@ func TestResolvePortsWholeFieldNull(t *testing.T) {
 		t.Errorf("whole-field null should drop all inherited ports, got %v", cfg.Ports)
 	}
 }
+
+func TestResolvePackagesAdditiveDedup(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "frag1.yaml", "version: 1\nimage: frag1:1\ncommand: [\"x\"]\npackages: [libxml2-dev, libicu-dev]\n")
+	mustWriteProfile(t, dir, "frag2.yaml", "version: 1\nimage: frag2:1\ncommand: [\"y\"]\npackages: [libicu-dev, libonig-dev]\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: [frag1, frag2]\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := []string{"libxml2-dev", "libicu-dev", "libonig-dev"}
+	if len(cfg.Packages) != len(want) {
+		t.Fatalf("Packages = %v, want %v", cfg.Packages, want)
+	}
+	for i := range want {
+		if cfg.Packages[i] != want[i] {
+			t.Errorf("Packages[%d] = %q, want %q (order preserved, deduped)", i, cfg.Packages[i], want[i])
+		}
+	}
+}
+
+func TestResolvePackagesWholeFieldNull(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\npackages: [libxml2-dev, libicu-dev]\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\npackages: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(cfg.Packages) != 0 {
+		t.Errorf("whole-field null should drop all inherited packages, got %v", cfg.Packages)
+	}
+}
+
+func TestResolvePackagesChildExtendsWithoutOverride(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\npackages: [libssl-dev]\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\ncommand: [\"y\"]\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0] != "libssl-dev" {
+		t.Errorf("Packages = %v, want [libssl-dev] (inherited unchanged)", cfg.Packages)
+	}
+}

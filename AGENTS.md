@@ -15,15 +15,16 @@ CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `
 - `pkg/tpod/` — public launch/spec/types API used by the CLI and tests.
 - `internal/profile/` — YAML profile schema, `extends` deep-merge, validation, fragment rules. Core of the config model.
 - `internal/catalog/` — embedded built-in `profiles/` and `fragments/` (YAML), exposed via `embed.go`. Add a new agent/tool here, not at runtime.
-- `internal/runtime/` — Docker-API client (docker.go, run/exec/prepare), attach, fake for tests.
+- `internal/runtime/` — Docker-API client (docker.go, run/exec/prepare), attach, fake for tests; `docker_build.go` synthesizes derived images for `packages:`.
 - `internal/mise/` — mise install dir volume + `appimage:` backend plugin (`plugins/appimage/*.lua`).
-- `internal/{doctor,prune,scaffold,ui,workspace}/` — diagnostics, cleanup, `init` wizard, TUI, rootless-vs-rootful mode detection.
+- `internal/{doctor,prune,scaffold,ui,workspace}/` — diagnostics, cleanup (`prune` removes catalog-unused volumes/derived images), `init` wizard, TUI, rootless-vs-rootful mode detection.
 - `docs/` — design notes.
 - `Dockerfile` — the mise base image; `mise.toml` pins `opencode` for development.
 
 ## Conventions
 - **Profiles vs fragments:** profiles carry `image`/`command` identity; fragments are composable mounts/caches/credentials and may only `extends` other fragments. Both are YAML; user profiles in `~/.config/tpod/profiles/` shadow built-ins.
-- **Merge semantics** (in `internal/profile/merge.go`): scalars—child wins; maps—key-by-key (set `null` to delete an inherited key); `command` list—replaced; `image`/`build`—single slot.
+- **Merge semantics** (in `internal/profile/merge.go`): scalars—child wins; maps—key-by-key (set `null` to delete an inherited key); `command` list—replaced; `packages` list—additive (append with dedup; `packages: null` clears); `image`/`build`—single slot.
+- **System deps via `packages:`:** profiles/fragments declare apt package names; `internal/runtime/docker_build.go` derives a content-addressed tag `tpod/packages:<hash>` from `(base image ID, sorted packages)` and builds/reuses a derived image in `Prepare`. `internal/runtime/` is where the build + caching lives; prune (`internal/prune/prune.go`) removes catalog-unused derived images.
 - **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). An empty resolution leaves the var unset.
 - **Catalog is embedded:** built-in profiles/fragments ship in the binary. To add an agent, add YAML under `internal/catalog/` and re-build; do not load them from disk at runtime.
 - **No comments** unless the code doesn't make something apparent.

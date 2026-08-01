@@ -1,8 +1,4 @@
 version: 1
-tools:
-  php: latest
-caches:
-  composer: ~/.composer/cache
 packages:
   - libxml2-dev
   - libicu-dev
@@ -16,3 +12,7 @@ packages:
   - libjpeg-dev
   - bison
   - re2c
+tools:
+  php: latest
+caches:
+  composer: ~/.composer/cache

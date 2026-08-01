@@ -10,6 +10,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpod/internal/profile"
@@ -22,6 +24,7 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 	checks = append(checks, checkRuntimeReachable(ctx, rt))
 	checks = append(checks, checkRootless(ctx, rt))
 	checks = append(checks, checkMiseBaseImage(ctx, rt))
+	checks = append(checks, checkDerivedImages(ctx, rt))
 	checks = append(checks, checkVolumes(ctx, rt))
 	checks = append(checks, checkPermissions(ctx, rt))
 
@@ -83,6 +86,30 @@ func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "mise base image", Status: Warn, Message: err.Error()}
 	}
 	return Check{Name: "mise base image", Status: Pass, Message: "present"}
+}
+
+// checkDerivedImages reports how many cached tpod/packages:<hash> derived
+// images exist locally (the profile-level system-dep images).
+func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
+	f := filters.NewArgs()
+	f.Add("reference", "tpod/packages")
+	images, err := rt.cli.ImageList(ctx, image.ListOptions{Filters: f})
+	if err != nil {
+		return Check{Name: "derived images", Status: Warn, Message: err.Error()}
+	}
+	var tags []string
+	for _, img := range images {
+		for _, t := range img.RepoTags {
+			if strings.HasPrefix(t, "tpod/packages:") {
+				tags = append(tags, t)
+			}
+		}
+	}
+	sort.Strings(tags)
+	if len(tags) == 0 {
+		return Check{Name: "derived images", Status: Pass, Message: "none yet (built on first launch of a profile with packages)"}
+	}
+	return Check{Name: "derived images", Status: Pass, Message: fmt.Sprintf("%d cached: %s", len(tags), strings.Join(tags, ", "))}
 }
 
 func checkVolumes(ctx context.Context, rt *dockerRT) Check {

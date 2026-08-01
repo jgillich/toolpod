@@ -5,6 +5,7 @@ import "context"
 type Spec struct {
 	ProfileName string
 	Image       string
+	Packages    []string
 	Command     []string
 	Mounts      []MountSpec
 	PortSpecs   []PortSpec

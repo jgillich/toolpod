@@ -1,6 +1,28 @@
 version: 1
 image: ghcr.io/jgillich/tpod-mise:latest
 command: ["/usr/bin/mise"]
+packages:
+  - build-essential
+  - cmake
+  - ninja-build
+  - clang
+  - pkg-config
+  - autoconf
+  - automake
+  - libtool
+  - bison
+  - re2c
+  - python3
+  - libssl-dev
+  - libcurl4-openssl-dev
+  - zlib1g-dev
+  - libreadline-dev
+  - libffi-dev
+  - libsqlite3-dev
+  - libedit-dev
+  - gettext
+  - openssl
+  - gdb
 mounts:
   /etc/mise:
     source: ~/.config/mise
@@ -12,7 +34,3 @@ tools:
   jq: latest
   ripgrep: latest
   yq: latest
-packages:
-  - libedit-dev
-  - gettext
-  - openssl

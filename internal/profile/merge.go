@@ -172,6 +172,8 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 		out.Command = child.Command
 	}
 
+	out.Packages = mergePackages(parent.Packages, child.Packages, child.NullKeys["packages"])
+
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
 	out.Tools = mergeStringMap(parent.Tools, child.Tools, child.NullKeys["tools"])
@@ -262,6 +264,35 @@ func mergeStringMap(parent, child map[string]string, nullKeys map[string]bool) m
 	}
 	for k := range nullKeys {
 		delete(out, k)
+	}
+	return out
+}
+
+// mergePackages appends child's packages to parent's, preserving order and
+// dropping duplicates. packages: null ("*" in nullKeys) clears the inherited
+// list entirely. Unlike command (which replaces), packages compose additively
+// across fragments — e.g. the php and gui fragments both contribute entries
+// and neither supersedes the other.
+func mergePackages(parent, child []string, nullKeys map[string]bool) []string {
+	if nullKeys != nil && nullKeys["*"] {
+		return nil
+	}
+	if len(child) == 0 {
+		return parent
+	}
+	out := make([]string, 0, len(parent)+len(child))
+	seen := make(map[string]bool, len(parent)+len(child))
+	for _, p := range parent {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, p := range child {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
 	}
 	return out
 }

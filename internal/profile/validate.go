@@ -10,6 +10,8 @@ import (
 
 var busNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\.[*])?$`)
 
+var packageNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
+
 var reservedNames = map[string]bool{
 	"config":     true,
 	"doctor":     true,
@@ -39,6 +41,9 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateDbus(rc); err != nil {
+		return err
+	}
+	if err := validatePackages(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -96,6 +101,19 @@ func validateDbus(rc RawProfile) error {
 	for name := range rc.Dbus.Own {
 		if !busNameRe.MatchString(name) {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("dbus.own: invalid bus name %q", name)}
+		}
+	}
+	return nil
+}
+
+// validatePackages checks that each declared system package matches Debian's
+// package-name grammar (Policy §5.6.7): lowercase alphanumeric start, then
+// [a-z0-9+.-]. Rejects whitespace, shell metacharacters, and version pinning
+// (`=`), which v1 doesn't support.
+func validatePackages(rc RawProfile) error {
+	for _, pkg := range rc.Packages {
+		if !packageNameRe.MatchString(pkg) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("packages: invalid package name %q (want [a-z0-9][a-z0-9+.-]*)", pkg)}
 		}
 	}
 	return nil

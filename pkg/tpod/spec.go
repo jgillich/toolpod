@@ -93,6 +93,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 	return Spec{
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
+		Packages:    cfg.Packages,
 		Command:     cmd,
 		Mounts:      mounts,
 		PortSpecs:   portSpecs,
