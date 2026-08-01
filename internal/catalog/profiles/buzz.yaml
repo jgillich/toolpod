@@ -23,6 +23,6 @@ mounts:
     read_only: false
 dbus:
   talk:
-    org.freedesktop.Notifications: true
+    org.freedesktop.Notifications: {}
   own:
-    xyz.block.buzz.app: true
+    xyz.block.buzz.app: {}

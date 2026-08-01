@@ -14,4 +14,4 @@ environment:
   DISPLAY: '{{ .Env.DISPLAY }}'
 dbus:
   talk:
-    org.freedesktop.portal.Desktop: true
+    org.freedesktop.portal.Desktop: {}

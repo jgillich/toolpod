@@ -140,7 +140,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
 | `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
 | `tty` | string | `auto` (default), `true`, or `false`. |
-| `dbus` | object | Flatpak-style session-bus allowlist: `talk` / `own`, each a map of bus names to `true`. `talk` allows contacting those names, `own` allows registering them. Merged key-by-key across `extends` (set a name to `null` to clear an inherited entry). |
+| `dbus` | object | Flatpak-style session-bus allowlist: `talk` / `own`, each a map of bus names to an empty object (`{}`). `talk` allows contacting those names, `own` allows registering them. Merged key-by-key across `extends` (set a name to `null` to clear an inherited entry). |
 
 ### ports / devices
 

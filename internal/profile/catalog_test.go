@@ -218,11 +218,11 @@ func TestResolveBuzzDbusAllowlist(t *testing.T) {
 		t.Fatal("buzz should resolve a dbus allowlist (via gui)")
 	}
 	for _, name := range []string{"org.freedesktop.portal.Desktop", "org.freedesktop.Notifications"} {
-		if !cfg.Dbus.Talk[name] {
+		if cfg.Dbus.Talk[name] == nil {
 			t.Errorf("dbus.talk missing %q", name)
 		}
 	}
-	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+	if cfg.Dbus.Own["xyz.block.buzz.app"] == nil {
 		t.Error("dbus.own missing xyz.block.buzz.app")
 	}
 	if cfg.Env["DBUS_SESSION_BUS_ADDRESS"] != "" {

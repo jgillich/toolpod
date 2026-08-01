@@ -10,20 +10,20 @@ import (
 	"github.com/jgillich/toolpod/internal/profile"
 )
 
-// dbusEnabled reports whether the profile has at least one truthy talk/own
-// name, i.e. any effective filter rule. A name mapped to false (YAML `null`)
-// clears an inherited entry and contributes no rules.
+// dbusEnabled reports whether the profile has at least one non-nil talk/own
+// name, i.e. any effective filter rule. A nil name (YAML `null`) clears an
+// inherited entry and contributes no rules.
 func dbusEnabled(cfg profile.Profile) bool {
 	if cfg.Dbus == nil {
 		return false
 	}
 	for _, v := range cfg.Dbus.Talk {
-		if v {
+		if v != nil {
 			return true
 		}
 	}
 	for _, v := range cfg.Dbus.Own {
-		if v {
+		if v != nil {
 			return true
 		}
 	}
@@ -40,13 +40,13 @@ func proxyFilterArgs(cfg profile.Profile) []string {
 	}
 	var args []string
 	for name, v := range cfg.Dbus.Talk {
-		if !v {
+		if v == nil {
 			continue
 		}
 		args = append(args, "--see="+name, "--talk="+name)
 	}
 	for name, v := range cfg.Dbus.Own {
-		if !v {
+		if v == nil {
 			continue
 		}
 		args = append(args, "--see="+name, "--own="+name)

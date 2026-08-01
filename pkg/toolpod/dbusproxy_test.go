@@ -11,8 +11,8 @@ import (
 
 func TestProxyFilterArgs(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
-		Talk: map[string]bool{"org.freedesktop.portal.Desktop": true},
-		Own:  map[string]bool{"xyz.block.buzz.app": true},
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
+		Own:  map[string]*struct{}{"xyz.block.buzz.app": &struct{}{}},
 	}}
 	args := proxyFilterArgs(cfg)
 	joined := strings.Join(args, " ")
@@ -24,6 +24,23 @@ func TestProxyFilterArgs(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q: %v", want, args)
 		}
+	}
+}
+
+func TestProxyFilterArgsSkipsNilNames(t *testing.T) {
+	cfg := profile.Profile{Dbus: &profile.DbusConfig{
+		Talk: map[string]*struct{}{
+			"org.freedesktop.portal.Desktop": &struct{}{},
+			"org.freedesktop.Notifications":  nil,
+		},
+	}}
+	args := proxyFilterArgs(cfg)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "org.freedesktop.Notifications") {
+		t.Errorf("nil name must not be allowlisted: %v", args)
+	}
+	if !strings.Contains(joined, "--talk=org.freedesktop.portal.Desktop") {
+		t.Errorf("non-nil name should still be allowlisted: %v", args)
 	}
 }
 
@@ -55,7 +72,7 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
-		Talk: map[string]bool{"org.freedesktop.portal.Desktop": true},
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
 	cleanup, addr := startBusProxy(cfg)
 	if cleanup == nil {
@@ -91,7 +108,7 @@ func TestStartBusProxyMissingBinaryDisables(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
-		Talk: map[string]bool{"org.freedesktop.portal.Desktop": true},
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
 	cleanup, addr := startBusProxy(cfg)
 	if cleanup != nil || addr != "" {
@@ -115,7 +132,7 @@ func TestStartBusProxyFallsBackToRuntimeDirBus(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
-		Talk: map[string]bool{"org.freedesktop.portal.Desktop": true},
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
 	cleanup, addr := startBusProxy(cfg)
 	if cleanup == nil {

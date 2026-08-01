@@ -234,12 +234,12 @@ func mergeDbus(parent, child *DbusConfig, nullKeys map[string]bool) *DbusConfig 
 	}
 	out := &DbusConfig{}
 	if nullKeys["talk"] {
-		out.Talk = map[string]bool{}
+		out.Talk = map[string]*struct{}{}
 	} else {
 		out.Talk = mergeMap(parent.Talk, child.Talk, nil)
 	}
 	if nullKeys["own"] {
-		out.Own = map[string]bool{}
+		out.Own = map[string]*struct{}{}
 	} else {
 		out.Own = mergeMap(parent.Own, child.Own, nil)
 	}

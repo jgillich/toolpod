@@ -46,11 +46,13 @@ type Profile struct {
 }
 
 // DbusConfig is a flatpak-style session-bus allowlist. Talk names may be
-// called; Own names may be acquired. Values are maps (not lists) so profiles
-// extending a base merge their names key-by-key.
+// called; Own names may be acquired. Each name maps to an empty object; a
+// null value drops an inherited name (the pointer distinguishes allow from
+// remove). Values are maps (not lists) so profiles extending a base merge
+// their names key-by-key.
 type DbusConfig struct {
-	Talk map[string]bool `yaml:"talk,omitempty"`
-	Own  map[string]bool `yaml:"own,omitempty"`
+	Talk map[string]*struct{} `yaml:"talk,omitempty"`
+	Own  map[string]*struct{} `yaml:"own,omitempty"`
 }
 
 // Mount is a single bind mount, keyed by container target path.

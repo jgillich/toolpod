@@ -94,7 +94,7 @@ func TestParseAndMergeDbus(t *testing.T) {
 	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
 dbus:
   talk:
-    org.freedesktop.portal.Desktop: true
+    org.freedesktop.portal.Desktop: {}
 `)
 	mustWriteProfile(t, dir, "app.yaml", `version: 1
 extends: dbusbase
@@ -102,9 +102,9 @@ command: ["app"]
 image: img:1
 dbus:
   talk:
-    org.freedesktop.Notifications: true
+    org.freedesktop.Notifications: {}
   own:
-    xyz.block.buzz.app: true
+    xyz.block.buzz.app: {}
 `)
 	cat, err := LoadProfiles(dir)
 	if err != nil {
@@ -117,13 +117,13 @@ dbus:
 	if cfg.Dbus == nil {
 		t.Fatal("dbus missing after merge")
 	}
-	if !cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] {
+	if cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] == nil {
 		t.Error("talk from parent (dbusbase) lost")
 	}
-	if !cfg.Dbus.Talk["org.freedesktop.Notifications"] {
+	if cfg.Dbus.Talk["org.freedesktop.Notifications"] == nil {
 		t.Error("talk from child lost")
 	}
-	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+	if cfg.Dbus.Own["xyz.block.buzz.app"] == nil {
 		t.Error("own from child lost")
 	}
 }
@@ -135,7 +135,7 @@ command: ["x"]
 image: img:1
 dbus:
   talk:
-    "not a bus name!": true
+    "not a bus name!": {}
 `)
 	cat, err := LoadProfiles(dir)
 	if err != nil {
@@ -153,7 +153,7 @@ func TestMergeDbusNullClears(t *testing.T) {
 	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
 dbus:
   talk:
-    org.freedesktop.portal.Desktop: true
+    org.freedesktop.portal.Desktop: {}
 `)
 	mustWriteProfile(t, dir, "app.yaml", `version: 1
 extends: dbusbase
@@ -179,9 +179,9 @@ func TestMergeDbusNullClearsTalkSubMap(t *testing.T) {
 	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
 dbus:
   talk:
-    org.freedesktop.portal.Desktop: true
+    org.freedesktop.portal.Desktop: {}
   own:
-    xyz.block.buzz.app: true
+    xyz.block.buzz.app: {}
 `)
 	mustWriteProfile(t, dir, "app.yaml", `version: 1
 extends: dbusbase
@@ -204,7 +204,7 @@ dbus:
 	if len(cfg.Dbus.Talk) != 0 {
 		t.Errorf("dbus.talk should be cleared by null, got %v", cfg.Dbus.Talk)
 	}
-	if !cfg.Dbus.Own["xyz.block.buzz.app"] {
+	if cfg.Dbus.Own["xyz.block.buzz.app"] == nil {
 		t.Error("dbus.own from base should survive talk: null")
 	}
 }
@@ -214,7 +214,7 @@ func TestMergeDbusNullClearsPerName(t *testing.T) {
 	mustWriteProfile(t, dir, "dbusbase.yaml", `version: 1
 dbus:
   talk:
-    org.freedesktop.portal.Desktop: true
+    org.freedesktop.portal.Desktop: {}
 `)
 	mustWriteProfile(t, dir, "app.yaml", `version: 1
 extends: dbusbase
@@ -235,7 +235,7 @@ dbus:
 	if cfg.Dbus == nil {
 		t.Fatal("dbus should survive the per-name null")
 	}
-	if cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] {
+	if cfg.Dbus.Talk["org.freedesktop.portal.Desktop"] != nil {
 		t.Error("per-name null should clear the inherited talk entry")
 	}
 }
