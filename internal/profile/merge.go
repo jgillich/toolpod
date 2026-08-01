@@ -103,26 +103,34 @@ func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bo
 	if len(rc.ExtendsList) == 0 {
 		return rc, nil
 	}
-	name := rc.ExtendsList[0]
-	if inheritedSeen[name] {
-		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+	merged := RawProfile{}
+	resolved := map[string]bool{}
+	for _, name := range rc.ExtendsList {
+		if resolved[name] {
+			continue
+		}
+		resolved[name] = true
+		if inheritedSeen[name] {
+			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+		}
+		parent, ok := cat.GetBuiltin(name)
+		if !ok {
+			return RawProfile{}, ProfileError{Path: rc.Path, Message: "built-in profile not found: " + name}
+		}
+		// Copy seen so each sibling branch has its own scope but still
+		// detects cycles back to the original shadow name.
+		seen := make(map[string]bool, len(inheritedSeen)+1)
+		for k := range inheritedSeen {
+			seen[k] = true
+		}
+		seen[name] = true
+		resolvedParent, err := resolveBuiltinChain(cat, parent, seen)
+		if err != nil {
+			return RawProfile{}, err
+		}
+		merged = MergeProfiles(merged, resolvedParent)
 	}
-	parent, ok := cat.GetBuiltin(name)
-	if !ok {
-		return RawProfile{}, ProfileError{Path: rc.Path, Message: "built-in profile not found: " + name}
-	}
-	// Copy seen so the built-in chain has its own scope but still detects
-	// cycles back to the original shadow name.
-	seen := make(map[string]bool, len(inheritedSeen)+1)
-	for k := range inheritedSeen {
-		seen[k] = true
-	}
-	seen[name] = true
-	resolved, err := resolveBuiltinChain(cat, parent, seen)
-	if err != nil {
-		return RawProfile{}, err
-	}
-	merged := MergeProfiles(resolved, rc)
+	merged = MergeProfiles(merged, rc)
 	merged.Path = rc.Path
 	return merged, nil
 }

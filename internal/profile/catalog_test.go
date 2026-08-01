@@ -41,6 +41,61 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	}
 }
 
+func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
+	// A shadow extending the builtin of the same name must inherit all of its
+	// parents; resolveBuiltinChain used to follow only ExtendsList[0].
+	builtins := map[string]RawProfile{
+		"t3": {
+			Profile: Profile{Version: 1, Image: "img", Command: []string{"t3"}, ExtendsList: []string{"a", "gui", "b", "c"}},
+			Path:    "builtin:t3",
+		},
+		"a":     {Profile: Profile{Env: map[string]string{"XDG_RUNTIME_DIR": "{{ .Env.XDG_RUNTIME_DIR }}"}}, Path: "builtin:a"},
+		"b":     {Profile: Profile{Mounts: map[string]Mount{"/b": {Source: "~/.b"}}}, Path: "builtin:b"},
+		"c":     {Profile: Profile{Tools: map[string]string{"c": "latest"}}, Path: "builtin:c"},
+		"extra": {Profile: Profile{Tools: map[string]string{"extra": "1"}}, Path: "builtin:extra"},
+	}
+	gui := RawProfile{
+		Profile: Profile{Env: map[string]string{"WAYLAND_DISPLAY": "{{ .Env.WAYLAND_DISPLAY }}"}},
+		Path:    "builtin:fragment:gui",
+	}
+	shadow := RawProfile{
+		Profile: Profile{Version: 1, ExtendsList: []string{"t3", "extra"}},
+		Path:    "user:/home/u/t3.yaml",
+	}
+	cat := Catalog{
+		entries: map[string]RawProfile{
+			"t3":    shadow,
+			"a":     builtins["a"],
+			"b":     builtins["b"],
+			"c":     builtins["c"],
+			"extra": builtins["extra"],
+			"gui":   gui,
+		},
+		builtins:  builtins,
+		fragments: map[string]bool{"gui": true},
+	}
+
+	merged, err := ResolveProfile(cat, "t3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.Env["XDG_RUNTIME_DIR"] == "" {
+		t.Error("missing env from builtin parent 'a' (dropped by resolveBuiltinChain)")
+	}
+	if merged.Env["WAYLAND_DISPLAY"] == "" {
+		t.Error("missing env from builtin fragment parent 'gui'")
+	}
+	if _, ok := merged.Mounts["/b"]; !ok {
+		t.Error("missing mount from builtin parent 'b'")
+	}
+	if merged.Tools["c"] != "latest" {
+		t.Error("missing tool from builtin parent 'c'")
+	}
+	if merged.Tools["extra"] != "1" {
+		t.Error("missing tool from second extends entry 'extra'")
+	}
+}
+
 func TestLoadProfilesUserAddsProfile(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644)

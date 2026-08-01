@@ -31,9 +31,16 @@ func (c Catalog) Get(name string) (RawProfile, bool) {
 	return rc, ok
 }
 
-// GetBuiltin returns the built-in profile for a name, plus whether it was found.
+// GetBuiltin returns the built-in definition of a name: the built-in profile
+// for profiles, or the fragment of that name (fragments are never shadowed,
+// so the merged entry is always the built-in fragment). It is used to resolve
+// extends-self in user shadows and built-in chains without pulling in user
+// overrides.
 func (c Catalog) GetBuiltin(name string) (RawProfile, bool) {
 	rc, ok := c.builtins[name]
+	if !ok && c.fragments[name] {
+		rc, ok = c.entries[name]
+	}
 	return rc, ok
 }
 
