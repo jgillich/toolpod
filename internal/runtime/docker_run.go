@@ -28,6 +28,11 @@ import (
 func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	runtimeHome := spec.RuntimeHome
 
+	// Run an init process (tini) as PID 1 so SIGINT/SIGTERM forwarded to the
+	// container reach the wrapped command; the kernel ignores signals sent to
+	// a bare PID 1 that has no handler for them.
+	initEnabled := true
+
 	// Run as root so the wrapper can create/chown $HOME and the volumes, then
 	// drop to the host user via setpriv (see containerIdentity).
 	userns, rootUser, hostUID, hostGID := containerIdentity(d.podman)
@@ -113,6 +118,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		UsernsMode:   userns,
 		AutoRemove:   false,
 		PortBindings: portBindings,
+		Init:         &initEnabled,
 		Resources: container.Resources{
 			Devices:           devices,
 			DeviceCgroupRules: cgroupRules,
