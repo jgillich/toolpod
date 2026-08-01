@@ -2,5 +2,4 @@ version: 1
 mounts:
   ~/.netrc:
     source: ~/.netrc
-    read_only: true
     optional: true

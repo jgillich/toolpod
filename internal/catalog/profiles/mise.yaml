@@ -4,7 +4,6 @@ command: ["/usr/bin/mise"]
 mounts:
   /etc/mise:
     source: ~/.config/mise
-    read_only: true
     optional: true
 tools:
   bat: latest

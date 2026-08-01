@@ -4,5 +4,4 @@ tools:
 mounts:
   ~/.aws:
     source: ~/.aws
-    read_only: true
     optional: true

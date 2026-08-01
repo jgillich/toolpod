@@ -52,6 +52,50 @@ type Mount struct {
 	Create   bool   `yaml:"create,omitempty"` // mkdir the source if missing (directories only)
 }
 
+// UnmarshalYAML defaults read_only to true, so a mount without an explicit
+// read_only key is read-only rather than read-write.
+func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
+	type plain Mount
+	var raw plain
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*m = Mount(raw)
+	m.ReadOnly = true
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if value.Content[i].Value == "read_only" {
+				if err := value.Content[i+1].Decode(&m.ReadOnly); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// MarshalYAML omits the default read_only: true, keeping only explicit
+// read_only: false for writable mounts.
+func (m Mount) MarshalYAML() (interface{}, error) {
+	type plain Mount
+	out := struct {
+		Source   string `yaml:"source"`
+		ReadOnly *bool  `yaml:"read_only,omitempty"`
+		Optional bool   `yaml:"optional"`
+		Create   bool   `yaml:"create,omitempty"`
+	}{
+		Source:   m.Source,
+		Optional: m.Optional,
+		Create:   m.Create,
+	}
+	if !m.ReadOnly {
+		ro := false
+		out.ReadOnly = &ro
+	}
+	return out, nil
+}
+
 // PortBind publishes a container port to the host. Empty Host means the
 // host port is auto-allocated at launch.
 type PortBind struct {

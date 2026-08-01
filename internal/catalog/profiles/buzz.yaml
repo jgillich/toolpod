@@ -12,9 +12,12 @@ mounts:
   ~/.local/share/xyz.block.buzz.app:
     source: ~/.local/share/xyz.block.buzz.app
     create: true
+    read_only: false
   ~/.config/xyz.block.buzz.app:
     source: ~/.config/xyz.block.buzz.app
     create: true
+    read_only: false
   ~/.buzz:
     source: ~/.buzz
     create: true
+    read_only: false

@@ -7,7 +7,6 @@ mounts:
   ~/.config/crush:
     source: ~/.config/crush
     create: true
-    read_only: true
   ~/.local/share/crush:
     source: ~/.local/share/crush
     create: true

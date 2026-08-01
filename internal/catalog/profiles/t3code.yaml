@@ -12,8 +12,10 @@ mounts:
   ~/.t3:
     source: ~/.t3
     create: true
+    read_only: false
   ~/.config/t3code:
     source: ~/.config/t3code
     create: true
+    read_only: false
 environment:
   ELECTRON_ENABLE_LOGGING: "1"
