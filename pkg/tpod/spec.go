@@ -1,11 +1,11 @@
-package toolpod
+package tpod
 
 import (
 	"fmt"
 	"path/filepath"
 	"sort"
 
-	"github.com/jgillich/toolpod/internal/profile"
+	"github.com/jgillich/tpod/internal/profile"
 )
 
 // buildSpec assembles a container Spec from a resolved profile and launch opts.
@@ -42,7 +42,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 	caches := make([]CacheSpec, 0, len(cfg.Caches))
 	for name, target := range cfg.Caches {
 		caches = append(caches, CacheSpec{
-			Name:   "toolpod-cache-" + name,
+			Name:   "tpod-cache-" + name,
 			Target: target,
 		})
 	}

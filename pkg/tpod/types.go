@@ -1,6 +1,6 @@
-package toolpod
+package tpod
 
-import "github.com/jgillich/toolpod/internal/runtime"
+import "github.com/jgillich/tpod/internal/runtime"
 
 type (
 	Spec          = runtime.Spec

@@ -377,7 +377,7 @@ func TestWrapAsUser(t *testing.T) {
 
 // integrationImage is the production base image: it carries util-linux
 // setpriv (for the launch wrapper) and python3 (for the port listener).
-const integrationImage = "ghcr.io/jgillich/toolpod-mise:latest"
+const integrationImage = "ghcr.io/jgillich/tpod-mise:latest"
 
 func TestIntegrationRunShellEcho(t *testing.T) {
 	if testing.Short() {
@@ -496,7 +496,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 }
 
 // containerIPOf resolves the bridge IP of the newest running container for
-// profileName. The container is named toolpod-<profile>-<randomID> by Run.
+// profileName. The container is named tpod-<profile>-<randomID> by Run.
 // Stale (exited) containers matching the prefix are skipped.
 func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	cli := rt.cli
@@ -504,7 +504,7 @@ func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prefix := "toolpod-" + profileName + "-"
+	prefix := "tpod-" + profileName + "-"
 	var best types.Container
 	for _, c := range containers {
 		if c.State != "running" {

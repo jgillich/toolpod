@@ -1,10 +1,10 @@
 version: 2
 
-project_name: toolpod
+project_name: tpod
 
 builds:
-  - main: ./cmd/toolpod
-    binary: toolpod
+  - main: ./cmd/tpod
+    binary: tpod
     env:
       - CGO_ENABLED=0
     goos:
@@ -28,4 +28,4 @@ changelog:
 release:
   github:
     owner: jgillich
-    name: toolpod
+    name: tpod

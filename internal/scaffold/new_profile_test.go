@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jgillich/toolpod/internal/profile"
+	"github.com/jgillich/tpod/internal/profile"
 )
 
 func TestNewProfileDefaultBaseMise(t *testing.T) {

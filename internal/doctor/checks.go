@@ -12,8 +12,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/toolpod/internal/profile"
-	"github.com/jgillich/toolpod/internal/runtime"
+	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/runtime"
 )
 
 func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
@@ -92,7 +92,7 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 	}
 	var found []string
 	for _, v := range volumes.Volumes {
-		if strings.HasPrefix(v.Name, "toolpod-") {
+		if strings.HasPrefix(v.Name, "tpod-") {
 			found = append(found, v.Name)
 		}
 	}
@@ -103,11 +103,11 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 }
 
 func checkPermissions(ctx context.Context, rt *dockerRT) Check {
-	_, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: "toolpod-perm-test"})
+	_, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: "tpod-perm-test"})
 	if err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create volumes: " + err.Error()}
 	}
-	_ = rt.cli.VolumeRemove(ctx, "toolpod-perm-test", true)
+	_ = rt.cli.VolumeRemove(ctx, "tpod-perm-test", true)
 
 	resp, err := rt.cli.ContainerCreate(ctx, &container.Config{
 		Image: "alpine:latest",
@@ -185,20 +185,20 @@ func checkUserOverrides(userDir string) []Check {
 			checks = append(checks, Check{
 				Name:    "caches",
 				Status:  Info,
-				Message: fmt.Sprintf("%s: none configured (run `toolpod init %s` to enable)", name, name),
+				Message: fmt.Sprintf("%s: none configured (run `tpod init %s` to enable)", name, name),
 			})
 		}
 		if _, hasGit := cfg.Mounts["~/.gitconfig"]; !hasGit {
 			checks = append(checks, Check{
 				Name:    "gitconfig",
 				Status:  Info,
-				Message: fmt.Sprintf("%s: not mounted (run `toolpod init %s --fragments gitconfig`)", name, name),
+				Message: fmt.Sprintf("%s: not mounted (run `tpod init %s --fragments gitconfig`)", name, name),
 			})
 		}
 	}
 
 	if userFileCount == 0 {
-		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `toolpod init <profile>` to add them"}}
+		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `tpod init <profile>` to add them"}}
 	}
 	if len(checks) == 0 {
 		return []Check{{Name: "fragments", Status: Pass, Message: "all user overrides have caches and gitconfig"}}
@@ -225,7 +225,7 @@ func checkProjectTools(ctx context.Context, workspace string) Check {
 }
 
 func checkWorkspaceWritable(ctx context.Context, workspace string) Check {
-	testFile := filepath.Join(workspace, ".toolpod-write-test")
+	testFile := filepath.Join(workspace, ".tpod-write-test")
 	if err := os.WriteFile(testFile, []byte("x"), 0o644); err != nil {
 		return Check{Name: "workspace", Status: Fail, Message: workspace + " is not writable"}
 	}

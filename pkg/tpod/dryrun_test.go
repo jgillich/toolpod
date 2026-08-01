@@ -1,4 +1,4 @@
-package toolpod
+package tpod
 
 import (
 	"strings"

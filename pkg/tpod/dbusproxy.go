@@ -1,4 +1,4 @@
-package toolpod
+package tpod
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jgillich/toolpod/internal/profile"
+	"github.com/jgillich/tpod/internal/profile"
 )
 
 // dbusEnabled reports whether the profile has at least one non-nil talk/own
@@ -55,7 +55,7 @@ func proxyFilterArgs(cfg profile.Profile) []string {
 }
 
 // startBusProxy spawns a host-side xdg-dbus-proxy for the launch, filtered to
-// the profile's dbus allowlist, listening on $XDG_RUNTIME_DIR/toolpod-bus-<pid>.sock.
+// the profile's dbus allowlist, listening on $XDG_RUNTIME_DIR/tpod-bus-<pid>.sock.
 // It returns a cleanup that kills the proxy and removes the socket, and the
 // DBUS_SESSION_BUS_ADDRESS to set in the container ("" = bus disabled).
 //
@@ -78,21 +78,21 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 	}
 	proxy, err := exec.LookPath("xdg-dbus-proxy")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "toolpod: warning: xdg-dbus-proxy not found; container D-Bus disabled")
+		fmt.Fprintln(os.Stderr, "tpod: warning: xdg-dbus-proxy not found; container D-Bus disabled")
 		return nil, ""
 	}
-	sockPath := filepath.Join(runtimeDir, fmt.Sprintf("toolpod-bus-%d.sock", os.Getpid()))
+	sockPath := filepath.Join(runtimeDir, fmt.Sprintf("tpod-bus-%d.sock", os.Getpid()))
 	_ = os.Remove(sockPath)
 
 	args := append([]string{proxy, hostBus, sockPath, "--filter"}, proxyFilterArgs(cfg)...)
-	if os.Getenv("TOOLPOD_OPEN_DEBUG") != "" {
+	if os.Getenv("TPOD_OPEN_DEBUG") != "" {
 		args = append(args, "--log")
 	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "toolpod: warning: start xdg-dbus-proxy: %v\n", err)
+		fmt.Fprintf(os.Stderr, "tpod: warning: start xdg-dbus-proxy: %v\n", err)
 		return nil, ""
 	}
 	// Wait for the proxy to create its socket so container clients don't race
@@ -106,7 +106,7 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 			_ = cmd.Process.Kill()
 			_, _ = cmd.Process.Wait()
 			_ = os.Remove(sockPath)
-			fmt.Fprintln(os.Stderr, "toolpod: warning: xdg-dbus-proxy did not start; container D-Bus disabled")
+			fmt.Fprintln(os.Stderr, "tpod: warning: xdg-dbus-proxy did not start; container D-Bus disabled")
 			return nil, ""
 		}
 		time.Sleep(10 * time.Millisecond)

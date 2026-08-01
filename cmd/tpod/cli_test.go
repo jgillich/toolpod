@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func buildToolpod(t *testing.T) string {
+func buildTpod(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "toolpod")
+	bin := filepath.Join(t.TempDir(), "tpod")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
@@ -18,13 +18,13 @@ func buildToolpod(t *testing.T) string {
 }
 
 func TestLaunchBareShowsHelp(t *testing.T) {
-	bin := buildToolpod(t)
+	bin := buildTpod(t)
 	cmd := exec.Command(bin)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("bare toolpod should show help and exit 0, got err: %v\n%s", err, out)
+		t.Fatalf("bare tpod should show help and exit 0, got err: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Usage: toolpod") {
+	if !strings.Contains(string(out), "Usage: tpod") {
 		t.Errorf("expected help text, got:\n%s", out)
 	}
 	if !strings.Contains(string(out), "profile-and-args") {
@@ -33,7 +33,7 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 }
 
 func TestInitHelpMentionsExtends(t *testing.T) {
-	bin := buildToolpod(t)
+	bin := buildTpod(t)
 	cmd := exec.Command(bin, "init", "--help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

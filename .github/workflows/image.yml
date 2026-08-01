@@ -36,7 +36,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ghcr.io/jgillich/toolpod-mise:latest
-            ghcr.io/jgillich/toolpod-mise:${{ steps.date.outputs.tag }}
+            ghcr.io/jgillich/tpod-mise:latest
+            ghcr.io/jgillich/tpod-mise:${{ steps.date.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

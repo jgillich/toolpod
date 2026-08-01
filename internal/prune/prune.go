@@ -30,7 +30,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	var result Result
 
-	vols, err := listToolpodVolumes(ctx, cli)
+	vols, err := listTpodVolumes(ctx, cli)
 	if err != nil {
 		return result, fmt.Errorf("list volumes: %w", err)
 	}
@@ -52,22 +52,22 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
-func listToolpodVolumes(ctx context.Context, cli *client.Client) ([]*volume.Volume, error) {
+func listTpodVolumes(ctx context.Context, cli *client.Client) ([]*volume.Volume, error) {
 	resp, err := cli.VolumeList(ctx, volume.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	var found []*volume.Volume
 	for _, v := range resp.Volumes {
-		if isToolpodVolume(v.Name) {
+		if isTpodVolume(v.Name) {
 			found = append(found, v)
 		}
 	}
 	return found, nil
 }
 
-func isToolpodVolume(name string) bool {
-	return strings.HasPrefix(name, "toolpod-")
+func isTpodVolume(name string) bool {
+	return strings.HasPrefix(name, "tpod-")
 }
 
 func confirm(kind string, items []string, r io.Reader) bool {

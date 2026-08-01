@@ -1,4 +1,4 @@
-package toolpod
+package tpod
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/jgillich/toolpod/internal/profile"
-	"github.com/jgillich/toolpod/internal/runtime"
+	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/runtime"
 )
 
 // PortAllocator reserves an unused host port for a published binding.

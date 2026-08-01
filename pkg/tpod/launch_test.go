@@ -1,4 +1,4 @@
-package toolpod
+package tpod
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jgillich/toolpod/internal/runtime"
+	"github.com/jgillich/tpod/internal/runtime"
 )
 
 func writeBuiltinShell(t *testing.T) string {

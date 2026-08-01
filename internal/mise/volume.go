@@ -14,14 +14,14 @@ type NamedVolume struct {
 
 func MiseVolume(runtimeHome string) NamedVolume {
 	return NamedVolume{
-		Name:   "toolpod-mise",
+		Name:   "tpod-mise",
 		Target: "/mise",
 	}
 }
 
 func CacheVolume(name, target string) NamedVolume {
 	return NamedVolume{
-		Name:   "toolpod-cache-" + name,
+		Name:   "tpod-cache-" + name,
 		Target: target,
 	}
 }

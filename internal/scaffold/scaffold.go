@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/jgillich/toolpod/internal/profile"
+	"github.com/jgillich/tpod/internal/profile"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -554,9 +554,9 @@ func openEditorWithResolved(resolved profile.Profile, stdout io.Writer) error {
 	header := "# This is a read-only preview of the fully merged profile.\n" +
 		"# It shows everything the container will have access to after all\n" +
 		"# extends and fragments are resolved. Changes here are not saved.\n" +
-		"# To customize, edit your user profile and re-run 'toolpod init'.\n\n"
+		"# To customize, edit your user profile and re-run 'tpod init'.\n\n"
 
-	tmpFile, err := os.CreateTemp("", "toolpod-details-*.yaml")
+	tmpFile, err := os.CreateTemp("", "tpod-details-*.yaml")
 	if err != nil {
 		return err
 	}

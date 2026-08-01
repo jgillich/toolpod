@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jgillich/toolpod/internal/catalog"
+	"github.com/jgillich/tpod/internal/catalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -422,5 +422,5 @@ func DefaultProfileDir() string {
 	if err != nil || base == "" {
 		return ""
 	}
-	return filepath.Join(base, "toolpod", "profiles")
+	return filepath.Join(base, "tpod", "profiles")
 }

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/jgillich/toolpod/internal/catalog"
-	"github.com/jgillich/toolpod/internal/profile"
+	"github.com/jgillich/tpod/internal/catalog"
+	"github.com/jgillich/tpod/internal/profile"
 )
 
 var (

@@ -10,17 +10,17 @@ import (
 	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
-	"github.com/jgillich/toolpod/internal/doctor"
-	"github.com/jgillich/toolpod/internal/profile"
-	"github.com/jgillich/toolpod/internal/prune"
-	"github.com/jgillich/toolpod/internal/scaffold"
-	"github.com/jgillich/toolpod/internal/ui"
-	"github.com/jgillich/toolpod/pkg/toolpod"
+	"github.com/jgillich/tpod/internal/doctor"
+	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/prune"
+	"github.com/jgillich/tpod/internal/scaffold"
+	"github.com/jgillich/tpod/internal/ui"
+	"github.com/jgillich/tpod/pkg/tpod"
 	"gopkg.in/yaml.v3"
 )
 
 type LaunchCmd struct {
-	// Toolpod-owned flags. They appear before the profile name; kong
+	// Tpod-owned flags. They appear before the profile name; kong
 	// parses them as part of the default command.
 	Command   string `short:"c" help:"Command to run in the profile (shell only)."`
 	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
@@ -46,7 +46,7 @@ type DoctorCmd struct {
 }
 
 type PruneCmd struct {
-	Volumes bool `help:"Remove toolpod-managed volumes."`
+	Volumes bool `help:"Remove tpod-managed volumes."`
 	Force   bool `help:"Skip confirmation prompt."`
 	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
 }
@@ -56,7 +56,7 @@ type CLI struct {
 	Init    InitCmd    `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
 	Profile ProfileCmd `cmd:"" help:"Inspect and edit profiles and fragments."`
 	Doctor  DoctorCmd  `cmd:"" help:"Run environment diagnostics."`
-	Prune   PruneCmd   `cmd:"" help:"Remove toolpod-managed volumes and images."`
+	Prune   PruneCmd   `cmd:"" help:"Remove tpod-managed volumes and images."`
 }
 
 type ProfileCmd struct {
@@ -79,7 +79,7 @@ type ProfileListCmd struct{}
 func main() {
 	var cli CLI
 	ctx := kong.Parse(&cli,
-		kong.Name("toolpod"),
+		kong.Name("tpod"),
 		kong.Description("ephemeral dev environments"),
 	)
 	err := ctx.Run()
@@ -104,7 +104,7 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 		workspace = wd
 	}
 
-	result := toolpod.Launch(context.Background(), toolpod.LaunchOpts{
+	result := tpod.Launch(context.Background(), tpod.LaunchOpts{
 		ProfileName: profileName,
 		Workspace:   workspace,
 		DryRun:      l.DryRun,
@@ -240,7 +240,7 @@ func (c *ProfileEditCmd) Run() error {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
 	if _, ok := builtin.Get(c.Name); ok {
-		return fmt.Errorf("this is a built-in profile. Run 'toolpod init %s' to create a user override.", c.Name)
+		return fmt.Errorf("this is a built-in profile. Run 'tpod init %s' to create a user override.", c.Name)
 	}
 	if builtin.IsFragment(c.Name) {
 		return fmt.Errorf("%s is a fragment, not an editable profile file", c.Name)

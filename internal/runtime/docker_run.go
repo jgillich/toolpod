@@ -20,7 +20,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
-	"github.com/jgillich/toolpod/internal/mise"
+	"github.com/jgillich/tpod/internal/mise"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
@@ -80,7 +80,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		return 3, fmt.Errorf("build mounts: %w", err)
 	}
 	envList := buildEnv(spec, runtimeHome)
-	containerName := "toolpod-" + spec.ProfileName + "-" + randomID(8)
+	containerName := "tpod-" + spec.ProfileName + "-" + randomID(8)
 
 	exposedPorts, portBindings := buildPortBindings(spec)
 	devices := buildDevices(spec)
@@ -109,7 +109,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		AttachStderr: true,
 		WorkingDir:   spec.Workspace.Target,
 		Labels:       spec.Labels,
-		Hostname:     "toolpod",
+		Hostname:     "tpod",
 		Entrypoint:   []string{},
 		ExposedPorts: exposedPorts,
 	}, &container.HostConfig{
@@ -341,7 +341,7 @@ func wrapAsUser(bootstrap string, uid, gid int, shellCmd []string) []string {
 		inner = shellCmd[2]
 	}
 	drop := fmt.Sprintf("exec setpriv --reuid=%d --regid=%d --clear-groups --inh-caps=-all --bounding-set=-all sh -c %s", uid, gid, shq(inner))
-	fallback := fmt.Sprintf(`echo "toolpod: setpriv not found, running as root" >&2; exec sh -c %s`, shq(inner))
+	fallback := fmt.Sprintf(`echo "tpod: setpriv not found, running as root" >&2; exec sh -c %s`, shq(inner))
 	run := fmt.Sprintf("if command -v setpriv >/dev/null 2>&1; then %s; else %s; fi", drop, fallback)
 	return []string{"sh", "-c", bootstrap + " && " + run}
 }

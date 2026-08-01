@@ -7,7 +7,7 @@ import (
 
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/toolpod/internal/mise"
+	"github.com/jgillich/tpod/internal/mise"
 )
 
 func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {

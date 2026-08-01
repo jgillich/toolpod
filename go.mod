@@ -1,4 +1,4 @@
-module github.com/jgillich/toolpod
+module github.com/jgillich/tpod
 
 go 1.25.0
 
