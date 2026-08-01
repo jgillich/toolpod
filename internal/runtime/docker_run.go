@@ -365,7 +365,6 @@ func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
 		}
 		if mt.Optional {
 			if _, err := os.Stat(mt.Source); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: skipping optional mount %s: %s not found\n", mt.Target, mt.Source)
 				continue
 			}
 		}
