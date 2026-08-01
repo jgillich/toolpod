@@ -111,6 +111,7 @@ caches:
 | Profile | Command | What it is |
 | --- | --- | --- |
 | `opencode` | `opencode` | The opencode AI agent |
+| `opencode-web` | `opencode web` | opencode web UI, published on a random host port |
 | `codex` | `codex` | OpenAI Codex CLI |
 | `claude` | `claude` | Anthropic Claude Code |
 | `gemini` | `gemini` | Google Gemini CLI |
