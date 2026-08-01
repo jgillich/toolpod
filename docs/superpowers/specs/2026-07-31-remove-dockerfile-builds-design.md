@@ -8,10 +8,10 @@ Status: Approved design
 Toolpod supports a `build:` escape hatch: a profile can point at a Dockerfile
 that is built on demand and tagged `toolpod/<name>:latest`, with optional
 `depends_on` dependencies and a `--rebuild` flag. The feature has no users
-(the app has no users at all) and mise-based `tools:` covers tool provisioning.
-The `build:` machinery is dead weight: an entire `internal/build` package, a
-topological dependency resolver, drift-detection hints, and the `--rebuild`
-flag — roughly 400 lines including tests.
+and mise-based `tools:` covers tool provisioning. The `build:` machinery is
+dead weight: an entire `internal/build` package, a topological dependency
+resolver, drift-detection hints, and the `--rebuild` flag — roughly 400 lines
+including tests.
 
 This spec removes the feature altogether. `image:` stays.
 

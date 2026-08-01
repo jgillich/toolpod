@@ -11,13 +11,28 @@ RUN apt-get update \
         python3 \
         libssl-dev \
         libcurl4-openssl-dev \
+        libpng-dev \
+        libgd-dev \
+        libicu-dev \
         zlib1g-dev \
+        libedit-dev \
+        libjpeg-dev \
+        libonig-dev \
+        libpq-dev \
+        libxslt1-dev \
+        libzip-dev \
+        libmariadb-dev \
+        libxml2-dev \
         libreadline-dev \
         libffi-dev \
         libsqlite3-dev \
         autoconf \
         automake \
         libtool \
+        bison \
+        re2c \
+        gettext \
+        openssl \
         git \
         curl \
         wget \
