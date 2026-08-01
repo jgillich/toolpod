@@ -13,35 +13,17 @@ dead weight: an entire `internal/build` package, a topological dependency
 resolver, drift-detection hints, and the `--rebuild` flag — roughly 400 lines
 including tests.
 
-Beyond dead weight, `build:` did not align with tpod's vision and was a
-potential can of worms for users and tpod itself:
-
-- **Vision mismatch.** tpod's pitch is "one base image serves every profile;
-  no per-language image, no rebuild when a tool version bumps." Per-profile
-  Dockerfiles invert that — every profile carries its own build recipe that
-  drifts independently of the curated base image. The escape hatch rewards
-  the wrong instinct (hand-roll a Dockerfile) instead of the right one
-  (declare what you need and let tpod provision it).
-- **User can of worms.** A free-form Dockerfile is an open-ended
-  responsibility: the user owns base-image choice, layer ordering, cache
-  hygiene, `apt-get update` correctness, secret handling, multi-arch
-  support, and tagging. Every user-built profile reinvents the same wheel
-  badly, with no shared infrastructure for caching, pruning, or upgrade.
-- **tpod can of worms.** Owning a Dockerfile-build feature means owning its
-  failure modes: build-context path resolution inside the workspace mount,
-  `depends_on` cycle handling, drift detection between the user's Dockerfile
-  and the tagged image, `--rebuild` semantics across host boundaries,
-  concurrent-build races, and the implicit promise that tpod understands
-  arbitrary Dockerfiles. Each is a small maintenance burden in isolation;
-  together they're a permanent surface area that the core team didn't want
-  to support for a feature with no users.
+Beyond dead weight, `build:` didn't align with tpod's vision and was a can
+of worms: per-profile Dockerfiles invert the "one base image serves every
+profile" pitch, push open-ended build responsibility onto users, and saddle
+tpod with build-context path resolution, `depends_on` cycles, drift
+detection, and `--rebuild` semantics — permanent support surface for a
+feature with no users.
 
 This spec removes the feature altogether. `image:` stays. The later design
 at `2026-08-01-runtime-oci-deps-design.md` reintroduces an *automated,
 declarative* form of "toolpod builds a derived image on demand" keyed on a
-profile's `packages:` list — without bringing back any of the can-of-worms
-surface area (no user-owned Dockerfile, no `depends_on`, no `--rebuild`, no
-drift detection, no open-ended build context).
+profile's `packages:` list — without bringing back the can-of-worms surface.
 
 ## Scope
 

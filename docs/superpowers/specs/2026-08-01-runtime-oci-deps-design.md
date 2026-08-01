@@ -18,16 +18,10 @@ base image for every user.
 
 The `build:` escape hatch — point a profile at a custom Dockerfile and force a
 rebuild with `--rebuild` — was removed on 2026-07-31 per
-`2026-07-31-remove-dockerfile-builds-design.md`. The removal was motivated not
-just by the feature being unused dead weight (a 400-line `internal/build/`
-package, topological dependency resolver, drift-detection hints, manual
-rebuild flag) but by a deeper mismatch: `build:` did not align with tpod's
-vision (one base image serves every profile; per-profile Dockerfiles invert
-that pitch), and it was a can of worms for users and tpod itself (users owned
-arbitrary Dockerfiles with all their failure modes; tpod owned
-build-context resolution, `depends_on` cycles, drift detection,
-`--rebuild` semantics, and concurrent-build races — a permanent support
-surface for a feature with no users).
+`2026-07-31-remove-dockerfile-builds-design.md`. The removal was motivated
+not just by the feature being unused dead weight but by a deeper mismatch:
+`build:` didn't align with tpod's vision and was a can of worms for users
+and tpod itself. Today there is no per-profile path to system libraries.
 
 ## Goal
 
@@ -459,33 +453,18 @@ Sequential; each step is independently shippable.
 
 ## Relationship to the removed `build:` feature
 
-The old `build:` was a manual escape hatch — point at a Dockerfile, force a
-rebuild with `--rebuild`, tag `toolpod/<name>:latest` with tag drift. It was
-removed 2026-07-31 as dead weight **and** because it didn't align with tpod's
-vision and was a can of worms for users and tpod itself (see the updated
-justification in `2026-07-31-remove-dockerfile-builds-design.md`). The new
-mechanism reuses the same Docker SDK calls (`ImageBuild`,
-`ImageInspectWithRaw` for image-ID resolution, the `EnsureVolume` pattern
-already in `docker_prepare.go`) but is *declarative from catalog YAML* and
-*fully automatic*: there's no per-profile Dockerfile for the user to maintain,
-no manual flag, no `latest` drift tag (the tag is content-addressed:
-`tpod/packages:<base-image-id-and-packages-hash>`).
+`build:` was removed 2026-07-31 as dead weight and because it didn't align
+with tpod's vision and was a can of worms (see the justification in
+`2026-07-31-remove-dockerfile-builds-design.md`). This design brings back
+the part that aligned — automated derived-image build keyed on a declarative
+input — without the can of worms:
 
-What we're deliberately **not** bringing back from the removed `build:`
-feature, because each was part of the can of worms:
-
-- No user-owned Dockerfile (the user declares `packages:`; tpod synthesises the
-  Dockerfile).
-- No `--rebuild` flag (the cache key is content-addressed; base-image bumps
-  invalidate derived images automatically).
-- No `depends_on` topological resolver (there's exactly one derived image per
-  `(base-image-id, packages)` combo; no inter-profile build ordering).
-- No drift detection (the tag is the hash; a stale tag is impossible by
+- No user-owned Dockerfile (tpod synthesises it from `packages:`).
+- No `--rebuild` flag (content-addressed tag; base-image bumps invalidate
+  automatically).
+- No `depends_on` resolver (one derived image per `(base-image-id, packages)`
+  combo; no inter-profile ordering).
+- No drift detection (the tag is the hash; staleness is impossible by
   construction).
-- No local-on-disk Dockerfiles (synthesised in-memory at `Prepare` time).
-- No open-ended build context (the only input is the package list).
-
-What we **are** bringing back, in a controlled automatic form: the
-*automation* of "build a derived image once per `(base-image-id, packages)`
-combo and reuse it" — which is precisely the part of `build:` that aligned
-with tpod's vision, freed from the parts that didn't.
+- No local-on-disk Dockerfiles or open-ended build context (synthesised
+  in-memory; the only input is the package list).
