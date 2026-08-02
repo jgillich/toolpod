@@ -60,9 +60,11 @@ func renderTemplate(s string, data tmplData) (string, error) {
 
 // ResolveTildes expands leading ~/ on mount sources (→ hostHome) and
 // mount/cache targets (→ runtimeHome) per spec §5.6, then renders
-// {{ }} text/template expressions against the host environment. Absolute
-// paths are left as-is. The mode ("A" or "B") is informational only here;
-// the caller has already determined runtimeHome based on the mode.
+// {{ }} text/template expressions against the host environment. Files
+// targets expand ~ (→ runtimeHome) too, and each File.Content is rendered
+// as a template. Absolute paths are left as-is. The mode ("A" or "B") is
+// informational only here; the caller has already determined runtimeHome
+// based on the mode.
 func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
 	out := cfg
 	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports}
