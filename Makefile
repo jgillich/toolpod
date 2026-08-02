@@ -4,4 +4,4 @@ install:
 	go install ./cmd/tpod
 
 patch:
-	git tag $(svu patch) && git push origin --tags
+	git tag $$(svu patch) && git push origin --tags
