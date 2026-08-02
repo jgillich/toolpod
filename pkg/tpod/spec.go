@@ -6,13 +6,14 @@ import (
 	"sort"
 
 	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 // buildSpec assembles a container Spec from a resolved profile and launch opts.
-// mode is "A" (rootless podman) or "B" (fallback). hostHome is the host user's
-// $HOME; runtimeHome is the in-container user's home (/home/<user> in Mode A,
-// /root in Mode B).
-func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) (Spec, error) {
+// mode is ModeA (rootless podman) or ModeB (fallback). hostHome is the host
+// user's $HOME; runtimeHome is the in-container user's home (/home/<user> in
+// Mode A, /root in Mode B).
+func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHome, runtimeHome string) (Spec, error) {
 	alloc := opts.PortAllocator
 	if alloc == nil {
 		alloc = defaultPortAllocator
@@ -84,7 +85,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 
 	// Workspace mount (CLI, not profile) per spec §4.2
 	wsTarget := opts.Workspace
-	if mode == "B" {
+	if mode == workspace.ModeRootful {
 		wsTarget = "/workspace"
 	}
 

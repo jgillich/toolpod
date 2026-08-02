@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/client"
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 var _ Runtime = (*DockerRuntime)(nil)
@@ -37,10 +38,10 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 // DetectMode queries the engine's /info endpoint and checks for the Podman
 // "rootless" field. The Docker SDK's types.Info does not map this field, so
 // we make a raw HTTP request and parse the JSON ourselves. Spec §5.4.
-func (d *DockerRuntime) DetectMode(ctx context.Context) (string, error) {
+func (d *DockerRuntime) DetectMode(ctx context.Context) (workspace.Mode, error) {
 	info, err := d.cli.Info(ctx)
 	if err != nil {
-		return "B", fmt.Errorf("docker info: %w", err)
+		return workspace.ModeRootful, fmt.Errorf("docker info: %w", err)
 	}
 
 	rootless, err := QueryRootless(ctx, d.cli)
@@ -50,9 +51,9 @@ func (d *DockerRuntime) DetectMode(ctx context.Context) (string, error) {
 	d.podman = rootless
 
 	if rootless || strings.Contains(info.Name, "podman") {
-		return "A", nil
+		return workspace.ModeRootless, nil
 	}
-	return "B", nil
+	return workspace.ModeRootful, nil
 }
 
 // QueryRootless makes a raw GET to /info and parses the "rootless" field

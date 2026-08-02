@@ -42,7 +42,10 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 
 	configDir := filepath.Join(runtimeHome, ".config", "mise")
 	activateCmd := mise.ActivateCommand(configDir, spec.Tools)
-	parts := []string{}
+	// The container's WorkingDir is the runtime home (see launch.go) so
+	// Podman keep-id derives the passwd home from it; the command itself
+	// cd's into the workspace so the actual cwd matches the user's.
+	parts := []string{"cd " + shq(spec.Workspace.Target)}
 	if activateCmd != "" {
 		parts = append(parts, activateCmd)
 	}
@@ -96,7 +99,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
-		WorkingDir:   spec.Workspace.Target,
+		WorkingDir:   spec.RuntimeHome,
 		Labels:       spec.Labels,
 		Hostname:     spec.ProfileName,
 		Entrypoint:   []string{},

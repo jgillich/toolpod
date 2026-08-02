@@ -10,6 +10,7 @@ import (
 
 	"github.com/jgillich/tpod/internal/profile"
 	"github.com/jgillich/tpod/internal/runtime"
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 // PortAllocator reserves an unused host port for a published binding.
@@ -73,11 +74,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	if hostHome == "" {
 		hostHome = "/root"
 	}
-	runtimeHome := hostHome
-	mode := "B"
+	mode := workspace.ModeRootful
+	rt := opts.Runtime
 
 	if !opts.DryRun {
-		rt := opts.Runtime
 		if rt == nil {
 			constructed, err := runtime.NewDockerRuntime()
 			if err != nil {
@@ -92,7 +92,20 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 				mode = detected
 			}
 		}
+	}
 
+	// The in-container user's home: the host home in Mode A (rootless keep-id
+	// maps the host user in with their home), /root in Mode B (the container
+	// runs as root and drops to the host user via setpriv). Podman keep-id
+	// writes the passwd entry's home equal to the container WorkingDir, so the
+	// WorkingDir must match this or tools using getpwuid (ssh, git) resolve a
+	// different home than $HOME and the ~-expanded mount targets.
+	runtimeHome := hostHome
+	if mode == workspace.ModeRootful {
+		runtimeHome = "/root"
+	}
+
+	if !opts.DryRun {
 		spec, err := buildSpec(opts, cfg, mode, hostHome, runtimeHome)
 		if err != nil {
 			return Result{ExitCode: 2, Err: err}

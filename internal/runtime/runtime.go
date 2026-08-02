@@ -1,6 +1,10 @@
 package runtime
 
-import "context"
+import (
+	"context"
+
+	"github.com/jgillich/tpod/internal/workspace"
+)
 
 type Spec struct {
 	ProfileName string
@@ -70,7 +74,7 @@ type CacheSpec struct {
 type WorkspaceSpec struct {
 	HostPath string
 	Target   string
-	Mode     string
+	Mode     workspace.Mode
 }
 
 type ProgressWriter interface {

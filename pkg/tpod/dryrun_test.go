@@ -3,6 +3,8 @@ package tpod
 import (
 	"strings"
 	"testing"
+
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 func TestRenderSpecPortsAndDevices(t *testing.T) {
@@ -10,7 +12,7 @@ func TestRenderSpecPortsAndDevices(t *testing.T) {
 		ProfileName: "web",
 		Image:       "img",
 		Command:     []string{"x"},
-		Workspace:   WorkspaceSpec{HostPath: "/p", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/p", Target: "/workspace", Mode: workspace.ModeRootful},
 		PortSpecs: []PortSpec{
 			{Container: "8080", HostPort: "40001", Protocol: "tcp"},
 			{Container: "53", HostIP: "127.0.0.1", HostPort: "40002", Protocol: "udp"},

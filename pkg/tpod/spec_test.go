@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 func fakePortAllocator() PortAllocator {
@@ -31,7 +32,7 @@ func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
 		},
 	}
 	opts := LaunchOpts{ProfileName: "web", Workspace: "/p", PortAllocator: fakePortAllocator()}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestBuildSpecDevices(t *testing.T) {
 		},
 	}
 	opts := LaunchOpts{ProfileName: "x", Workspace: "/p"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestBuildSpecBasic(t *testing.T) {
 		Network: "bridge",
 	}
 	opts := LaunchOpts{ProfileName: "opencode", Args: []string{"--model", "foo"}, Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, "A", "/home/me", "/home/me")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootless, "/home/me", "/home/me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,8 +151,8 @@ func TestBuildSpecBasic(t *testing.T) {
 	if spec.Workspace.Target != "/home/me/proj" {
 		t.Errorf("workspace target in Mode A = %q, want /home/me/proj", spec.Workspace.Target)
 	}
-	if spec.Workspace.Mode != "A" {
-		t.Errorf("workspace mode = %q, want A", spec.Workspace.Mode)
+	if spec.Workspace.Mode != workspace.ModeRootless {
+		t.Errorf("workspace mode = %s, want rootless", spec.Workspace.Mode)
 	}
 	if spec.Tools["opencode"] != "latest" {
 		t.Errorf("tools[opencode] = %q", spec.Tools["opencode"])
@@ -182,7 +183,7 @@ func TestBuildSpecMountCreate(t *testing.T) {
 			"~/.config/app": {Source: "~/.config/app"},
 		},
 	}
-	spec, err := buildSpec(LaunchOpts{ProfileName: "x", Workspace: "/tmp"}, cfg, "A", "/home/me", "/home/me")
+	spec, err := buildSpec(LaunchOpts{ProfileName: "x", Workspace: "/tmp"}, cfg, workspace.ModeRootless, "/home/me", "/home/me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestBuildSpecMountCreate(t *testing.T) {
 func TestBuildSpecModeBWorkspace(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	opts := LaunchOpts{Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestBuildSpecModeBWorkspace(t *testing.T) {
 func TestBuildSpecCommandFlagForShellProfile(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"bash"}}
 	opts := LaunchOpts{Command: "echo hello", Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestBuildSpecCommandFlagForShellProfile(t *testing.T) {
 func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
 	opts := LaunchOpts{Command: "/bin/bash", Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
 func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
 	opts := LaunchOpts{Command: "/bin/bash", Args: []string{"config", "view"}, Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +273,7 @@ func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
 func TestBuildSpecUserArgsReplaceDefaults(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"}}
 	opts := LaunchOpts{ProfileName: "t3code", Args: []string{"--help"}, Workspace: "/p"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +292,7 @@ func TestBuildSpecBareRunKeepsFullCommand(t *testing.T) {
 	full := []string{"t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"}
 	cfg := profile.Profile{Version: 1, Image: "img", Command: full}
 	opts := LaunchOpts{ProfileName: "t3code", Workspace: "/p"}
-	spec, err := buildSpec(opts, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +315,7 @@ func TestBuildSpecMapsFiles(t *testing.T) {
 			"/root/.config/foo": {Content: "hello", Mode: 0o600},
 		},
 	}
-	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +335,7 @@ func TestBuildSpecFilesDefaultMode(t *testing.T) {
 		Command: []string{"sh"},
 		Files:   map[string]profile.File{"/root/.config/foo": {Content: "x"}},
 	}
-	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, "B", "/home/me", "/root")
+	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, workspace.ModeRootful, "/home/me", "/root")
 	if err != nil {
 		t.Fatal(err)
 	}

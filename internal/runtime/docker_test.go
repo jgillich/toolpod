@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/jgillich/tpod/internal/workspace"
 	"golang.org/x/sys/unix"
 )
 
@@ -122,7 +123,7 @@ func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
 func TestBuildMountsCreatesSourceWhenRequested(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "data")
 	spec := Spec{
-		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		Mounts: []MountSpec{
 			{Target: "/data", Source: src, Create: true},
 		},
@@ -148,7 +149,7 @@ func TestBuildMountsCreatesSourceWhenRequested(t *testing.T) {
 func TestBuildMountsDoesNotCreateWithoutFlag(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "data")
 	spec := Spec{
-		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		Mounts: []MountSpec{
 			{Target: "/data", Source: src},
 		},
@@ -170,7 +171,7 @@ func TestBuildMountsFailsCreateForRequiredMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := Spec{
-		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		Mounts: []MountSpec{
 			{Target: "/data", Source: filepath.Join(link, "sub"), Create: true},
 		},
@@ -182,7 +183,7 @@ func TestBuildMountsFailsCreateForRequiredMount(t *testing.T) {
 
 func TestBuildMountsSkipsOptionalMissing(t *testing.T) {
 	spec := Spec{
-		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		Mounts: []MountSpec{
 			{Target: "/etc/hosts", Source: "/etc/hosts", ReadOnly: true, Optional: true},
 			{Target: "/nonexistent", Source: "/this/does/not/exist", Optional: true},
@@ -398,7 +399,7 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 		ProfileName: "test-shell",
 		Image:       integrationImage,
 		Command:     []string{"sh", "-c", fmt.Sprintf("test \"$(id -u)\" = %d && test \"$(id -g)\" = %d && echo hi", os.Getuid(), os.Getgid())},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
@@ -439,7 +440,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 		Image:       integrationImage,
 		Packages:    []string{"python3"},
 		Command:     []string{"sh", "-c", `python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',8080));s.listen(1);c,_=s.accept();c.send(b'hi')"`},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
@@ -618,7 +619,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		Image:       integrationImage,
 		Packages:    []string{"hello"},
 		Command:     []string{"true"},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
@@ -646,7 +647,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		ProfileName: "test-packages",
 		Image:       imageRef,
 		Command:     []string{"sh", "-c", `command -v hello >/dev/null && hello | grep -q "Hello"`},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	})
@@ -677,7 +678,7 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		Repos:       map[string]Repo{"mise": {ExtRepo: "mise"}},
 		Packages:    []string{"mise"},
 		Command:     []string{"true"},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
@@ -696,7 +697,7 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		ProfileName: "test-repos",
 		Image:       imageRef,
 		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version && test -f /etc/apt/keyrings/mise.asc && grep -q "Signed-By: /etc/apt/keyrings/mise.asc" /etc/apt/sources.list.d/extrepo_mise.sources`},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	})
@@ -733,8 +734,8 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		// end-to-end. Writing a sibling into the same parent dir proves the
 		// parent was chowned to the execution user (a root-owned 0755 parent
 		// would block the write).
-		Command: []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644" && test "$(stat -c %u /root/.config/tpod-test/deep.conf)" = "$(id -u)" && echo sibling > /root/.config/tpod-test/sibling.conf && test "$(cat /root/.config/tpod-test/sibling.conf)" = "sibling"`},
-		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644" && test "$(stat -c %u /root/.config/tpod-test/deep.conf)" = "$(id -u)" && echo sibling > /root/.config/tpod-test/sibling.conf && test "$(cat /root/.config/tpod-test/sibling.conf)" = "sibling"`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
 	}

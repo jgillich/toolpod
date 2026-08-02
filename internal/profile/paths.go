@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 // tmplData is the execution context for path templates. .Env exposes the
@@ -62,10 +64,9 @@ func renderTemplate(s string, data tmplData) (string, error) {
 // mount/cache targets (→ runtimeHome) per spec §5.6, then renders
 // {{ }} text/template expressions against the host environment. Files
 // targets expand ~ (→ runtimeHome) too, and each File.Content is rendered
-// as a template. Absolute paths are left as-is. The mode ("A" or "B") is
-// informational only here; the caller has already determined runtimeHome
-// based on the mode.
-func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
+// as a template. Absolute paths are left as-is. The mode is informational
+// only here; the caller has already determined runtimeHome based on the mode.
+func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
 	out := cfg
 	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports}
 

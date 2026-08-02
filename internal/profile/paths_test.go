@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"testing"
+
+	"github.com/jgillich/tpod/internal/workspace"
 )
 
 func TestResolveTildesMountSourceAndTarget(t *testing.T) {
@@ -16,7 +18,7 @@ func TestResolveTildesMountSourceAndTarget(t *testing.T) {
 			"npm": "~/.npm",
 		},
 	}
-	out, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,7 @@ func TestResolveTildesModeB(t *testing.T) {
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestResolveTildesNoHomeSubstitution(t *testing.T) {
 			"/data": {Source: "/data", ReadOnly: false},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func TestResolveTildesEnvPassthroughTemplate(t *testing.T) {
 			"MISSING":     `{{ .Env.TPOD_PASSTHROUGH_MISSING }}`,
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestResolveTildesTemplateExpansion(t *testing.T) {
 			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPOD_TEST_SOCK") "/var/run/docker.sock" }}`, Optional: true},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +122,7 @@ func TestResolveTildesTemplateFallback(t *testing.T) {
 			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "/var/run/docker.sock" }}`, Optional: true},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +138,7 @@ func TestResolveTildesNoDelimitersPassThrough(t *testing.T) {
 			"/data": {Source: "/data", ReadOnly: false},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +159,7 @@ func TestResolveTildesTrimPrefix(t *testing.T) {
 			},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +180,7 @@ func TestResolveTildesTrimPrefixFallback(t *testing.T) {
 			},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +199,7 @@ func TestResolveTildesPortsInEnvironment(t *testing.T) {
 			"EMPTY": "",
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", map[string]string{"8080": "39483"})
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", map[string]string{"8080": "39483"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +221,7 @@ func TestResolveTildesEmptyMountSourceErrorsWhenRequired(t *testing.T) {
 			"/data": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`},
 		},
 	}
-	if _, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil); err == nil {
+	if _, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil); err == nil {
 		t.Fatal("non-optional mount with empty rendered source should error, got nil")
 	}
 }
@@ -231,7 +233,7 @@ func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
 			"/data": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`, Optional: true},
 		},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +247,7 @@ func TestResolveTildesEmptyCacheTargetErrors(t *testing.T) {
 	cfg := Profile{
 		Caches: map[string]string{"npm": `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`},
 	}
-	if _, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil); err == nil {
+	if _, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil); err == nil {
 		t.Fatal("cache with empty rendered target should error, got nil")
 	}
 }
@@ -254,7 +256,7 @@ func TestResolveTildesPortsInCommand(t *testing.T) {
 	cfg := Profile{
 		Command: []string{"opencode", "web", "--port", `{{ index .Ports "8080" }}`},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", map[string]string{"8080": "39483"})
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", map[string]string{"8080": "39483"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +269,7 @@ func TestResolveTildesLiteralBracePassthrough(t *testing.T) {
 	cfg := Profile{
 		Command: []string{"sh", "-c", "echo {{x}} {{y}}"},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", nil)
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +282,7 @@ func TestResolveTildesMissingPortKeyRendersEmpty(t *testing.T) {
 	cfg := Profile{
 		Env: map[string]string{"PORT": `{{ index .Ports "9999" }}`},
 	}
-	out, err := ResolveTildes(cfg, "B", "/home/me", "/root", map[string]string{"8080": "39483"})
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", map[string]string{"8080": "39483"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +300,7 @@ func TestResolveFilesTildeAndTemplate(t *testing.T) {
 			"~/.config/bar": {Content: "plain"},
 		},
 	}
-	out, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", map[string]string{"8080": "5173"})
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", map[string]string{"8080": "5173"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +323,7 @@ func TestResolveFilesEmptyRenderedTargetRejected(t *testing.T) {
 			"{{ .Env.MISSING_VAR }}": {Content: "x"},
 		},
 	}
-	_, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
 	if err == nil {
 		t.Fatal("expected error for file target that renders empty, got nil")
 	}
@@ -336,7 +338,7 @@ func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
 			"{{ .Env.TPOD_TEST_TRAVERSAL }}/etc/passwd": {Content: "x"},
 		},
 	}
-	_, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
 	if err == nil {
 		t.Fatal("expected error for file target expanding to a '..' path, got nil")
 	}
