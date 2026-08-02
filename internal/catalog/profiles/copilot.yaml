@@ -1,0 +1,11 @@
+version: 1
+extends: mise
+command: ["copilot"]
+tools:
+  copilot: latest
+mounts:
+  ~/.copilot:
+    source: ~/.copilot
+    create: true
+    read_only: false
+    optional: true

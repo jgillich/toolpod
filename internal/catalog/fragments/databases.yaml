@@ -1,0 +1,6 @@
+version: 1
+packages:
+  - sqlite3
+  - postgresql-client
+  - mariadb-client
+  - redis-tools

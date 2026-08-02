@@ -1,0 +1,7 @@
+version: 1
+mounts:
+  ~/.vault-token:
+    source: ~/.vault-token
+    optional: true
+tools:
+  vault: latest

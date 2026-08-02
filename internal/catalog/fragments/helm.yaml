@@ -3,3 +3,9 @@ tools:
   helm: latest
 caches:
   helm: ~/.cache/helm
+mounts:
+  ~/.config/helm:
+    source: ~/.config/helm
+    create: true
+    read_only: false
+    optional: true

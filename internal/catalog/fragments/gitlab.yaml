@@ -1,0 +1,9 @@
+version: 1
+mounts:
+  ~/.config/glab-cli:
+    source: ~/.config/glab-cli
+    create: true
+    read_only: false
+    optional: true
+tools:
+  glab: latest

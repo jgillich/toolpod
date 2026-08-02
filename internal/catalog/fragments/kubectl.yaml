@@ -1,7 +1,0 @@
-version: 1
-tools:
-  kubectl: latest
-mounts:
-  ~/.kube:
-    source: ~/.kube
-    optional: true

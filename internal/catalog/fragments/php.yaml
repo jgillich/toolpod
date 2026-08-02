@@ -15,4 +15,4 @@ packages:
 tools:
   php: latest
 caches:
-  composer: ~/.composer/cache
+  composer: ~/.cache/composer

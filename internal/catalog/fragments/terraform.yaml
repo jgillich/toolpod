@@ -3,3 +3,7 @@ tools:
   terraform: latest
 caches:
   terraform: ~/.terraform.d/plugin-cache
+mounts:
+  ~/.terraformrc:
+    source: ~/.terraformrc
+    optional: true

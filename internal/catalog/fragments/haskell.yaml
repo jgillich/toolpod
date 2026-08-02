@@ -1,0 +1,9 @@
+version: 1
+caches:
+  cabal: ~/.cabal
+  ghcup: ~/.ghcup
+  stack: ~/.stack
+tools:
+  cabal: latest
+  ghcup: latest
+  stack: latest

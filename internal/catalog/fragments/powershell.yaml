@@ -1,0 +1,14 @@
+version: 1
+mounts:
+  ~/.config/powershell:
+    source: ~/.config/powershell
+    create: true
+    read_only: false
+    optional: true
+  ~/.local/share/powershell:
+    source: ~/.local/share/powershell
+    create: true
+    read_only: false
+    optional: true
+tools:
+  powershell-core: latest

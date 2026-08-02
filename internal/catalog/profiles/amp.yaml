@@ -1,0 +1,11 @@
+version: 1
+extends: mise
+command: ["amp"]
+tools:
+  amp: latest
+mounts:
+  ~/.config/amp:
+    source: ~/.config/amp
+    create: true
+    read_only: false
+    optional: true

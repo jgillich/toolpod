@@ -1,0 +1,16 @@
+version: 1
+tools:
+  kubectl: latest
+  k9s: latest
+  kustomize: latest
+  kubectx: latest
+  kubens: latest
+mounts:
+  ~/.kube:
+    source: ~/.kube
+    optional: true
+  ~/.config/k9s:
+    source: ~/.config/k9s
+    create: true
+    read_only: false
+    optional: true

@@ -5,3 +5,4 @@ tools:
 caches:
   sbt: ~/.sbt
   ivy: ~/.ivy2
+  coursier: ~/.cache/coursier

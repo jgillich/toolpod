@@ -10,14 +10,6 @@ packages:
   - git
   - build-essential
   - cmake
-  - ninja-build
-  - clang
-  - pkg-config
-  - autoconf
-  - automake
-  - libtool
-  - bison
-  - re2c
   - python3
   - libssl-dev
   - libcurl4-openssl-dev
@@ -25,7 +17,6 @@ packages:
   - libreadline-dev
   - libffi-dev
   - libsqlite3-dev
-  - libedit-dev
   - gettext
   - openssl
   - gdb
@@ -37,6 +28,9 @@ tools:
   bat: latest
   fd: latest
   fzf: latest
+  git-lfs: latest
   jq: latest
+  just: latest
   ripgrep: latest
+  task: latest
   yq: latest

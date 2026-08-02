@@ -1,0 +1,6 @@
+version: 1
+caches:
+  cpan: ~/.cpan
+  cpanm: ~/.cpanm
+tools:
+  perl: latest
