@@ -134,6 +134,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. List form: `extends: [opencode, ssh, javascript]` (resolved left-to-right; body wins last). Cycles are rejected. Fragments may only extend other fragments, never profiles. |
 | `image` | string | Container image. |
 | `packages` | string[] | System packages (apt names, e.g. `libxml2-dev`) to install in the runtime image. tpod builds a derived image from the base image plus these packages on first use, then reuses it. |
+| `repos` | map | Extra apt sources to enable before installing `packages:` (e.g. `repos: { mise: { extrepo: mise } }`). v1 supports `extrepo:` catalog names; inline `url`/`key_url` repos are schema-ready but rejected at build time. |
 | `command` | string[] | Command to run. First element is the binary; the rest are default args used only when the user passes none on the CLI. User args replace the defaults. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true` — omit or set `read_only: false` for writable), `optional`, `create`. `~` → runtime home (target) / host `$HOME` (source). `{{ }}` template expressions evaluated against `.Env`, `uid`, and `trimPrefix`/`printf` helpers. `create: true` mkdirs a missing source directory before launch. |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
@@ -192,14 +193,34 @@ needs to create arbitrary device nodes).
 ### Merge semantics
 
 - **Scalars:** child replaces parent.
-- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `dbus`): merged key-by-key. Set a key to `null` to delete an inherited entry.
+- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `dbus`, `repos`): merged key-by-key. Set a key to `null` to delete an inherited entry.
 - **Lists** (`command`): replaced, not concatenated.
 - **`packages`:** additive — child's entries are appended to the inherited list with duplicates removed (so fragments compose; e.g. `php` contributes build deps, `gui` contributes runtime libs). Set `packages: null` to clear the inherited list.
 - **`image` / `build`:** single slot — setting either in a child clears the other.
 
 ### System packages (`packages:`) and derived images
 
-The base image ships the bare OS, `mise`, and the general C toolchain. Per-profile system libraries are declared with `packages:` and installed into a **derived image** — the base image plus that profile's package list — which tpod builds on first use and reuses on later runs. The image is tagged `tpod/packages:<hash>`, where the hash is derived from `(base image ID, sorted package list)`. Profiles with identical package lists share one derived image; a base-image update automatically invalidates the cache.
+The base image ships the bare OS and the minimal bootstrap (`extrepo`,
+`ca-certificates`). Per-profile system libraries are declared with `packages:`
+and installed into a **derived image** — the base image plus that profile's
+package list — which tpod builds on first use and reuses on later runs. The
+image is tagged `tpod/packages:<hash>`, where the hash is derived from
+`(base image ID, sorted package list, sorted repos)`. Profiles with identical
+package lists share one derived image; a base-image update automatically
+invalidates the cache.
+
+Packages that live outside Debian's archive need a `repos:` entry enabling
+the source first. The only supported v1 form is an extrepo catalog name:
+
+```yaml
+repos:
+  mise: { extrepo: mise }   # enables https://mise.jdx.dev/deb
+```
+
+Inline custom repos (`url`/`key_url`/`suites`/`components`) are schema-ready
+but rejected at build time until v2. The `mise` profile itself uses this —
+the base image no longer carries `mise`; each launch builds/uses a derived
+image that installs it.
 
 Packages are installed exactly as apt would install them in the base image (`apt-get install -y --no-install-recommends`), so build deps (e.g. `libxml2-dev` for compiling PHP) and runtime libs (e.g. `libgtk-3-0` for GUI apps) work without any `PKG_CONFIG_PATH`/`LD_LIBRARY_PATH` manipulation — everything lives where Debian expects it.
 

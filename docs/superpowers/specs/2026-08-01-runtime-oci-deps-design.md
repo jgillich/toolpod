@@ -123,6 +123,20 @@ identically for build and runtime deps because nothing is relocated.
   null-to-delete mechanism for `mounts`/`environment`/`tools`/`caches`/`labels`/
   `ports`/`devices`/`dbus`. Implementation note: `packages` is a slice, not a
   map; the null-clear is whole-field, not per-element.
+- A new `repos map[string]Repo` field on `Profile` (in
+  `internal/profile/types.go`) with YAML key `repos:`. Each entry declares an
+  extra apt source the derived-image build enables *before* `apt-get install`.
+  `Repo{ExtRepo, URL, KeyURL, Suites, Components}`: either an extrepo catalog
+  name (`extrepo: mise`, the v1-supported form) or a fully inline custom repo
+  (schema-ready; v1 `Prepare` rejects it with a defer-scope error). The map key
+  is the merge identity (logical repo name); `ExtRepo` is the actual extrepo
+  catalog name, which may differ from the key. Merge is key-by-key with
+  null-to-delete via the existing `mergeMap`; `"repos"` joins `collectNullKeys`.
+- Validation in `internal/profile/validate.go` (`validateRepos`): map key and
+  `ExtRepo` (when set) each match `^[a-z0-9][a-z0-9+.-]+$`; an extrepo repo
+  must not also set `url`/`key_url`/`suites`/`components`; a non-extrepo repo
+  requires both `url` and `key_url`. Runs at `ResolveProfile` time like
+  `validatePackages`.
 - Validation in `internal/profile/validate.go`: each entry in `packages` (after
   merge) must match Debian's package-name regex `^[a-z0-9][a-z0-9+.-]+$` (Debian
   Policy §5.6.7). Reject whitespace, shell metacharacters, `=` (no version
@@ -140,10 +154,10 @@ identically for build and runtime deps because nothing is relocated.
   resource is "used" if it would be produced by some currently resolvable
   profile (built-in + user) — `tpod-mise` if any profile resolves;
   `tpod-cache-<name>` if any profile declares `caches.<name>`;
-  `tpod/packages:<hash>` if any profile's `(base-image-id, merged-packages)`
-  hash matches (computed from locally-inspected base images; profiles whose
-  base image isn't local contribute no "used" image hashes since the
-  derived image can't exist either). Scope with `--volumes` / `--images`
+  `tpod/packages:<hash>` if any profile's `(base-image-id, merged-packages,
+  merged-repos)` hash matches (computed from locally-inspected base images;
+  profiles whose base image isn't local contribute no "used" image hashes since
+  the derived image can't exist either). Scope with `--volumes` / `--images`
   (default: both). `--all` removes every tpod-managed volume and every
   `tpod/packages:*` image regardless of liveness. `--force`/`-y` skip the
   confirmation prompt, unchanged.
@@ -158,16 +172,22 @@ identically for build and runtime deps because nothing is relocated.
   ID (`ImageInspectWithRaw(...).ID`, the content-addressed image-config SHA —
   not `RepoDigests[0]`, which is positional and may be a multi-arch manifest
   list digest rather than the per-platform filesystem identity); if
-  `len(spec.Packages) > 0`, computes the derived tag, checks `imageExists`,
-  and if absent calls `buildDerivedImage`; returns the derived ref (or the
-  base ref when no packages).
+  `len(spec.Packages) > 0 || len(spec.Repos) > 0`, computes the derived tag,
+  checks `imageExists`, and if absent calls `buildDerivedImage`; returns the
+  derived ref (or the base ref when no packages/repos). Rejects non-extrepo
+  repos early with a deferred-scope error.
+- `internal/runtime/runtime.go` — `Spec` gains `Repos map[string]Repo` (a
+  mirror of the profile type, keeping runtime independent of profile);
+  `pkg/tpod/spec.go`'s `buildSpec` maps `cfg.Repos` into it.
 - `internal/catalog/profiles/mise.yaml` — gains a `packages:` block carrying
      the general C toolchain (`build-essential`, `cmake`, `ninja-build`, `clang`,
      `pkg-config`, `autoconf`, `automake`, `libtool`, `bison`, `re2c`, `python3`,
      `libssl-dev`, `libcurl4-openssl-dev`, `zlib1g-dev`, `libreadline-dev`,
-     `libffi-dev`, `libsqlite3-dev`, `libedit-dev`, `gettext`, `openssl`, `gdb`).
-     Every profile that extends `mise` inherits these. Behavior-preserving in
-     the sense that today's profiles see these packages in the base image; after
+     `libffi-dev`, `libsqlite3-dev`, `libedit-dev`, `gettext`, `openssl`, `gdb`),
+     plus `mise`, `curl`, and `git` and a `repos: { mise: { extrepo: mise } }`
+     entry enabling the mise apt repo. Every profile that extends `mise`
+     inherits these. Behavior-preserving in the
+     sense that today's profiles see these packages in the base image; after
      migration they see the same set in a derived image built once per
      `(base-image-id, packages)` combo and reused on subsequent runs. First run
      of any profile after migration pays the one-time build cost; subsequent
@@ -178,11 +198,13 @@ identically for build and runtime deps because nothing is relocated.
   libmariadb-dev libgd-dev libpng-dev libjpeg-dev bison re2c`.
 - `internal/catalog/fragments/gui.yaml` — gains a `packages:` block with the
   full GUI/GTK/X11/nss/alsa/GStreamer set currently at Dockerfile L41-81.
-- `Dockerfile` — shrinks to `FROM debian:13`, `extrepo enable mise`, install
-  `mise`, install just the bare-minimum bootstrap (`extrepo`, `ca-certificates`,
-  `curl`, `git` needed for `extrepo` and `mise`; `tini` for PID 1), and the
-  `docker/xdg-open` copy. No more libs; everything else migrates to catalog
-  `packages:`.
+- `Dockerfile` — shrinks to `FROM debian:13`, install just the bare-minimum
+  bootstrap (`extrepo`, `ca-certificates`; `curl`/`git`/`mise`/libs all move to
+  catalog `packages:`), and the `docker/xdg-open` copy. `mise` is no longer in
+  the base — the `mise` profile's derived image installs it via its
+  `repos:`/`packages:`. The `xdg-open.real → /usr/bin/xdg-open` symlink is
+  dangling until a GUI profile's derived image installs xdg-utils (harmless;
+  the helper only runs inside AppImage tools).
 - `README.md` — `packages:` added to the profile schema reference; merge
   semantics documented; `tpod prune --images` documented; the "host lacks build
   permission" escape hatch (ship a custom `image:` yourself) documented.
@@ -216,10 +238,14 @@ identically for build and runtime deps because nothing is relocated.
 Derived images are tagged `tpod/packages:<hash>` where `<hash>` is the first
 16 hex chars of `sha256(<base-image-id> + \u0000 +
 sorted(<packages>).join(\u0001))`. Deterministic for a given base image and
-package set. The tag namespace `tpod/packages:<hash>` (not
-`tpod/<profile>:<hash>`) deliberately excludes `spec.ProfileName` from the
-tag: the cache key is `(base-image-id, package set)`, not `(profile,
-base-image-id, package set)`. Two profiles that declare the same `packages:`
+package set. When a profile also declares `repos:`, the hash gains a trailing
+`\u0000 + sorted(canonical-repos).join(\u0002)` segment (see "Custom apt
+sources" below); the segment is appended **only when non-empty**, so a
+packages-only profile keeps the byte-identical pre-repos hash and its cached
+derived image survives the upgrade. The tag namespace `tpod/packages:<hash>`
+(not `tpod/<profile>:<hash>`) deliberately excludes `spec.ProfileName` from
+the tag: the cache key is `(base-image-id, package set, repo set)`, not
+`(profile, base-image-id, ...)`. Two profiles that declare the same `packages:`
 (or whose merged package sets match) share one derived image — one
 filesystem, one build, one cache entry, one apt transaction. The mental
 model is "exactly one derived image for a given base image and package set";
@@ -257,11 +283,18 @@ Generated in-memory by Go and piped to the Docker daemon via
 
 ```dockerfile
 FROM <base-ref>
-RUN apt-get update \
+RUN <extrepo enable <name>, one per sorted repo, chained with &&> \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
         <sorted package list, shell-quoted> \
     && rm -rf /var/lib/apt/lists/*
 ```
+
+The `extrepo enable` chain appears only when the profile declares repos, each
+emitted in sorted map-key order, using the `ExtRepo` value (the catalog name).
+The base image already carries `extrepo` and `ca-certificates`, so the enable
+fetches the repo's signing key and `.sources` file over https in a single
+layer before the shared `apt-get update`.
 
 `FROM` uses the original base-image **reference** (e.g.
 `ghcr.io/jgillich/tpod-mise:latest`), not the image ID. `ensureImagePulled`
@@ -283,6 +316,35 @@ Each name is shell-quoted (Go's `strconv.Quote` or equivalent `shlex.quote`
 semantics) before being interpolated into the `apt-get install` line so a
 typo in a catalog entry can't inject into the RUN step. Validation already
 rejects metacharacters, so quoting is defense-in-depth.
+
+### Custom apt sources (`repos:`)
+
+`repos:` lets a profile enable extra apt sources before the install so
+`packages:` can pull from outside Debian's archive — e.g. the mise repo
+(`https://mise.jdx.dev/deb`). v1 supports one form:
+
+```yaml
+repos:
+  mise:              # key = merge identity (logical repo name)
+    extrepo: mise    # extrepo catalog name; may differ from the key
+```
+
+`Repo.ExtRepo` is the extrepo catalog name (`extrepo enable <ExtRepo>`). The
+schema also carries `url`/`key_url`/`suites`/`components` for fully inline
+custom repos, but v1 `Prepare` rejects those with "custom apt repos not yet
+supported; use extrepo: <name>" — the deferred branch is additive, no schema
+migration later. Canonical-repos serialization (hash input):
+`name \u0001 extrepo \u0000 url \u0000 key_url \u0000 suites \u0000 components`
+per repo, sorted by map key, entries joined with `\u0002` (distinct from the
+in-entry `\u0001`) so the encoding is injective even with arbitrary URL
+characters. The repos segment joins the hash only when non-empty, preserving
+back-compat for packages-only profiles.
+
+Rationale for extrepo over a hand-rolled custom source: extrepo is the
+Debian-native tool for adding third-party `.sources` with key management
+(apt-key deprecated), the base image already carries it for exactly this
+purpose, and catalog authors get a stable, vetted catalog name instead of
+re-encoding GPG-key fetching and `.sources` grammar per repo.
 
 The build implementation is intentionally opaque. Future versions may
 replace Dockerfile synthesis with direct BuildKit APIs or another OCI
@@ -313,8 +375,11 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
     }
 
     imageRef := baseRef
-    if len(spec.Packages) > 0 {
-        derivedRef := derivedTag(baseID, spec.Packages)
+    if len(spec.Packages) > 0 || len(spec.Repos) > 0 {
+        if err := checkExtrepoOnly(spec.Repos); err != nil {
+            return "", err
+        }
+        derivedRef := derivedTag(baseID, spec.Packages, spec.Repos)
         exists, err := imageExists(ctx, d.cli, derivedRef)
         if err != nil {
             return "", err
@@ -360,8 +425,8 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 ### Failure modes & edge cases
 
 1. **`packages:` empty after merge** — `Prepare` returns `baseRef` unchanged;
-   the `if len(spec.Packages) > 0` block is skipped; no derived image, no
-   build. Byte-for-byte the current behavior.
+   the `if len(spec.Packages) > 0 || len(spec.Repos) > 0` block is skipped; no
+   derived image, no build. Byte-for-byte the current behavior.
 2. **`packages:` from multiple fragments** — lists merge additively with
    dedup at `ResolveProfile` time. One derived image per profile, one apt
    transaction, one cache key. This is why additive merge matters.
@@ -397,8 +462,9 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
    archive-existence; the missing header surfaces at compile time.
 8. **Disk space accumulation** — `tpod prune` (default) removes only
    unused tpod-managed resources: volumes and `tpod/packages:<hash>` images
-   whose `(profile, packages)` combo doesn't match any currently resolvable
-   profile's computed hash (or `caches.<name>` for volumes). `tpod prune --all`
+   whose `(base-image-id, packages, repos)` combo doesn't match any currently
+   resolvable profile's computed hash (or `caches.<name>` for volumes).
+   `tpod prune --all`
    removes everything tpod-managed regardless of liveness. `--volumes` /
    `--images` scope to one resource type; `--force`/`-y` skip the prompt.
    Liveness inference is catalog-driven, so a user-created profile that's

@@ -659,3 +659,50 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 	// Cleanup: remove the derived image we built.
 	rt.cli.ImageRemove(context.Background(), imageRef, image.RemoveOptions{Force: true, PruneChildren: true})
 }
+
+func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	spec := Spec{
+		ProfileName: "test-repos",
+		Image:       integrationImage,
+		Repos:       map[string]Repo{"mise": {ExtRepo: "mise"}},
+		Packages:    []string{"mise"},
+		Command:     []string{"true"},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
+		Network:     "none",
+	}
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer rt.cli.ImageRemove(context.Background(), imageRef, image.RemoveOptions{Force: true, PruneChildren: true})
+	if !strings.HasPrefix(imageRef, "tpod/packages:") {
+		t.Errorf("imageRef = %q, want tpod/packages: prefix", imageRef)
+	}
+	// The extrepo-enabled repo must have let apt install mise from the
+	// mise repo into the derived image.
+	code, err := rt.Run(context.Background(), Spec{
+		ProfileName: "test-repos",
+		Image:       imageRef,
+		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
+		Network:     "none",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("mise run exit code = %d, want 0", code)
+	}
+}
