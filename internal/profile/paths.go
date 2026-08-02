@@ -107,6 +107,25 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 		out.Caches = expanded
 	}
 
+	if out.Files != nil {
+		expanded := make(map[string]File, len(out.Files))
+		for target, f := range out.Files {
+			newTarget, err := expandTarget(target, runtimeHome, data)
+			if err != nil {
+				return out, err
+			}
+			if newTarget == "" {
+				return out, fmt.Errorf("file %q resolved to an empty target after template expansion (is the host variable set?)", target)
+			}
+			f.Content, err = renderTemplate(f.Content, data)
+			if err != nil {
+				return out, fmt.Errorf("file %s: %w", target, err)
+			}
+			expanded[newTarget] = f
+		}
+		out.Files = expanded
+	}
+
 	if out.Env != nil {
 		for k, v := range out.Env {
 			if !strings.HasPrefix(v, "{{") {
