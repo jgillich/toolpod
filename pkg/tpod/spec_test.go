@@ -304,3 +304,41 @@ func TestBuildSpecBareRunKeepsFullCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildSpecMapsFiles(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "img:1",
+		Command: []string{"sh"},
+		Files: map[string]profile.File{
+			"/root/.config/foo": {Content: "hello", Mode: 0o600},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Files) != 1 {
+		t.Fatalf("spec.Files = %v, want 1 entry", spec.Files)
+	}
+	f := spec.Files[0]
+	if f.Target != "/root/.config/foo" || f.Content != "hello" || f.Mode != 0o600 {
+		t.Errorf("spec.Files[0] = %+v, want {/root/.config/foo hello 384}", f)
+	}
+}
+
+func TestBuildSpecFilesDefaultMode(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "img:1",
+		Command: []string{"sh"},
+		Files:   map[string]profile.File{"/root/.config/foo": {Content: "x"}},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "p"}, cfg, "B", "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Files[0].Mode != 0o644 {
+		t.Errorf("default mode = %o, want 644", spec.Files[0].Mode)
+	}
+}

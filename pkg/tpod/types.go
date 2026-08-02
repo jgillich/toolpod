@@ -10,6 +10,7 @@ type (
 	CacheSpec     = runtime.CacheSpec
 	WorkspaceSpec = runtime.WorkspaceSpec
 	Repo          = runtime.Repo
+	FileSpec      = runtime.FileSpec
 )
 
 type LaunchOpts struct {

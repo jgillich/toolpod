@@ -52,6 +52,16 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		repos[name] = Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
 	}
 
+	files := make([]FileSpec, 0, len(cfg.Files))
+	for target, f := range cfg.Files {
+		mode := f.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		files = append(files, FileSpec{Target: target, Content: f.Content, Mode: mode})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Target < files[j].Target })
+
 	tools := cfg.Tools
 	if tools == nil {
 		tools = map[string]string{}
@@ -100,6 +110,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		Image:       cfg.Image,
 		Packages:    cfg.Packages,
 		Repos:       repos,
+		Files:       files,
 		Command:     cmd,
 		Mounts:      mounts,
 		PortSpecs:   portSpecs,
