@@ -63,7 +63,8 @@ type File struct {
     reject `..` path segments (before or after `~` expansion). The tar is
     rooted at `/`, so a `..` target would otherwise traverse outside the
     intended location.
-  - `content` required.
+  - `content` is optional — empty content writes an empty file (e.g.
+    `~/.hushlogin`); there is no "missing content" error.
   - `mode`, when set, must be a valid permission value: `0 <= mode <= 07777`.
     yaml.v3 parses a leading-zero integer literal as octal, so `mode: 0644`
     yields int 420 == `0o644` — the raw permission bits we pass straight to the
@@ -107,14 +108,17 @@ follow it — the invariant is "execution user," not "host user." Mode B's
 host-user ownership is harmless there. No Mode A/B branching in the files
 path.
 
-**Missing parent directories:** the daemon's untar (`pkg/archive.Unpack`)
-auto-creates implied parent dirs at mode 0755 when a file entry's parent
-doesn't exist. toolpod relies on this rather than emitting dir entries. For
-targets under `$HOME`, toolpod additionally extends the bootstrap chown set
-(the existing `homeParents` call, docker_run.go:65-66) with each file target's
-parent dir, so the execution user can later modify the file — without that, a
-root-owned 0755 parent would allow reads but block writes. Targets outside
-`$HOME` (e.g. `/etc/...`) keep the daemon's root-owned 0755 parents.
+**Missing parent directories:** the daemon's untar auto-creates implied parent
+dirs at mode 0755 when a file entry's parent doesn't exist (verified
+experimentally on Podman; Docker's `pkg/archive.Unpack` uses the same
+`createImpliedDirectories` path). toolpod relies on this rather than emitting
+dir entries — emitting dir entries for the parent chain was tested and
+rejected because it clobbers ownership of existing dirs (e.g. an explicit
+`root/` entry chowns `/root`). Because the implied dirs are root-owned, and
+the execution user must be able to write files under `$HOME`, the bootstrap
+chown set (the existing `homeParents` call, docker_run.go:65-66) is extended
+with each file target's parent dir. Targets outside `$HOME` (e.g. `/etc/...`)
+keep the root-owned 0755 parents.
 
 **Tar paths:** entries are written with relative paths (no leading `/`), e.g.
 `home/user/.config/foo`, since `CopyToContainer` untars at `dstPath "/"` and
@@ -137,7 +141,8 @@ resolved target.
 
 - `internal/profile/merge_test.go` — files merge: override by key, null-to-delete,
   additive across extends.
-- `internal/profile/validate_test.go` — bad target, missing content, bad mode.
+- `internal/profile/validate_test.go` — bad target, `..` traversal, bad mode,
+  empty-content-allowed.
 - `internal/profile/paths_test.go` (or catalog_test.go) — `~` expansion on
   target, `{{ }}` resolution in content.
 - `internal/runtime/docker_run_test.go` — `tarFiles` pure-function tests:

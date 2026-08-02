@@ -4,7 +4,7 @@
 
 **Goal:** Add a `files:` map to profiles/fragments that writes inline-content files into the ephemeral container at launch, owned by the execution user.
 
-**Architecture:** `files:` entries (target path → content/mode) merge like `mounts` and get `~`/`{{ }}` resolution in `ResolveTildes`. In `Runtime.Run`, after `ContainerCreate` and before `ContainerStart`, a pure `tarFiles` function builds a tar (relative paths, host uid/gid, mode) fed to `cli.CopyToContainer` at `/`. Missing parent dirs are auto-created by the daemon's untar at 0755; the bootstrap chown set is extended with each file target's parent under `$HOME`.
+**Architecture:** `files:` entries (target path → content/mode) merge like `mounts` and get `~`/`{{ }}` resolution in `ResolveTildes`. In `Runtime.Run`, after `ContainerCreate` and before `ContainerStart`, a pure `tarFiles` function builds a tar (relative paths, execution-user uid/gid, mode) fed to `cli.CopyToContainer` at `/`. Missing parent dirs are auto-created by the daemon's untar at 0755 (verified on Docker + Podman — see Task 5); since they're root-owned, the bootstrap chown set is extended with each file target's parent under `$HOME` so the execution user can write them.
 
 **Tech Stack:** Go 1.25, `archive/tar` (stdlib), `github.com/docker/docker/client`, `gopkg.in/yaml.v3`.
 
@@ -153,7 +153,6 @@ func TestValidateFiles(t *testing.T) {
 		{"tilde-username form", "~user/x", File{Content: "hi"}},
 		{"path traversal", "~/../etc/passwd", File{Content: "hi"}},
 		{"traversal absolute", "/etc/../../x", File{Content: "hi"}},
-		{"missing content", "~/.config/x", File{}},
 		{"mode too large", "~/.config/x", File{Content: "hi", Mode: 0o10000}},
 	}
 	for _, tt := range invalid {
@@ -162,6 +161,14 @@ func TestValidateFiles(t *testing.T) {
 		if err := validate(rc); err == nil {
 			t.Errorf("validate(files[%q]) = nil, want error", tt.name)
 		}
+	}
+}
+
+func TestValidateFilesAllowsEmptyContent(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Files = map[string]File{"~/.hushlogin": {Content: ""}}
+	if err := validate(rc); err != nil {
+		t.Errorf("empty content must be a valid empty file, got %v", err)
 	}
 }
 ```
@@ -225,9 +232,11 @@ In `internal/profile/validate.go`:
 2. Append the function (after `validateRepos`):
 
 ```go
-// validateFiles checks each file target: absolute or ~-prefixed, no ".."
-// segments (the tar is rooted at "/", so traversal must be rejected),
-// non-empty content, and a valid permission mode.
+// validateFiles checks each file target: absolute or ~-prefixed, and free of
+// ".." segments. The tar is rooted at "/", so a ".." target could traverse
+// outside the intended location; "~" expands later to a clean absolute
+// runtimeHome (no ".."), so rejecting raw ".." segments also guarantees the
+// expanded path is clean.
 func validateFiles(rc RawProfile) error {
 	for target, f := range rc.Files {
 		if target != "~" && !strings.HasPrefix(target, "~/") && !strings.HasPrefix(target, "/") {
@@ -238,9 +247,6 @@ func validateFiles(rc RawProfile) error {
 				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q must not contain '..' segments", target)}
 			}
 		}
-		if f.Content == "" {
-			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q requires content", target)}
-		}
 		if f.Mode > 0o7777 {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q: mode %o out of range (want 0-07777)", target, f.Mode)}
 		}
@@ -248,6 +254,11 @@ func validateFiles(rc RawProfile) error {
 	return nil
 }
 ```
+
+`filepath.Clean` is applied at resolve time (Task 2) to normalize cosmetic
+redundancy (`/a//b` → `/a/b`, `/a/./b` → `/a/b`) before the entry path is
+emitted; a `..`-free target can only clean to a safe path under the container
+root.
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -552,6 +563,12 @@ func TestTarFiles(t *testing.T) {
 	if entries[0].Mode != 0o600 {
 		t.Errorf("entry mode = %o, want 600", entries[0].Mode)
 	}
+	if entries[0].Typeflag != tar.TypeReg {
+		t.Errorf("entry typeflag = %d, want TypeReg", entries[0].Typeflag)
+	}
+	if entries[0].Format != tar.FormatPAX {
+		t.Errorf("entry format = %d, want PAX", entries[0].Format)
+	}
 }
 
 func TestTarFilesEmpty(t *testing.T) {
@@ -575,20 +592,23 @@ Expected: FAIL — `tarFiles` undefined.
 In `internal/runtime/docker_run.go`, add near `buildMounts` (top of file, after the imports):
 
 ```go
-// tarFiles renders the container-file tar stream: one entry per file with a
-// relative path (CopyToContainer untars at "/"), the file's mode, and the
-// execution user's uid/gid.
+// tarFiles renders the container-file tar stream: one regular file entry per
+// target with a relative path (CopyToContainer untars at "/"), the file's
+// mode, and the execution user's uid/gid. PAX format + explicit TypeReg avoid
+// relying on tar defaults across engines.
 func tarFiles(files []FileSpec, uid, gid int) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, f := range files {
 		rel := strings.TrimPrefix(f.Target, "/")
 		if err := tw.WriteHeader(&tar.Header{
-			Name: rel,
-			Mode: int64(f.Mode),
-			Uid:  uid,
-			Gid:  gid,
-			Size: int64(len(f.Content)),
+			Name:     rel,
+			Typeflag: tar.TypeReg,
+			Mode:     int64(f.Mode),
+			Uid:      uid,
+			Gid:      gid,
+			Size:     int64(len(f.Content)),
+			Format:   tar.FormatPAX,
 		}); err != nil {
 			return nil, err
 		}
@@ -655,7 +675,8 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		Files: []FileSpec{
 			{Target: "/root/.config/tpod-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
 		},
-		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files"`},
+		// Existence + content + permissions are all exercised end-to-end.
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		RuntimeHome: "/root",
 		Network:     "none",
@@ -726,10 +747,20 @@ In `internal/runtime/docker_run.go`, in `Run`:
 
 This is between `ContainerCreate` and `ContainerAttach` — the container exists (so the tar can be untarred into it) but hasn't started. The deferred removal still covers a failure here.
 
+> **Why the chown is needed (verified):** the daemon's untar creates implied
+> parents at 0755 owned by **root** (confirmed experimentally on this
+> engine). The file itself gets the tar header's uid/gid (execution user). So
+> under `$HOME`, a root-owned 0755 parent would let the user read but not
+> write the file — the bootstrap chown fixes that. Without it, the
+> integration test's `cat` would still pass (read) but a later write would
+> fail; the chown keeps the "owned by execution user" guarantee complete.
+> Do **not** emit explicit dir entries instead — tested and rejected: an
+> explicit `root/` dir entry clobbers `/root`'s ownership.
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `go test ./internal/runtime/ -run TestIntegrationFilesWrittenIntoContainer -count=1 -v`
-Expected: PASS (the file exists, is host-user-owned, and `cat` matches).
+Expected: PASS (the file exists, is owned by the execution user, mode 644, and `cat` matches).
 
 - [ ] **Step 6: Run the full suite + vet**
 
@@ -807,9 +838,14 @@ In `AGENTS.md`, in the Conventions section, after the `repos:`-related bullet, a
   via CopyToContainer with a tar built by `internal/runtime/docker_run.go`'s
   `tarFiles`). Content supports `{{ }}` templates; targets are absolute or
   `~`-prefixed and must not contain `..`. Files are owned by the execution
-  user; missing parent dirs are created by the daemon's untar (0755) and the
-  bootstrap chown is extended with `$HOME` parents of file targets.
+  user; missing parent dirs are created automatically and the bootstrap chown
+  is extended with `$HOME` parents of file targets so the execution user can
+  write them.
 ```
+
+Note: this wording avoids asserting which layer creates the missing parents
+(the daemon's untar does today; whether it's toolpod or the engine isn't a
+contract).
 
 - [ ] **Step 5: Verify + commit**
 
