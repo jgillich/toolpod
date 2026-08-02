@@ -86,19 +86,19 @@ If a project has its own `mise.toml`, tpod's shell picks it up as an override; o
 
 ### Built-in profiles
 
-| Profile | Command | What it is |
-| --- | --- | --- |
-| `mise` | `mise` | Shared base profile: installs the mise toolchain plus common CLI tools (bat, fzf, jq, ripgrep…). Everything else extends it. |
-| `opencode` | `opencode` | The opencode AI agent |
-| `codex` | `codex` | OpenAI Codex CLI |
-| `claude` | `claude` | Anthropic Claude Code |
-| `gemini` | `gemini` | Google Gemini CLI |
-| `pi` | `pi` | Pi, the minimal terminal coding agent (earendil-works) |
-| `crush` | `crush` | Crush, the Charmbracelet terminal coding agent |
-| `qwen` | `qwen` | Qwen Code CLI (Alibaba) |
-| `buzz` | `buzz` | Buzz, Block's desktop AI agent (GUI) |
-| `t3code` | `t3code` | T3 Code desktop app — agent harness control surface |
-| `shell` | `bash` | Disposable, project-aware shell. Useful as a base to `extends:` |
+| Profile | What it is |
+| --- | --- |
+| [`mise`](internal/catalog/profiles/mise.yaml) | Shared base profile: installs the mise toolchain plus common CLI tools (bat, fzf, jq, ripgrep…). Everything else extends it. |
+| [`opencode`](internal/catalog/profiles/opencode.yaml) | The opencode AI agent |
+| [`codex`](internal/catalog/profiles/codex.yaml) | OpenAI Codex CLI |
+| [`claude`](internal/catalog/profiles/claude.yaml) | Anthropic Claude Code |
+| [`gemini`](internal/catalog/profiles/gemini.yaml) | Google Gemini CLI |
+| [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent (earendil-works) |
+| [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
+| [`qwen`](internal/catalog/profiles/qwen.yaml) | Qwen Code CLI (Alibaba) |
+| [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
+| [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
+| [`shell`](internal/catalog/profiles/shell.yaml) | Disposable shell. |
 
 All built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry.
 
