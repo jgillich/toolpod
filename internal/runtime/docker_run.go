@@ -49,6 +49,9 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	if activateCmd != "" {
 		parts = append(parts, activateCmd)
 	}
+	if cmd := mise.BackendRuntimesCommand(configDir, spec.Tools); cmd != "" {
+		parts = append(parts, cmd)
+	}
 	if mise.NeedsEmbeddedPlugin(spec.Tools) {
 		parts = append(parts, mise.PluginInstallCommand())
 	}

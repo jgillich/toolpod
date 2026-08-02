@@ -60,6 +60,100 @@ func TestActivateCommand_ScopedToolKeysAreQuoted(t *testing.T) {
 	}
 }
 
+func TestBackendRuntimesCommand_NpmToolAddsNode(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"npm:eslint": "latest"})
+	if cmd == "" {
+		t.Fatal("expected non-empty command")
+	}
+	if !strings.Contains(cmd, `"node" = "latest"`) {
+		t.Errorf("missing node append in %q", cmd)
+	}
+	if strings.Contains(cmd, "mise registry") {
+		t.Errorf("prefixed tool must not trigger a registry lookup: %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_UnprefixedToolUsesRegistry(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"gemini": "latest"})
+	if cmd == "" {
+		t.Fatal("expected non-empty command")
+	}
+	if !strings.Contains(cmd, "mise registry 'gemini'") {
+		t.Errorf("missing registry lookup for gemini: %q", cmd)
+	}
+	if !strings.Contains(cmd, `"node" = "latest"`) {
+		t.Errorf("missing node append in %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_PresentNodeNotTouched(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"gemini": "latest", "node": "20"})
+	if strings.Contains(cmd, `"node" = "latest"`) {
+		t.Errorf("must not re-add a pinned node: %q", cmd)
+	}
+	if strings.Contains(cmd, "mise registry 'node'") {
+		t.Errorf("must not look up the node runtime itself: %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_PipxToolAddsUV(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"pipx:ruff": "latest"})
+	if cmd == "" {
+		t.Fatal("expected non-empty command")
+	}
+	if !strings.Contains(cmd, `"uv" = "latest"`) {
+		t.Errorf("missing uv append in %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_NoOpWhenPipxOrUVPresent(t *testing.T) {
+	for _, tools := range []map[string]string{
+		{"pipx:ruff": "latest", "uv": "0.12"},
+		{"pipx:ruff": "latest", "pipx": "latest"},
+	} {
+		if cmd := BackendRuntimesCommand("/root/.config/mise", tools); cmd != "" {
+			t.Errorf("expected empty command for %v, got %q", tools, cmd)
+		}
+	}
+}
+
+func TestBackendRuntimesCommand_NoBackendTools(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"go": "latest"})
+	if cmd == "" {
+		t.Fatal("expected registry-aware detection for unprefixed tool")
+	}
+	if !strings.Contains(cmd, "mise registry 'go'") {
+		t.Errorf("missing registry lookup for go: %q", cmd)
+	}
+	if !strings.Contains(cmd, `"$__node" = 1`) || !strings.Contains(cmd, `"$__uv" = 1`) {
+		t.Errorf("node/uv appends must be guarded by the registry result: %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_MixedToolset(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise",
+		map[string]string{"gemini": "latest", "npm:eslint": "latest", "pipx:ruff": "latest", "go": "latest"})
+	if !strings.Contains(cmd, `"node" = "latest"`) {
+		t.Errorf("missing node append in %q", cmd)
+	}
+	if !strings.Contains(cmd, `"uv" = "latest"`) {
+		t.Errorf("missing uv append in %q", cmd)
+	}
+	if !strings.Contains(cmd, "mise registry 'gemini'") || !strings.Contains(cmd, "mise registry 'go'") {
+		t.Errorf("missing registry lookups for unprefixed tools: %q", cmd)
+	}
+	if strings.Contains(cmd, "mise registry 'npm:eslint'") || strings.Contains(cmd, "mise registry 'pipx:ruff'") {
+		t.Errorf("prefixed tools must not trigger registry lookups: %q", cmd)
+	}
+}
+
+func TestBackendRuntimesCommand_UsesConfigDir(t *testing.T) {
+	cmd := BackendRuntimesCommand("/root/.config/mise", map[string]string{"npm:eslint": "latest"})
+	if !strings.Contains(cmd, "/root/.config/mise/config.toml") {
+		t.Errorf("missing config path in %q", cmd)
+	}
+}
+
 func TestNeedsEmbeddedPlugin(t *testing.T) {
 	cases := []struct {
 		name  string
