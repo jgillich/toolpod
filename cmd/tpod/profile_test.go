@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runTpodEnv runs the built binary with the given extra environment variables.
@@ -185,6 +186,37 @@ func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 		t.Errorf("existing user file must be left untouched, got:\n%s", data)
 	}
 }
+
+// A write can leave the mtime unchanged on overlayfs under load; the saved
+// check must fall back to content so a real save is not mistaken for a quit.
+func TestEditSavedDetectsContentChangeWithUnchangedMtime(t *testing.T) {
+	before := fakeFileInfo{t: time.Now()}
+	if !savedEdit(before, before, []byte("seed"), []byte("seed\n# edited\n")) {
+		t.Fatal("changed content with unchanged mtime must count as saved")
+	}
+}
+
+func TestEditSavedRequiresSomeChange(t *testing.T) {
+	before := fakeFileInfo{t: time.Now()}
+	if savedEdit(before, before, []byte("seed"), []byte("seed")) {
+		t.Fatal("unchanged content and mtime must count as not saved")
+	}
+	after := fakeFileInfo{t: before.t.Add(time.Second)}
+	if !savedEdit(before, after, []byte("seed"), []byte("seed")) {
+		t.Fatal("advanced mtime must count as saved")
+	}
+}
+
+type fakeFileInfo struct {
+	t time.Time
+}
+
+func (f fakeFileInfo) Name() string       { return "" }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return 0 }
+func (f fakeFileInfo) ModTime() time.Time { return f.t }
+func (f fakeFileInfo) IsDir() bool        { return false }
+func (f fakeFileInfo) Sys() interface{}   { return nil }
 
 func TestProfileShowResolvedFragmentRefused(t *testing.T) {
 	out, _ := runTpod(t, "show", "--resolved", "ssh")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -279,10 +280,21 @@ func (c *ProfileEditCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if after.ModTime().Equal(before.ModTime()) {
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		return err
+	}
+	if !savedEdit(before, after, data, content) {
 		os.Remove(targetPath)
 	}
 	return nil
+}
+
+// savedEdit reports whether the editor actually wrote the target: the mtime
+// advanced, or the content differs from the seed. The content fallback covers
+// overlayfs, which under load can leave mtime unchanged despite a write.
+func savedEdit(before, after os.FileInfo, seed, content []byte) bool {
+	return !after.ModTime().Equal(before.ModTime()) || !bytes.Equal(content, seed)
 }
 
 func openEditor(path string) error {
