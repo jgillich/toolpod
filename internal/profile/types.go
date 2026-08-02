@@ -32,6 +32,7 @@ type Profile struct {
 	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
 	Image       string                `yaml:"image,omitempty"`
 	Packages    []string              `yaml:"packages,omitempty"`
+	Repos       map[string]Repo       `yaml:"repos,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
 	Caches      map[string]string     `yaml:"caches,omitempty"`
 	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
@@ -114,6 +115,17 @@ type PortBind struct {
 	Host     string `yaml:"host,omitempty"`
 	HostIP   string `yaml:"host_ip,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
+}
+
+// Repo is a single extra apt source, keyed by its merge identity (a logical
+// repo name). Either ExtRepo (an extrepo catalog name) or a fully inline
+// custom repo (URL/KeyURL/Suites/Components) must be set.
+type Repo struct {
+	ExtRepo    string `yaml:"extrepo,omitempty"`
+	URL        string `yaml:"url,omitempty"`
+	KeyURL     string `yaml:"key_url,omitempty"`
+	Suites     string `yaml:"suites,omitempty"`
+	Components string `yaml:"components,omitempty"`
 }
 
 // DeviceBind attaches a host device node into the container.

@@ -163,7 +163,7 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 		for cacheName := range cfg.Caches {
 			usedVolumes["tpod-cache-"+cacheName] = true
 		}
-		if len(cfg.Packages) == 0 || cfg.Image == "" {
+		if (len(cfg.Packages) == 0 && len(cfg.Repos) == 0) || cfg.Image == "" {
 			continue
 		}
 		inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image)
@@ -171,7 +171,11 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 			// Base image not present locally ⇒ no derived image yet.
 			continue
 		}
-		if tag := runtime.DerivedTag(inspect.ID, cfg.Packages); tag != "" {
+		repos := make(map[string]runtime.Repo, len(cfg.Repos))
+		for name, r := range cfg.Repos {
+			repos[name] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+		}
+		if tag := runtime.DerivedTag(inspect.ID, cfg.Packages, repos); tag != "" {
 			usedImages[tag] = true
 		}
 	}
@@ -202,8 +206,8 @@ func listTpodImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	var refs []string
 	for _, img := range images {
 		for _, tags := range img.RepoTags {
-			if strings.HasPrefix(tags, "tpod/packages:") {
-				refs = append(refs, tags)
+			if ref := runtime.DerivedRef(tags); ref != "" {
+				refs = append(refs, ref)
 			}
 		}
 	}

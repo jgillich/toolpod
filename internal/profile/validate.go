@@ -46,6 +46,9 @@ func validate(rc RawProfile) error {
 	if err := validatePackages(rc); err != nil {
 		return err
 	}
+	if err := validateRepos(rc); err != nil {
+		return err
+	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
 		fmt.Fprintln(os.Stderr, "warning: network: host makes ports redundant; ports are ignored by the engine")
 	}
@@ -114,6 +117,34 @@ func validatePackages(rc RawProfile) error {
 	for _, pkg := range rc.Packages {
 		if !packageNameRe.MatchString(pkg) {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("packages: invalid package name %q (want [a-z0-9][a-z0-9+.-]*)", pkg)}
+		}
+	}
+	return nil
+}
+
+// validateRepos checks each apt source: the map key and extrepo catalog name
+// follow the package-name grammar, and each repo is either an extrepo name or
+// a complete inline custom repo (url + key_url). Custom repos are schema-ready
+// but v1 synthesis only handles extrepo, so the build path rejects them.
+func validateRepos(rc RawProfile) error {
+	for name, repo := range rc.Repos {
+		if !packageNameRe.MatchString(name) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("repos: invalid repo name %q (want [a-z0-9][a-z0-9+.-]*)", name)}
+		}
+		if repo.ExtRepo != "" {
+			if !packageNameRe.MatchString(repo.ExtRepo) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("repos: %s: invalid extrepo name %q (want [a-z0-9][a-z0-9+.-]*)", name, repo.ExtRepo)}
+			}
+			if repo.URL != "" || repo.KeyURL != "" || repo.Suites != "" || repo.Components != "" {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("repos: %s: extrepo repos must not set url/key_url/suites/components", name)}
+			}
+			continue
+		}
+		if repo.URL == "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("repos: %s: repo requires extrepo: <name> or a url", name)}
+		}
+		if repo.KeyURL == "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("repos: %s: custom repo requires key_url", name)}
 		}
 	}
 	return nil

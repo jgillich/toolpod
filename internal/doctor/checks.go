@@ -103,8 +103,8 @@ func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	for _, img := range images {
 		hasTpodTag := false
 		for _, t := range img.RepoTags {
-			if strings.HasPrefix(t, "tpod/packages:") {
-				tags = append(tags, t)
+			if ref := runtime.DerivedRef(t); ref != "" {
+				tags = append(tags, ref)
 				hasTpodTag = true
 			}
 		}

@@ -13,27 +13,81 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 )
 
 // DerivedTag returns the content-addressed tag tpod lays on a derived image
-// built from baseID with the given packages. The tag is the first 16 hex
-// chars of sha256(baseID + \u0000 + sorted(packages).join(\u0001)). Pure;
-// does not touch the Docker daemon. Package order is canonicalised before
-// hashing so catalog authors can't trigger rebuilds by reordering.
+// built from baseID with the given packages and apt repos. The tag is the
+// first 16 hex chars of a sha256 over baseID, the sorted package list, and
+// (when non-empty) the sorted canonical repo descriptors:
 //
-// Returns "" when packages is empty — the prepare path short-circuits and
-// no derived image is built.
-func DerivedTag(baseID string, packages []string) string {
-	if len(packages) == 0 {
+//	no repos:   sha256(baseID \x00 sorted(packages).join(\x01))
+//	with repos: sha256(baseID \x00 sorted(packages).join(\x01) \x00 sorted(canonical-repos).join(\x02))
+//
+// The repos segment is appended only when non-empty, so a packages-only
+// profile keeps the byte-identical pre-repos hash and its cached derived
+// image survives the upgrade. Pure; does not touch the Docker daemon. Package
+// and repo order is canonicalised before hashing so catalog authors can't
+// trigger rebuilds by reordering.
+//
+// Returns "" when both packages and repos are empty — the prepare path
+// short-circuits and no derived image is built.
+func DerivedTag(baseID string, packages []string, repos map[string]Repo) string {
+	if len(packages) == 0 && len(repos) == 0 {
 		return ""
 	}
 	sorted := sortedCopy(packages)
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s", baseID, strings.Join(sorted, "\x01"))
+	if cr := canonicalRepos(repos); cr != "" {
+		fmt.Fprintf(h, "\x00%s", cr)
+	}
 	return "tpod/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
+}
+
+// canonicalRepos serializes a repo map deterministically: entries sorted by
+// map key, each as
+// `name \x01 extrepo \x00 url \x00 key_url \x00 suites \x00 components`
+// (empty fields as empty strings), joined with \x02 (distinct from the \x01
+// inside an entry) so the serialization is injective even with arbitrary URL
+// characters.
+func canonicalRepos(repos map[string]Repo) string {
+	if len(repos) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(repos))
+	for name := range repos {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]string, 0, len(names))
+	for _, name := range names {
+		r := repos[name]
+		entries = append(entries, fmt.Sprintf("%s\x01%s\x00%s\x00%s\x00%s\x00%s",
+			name, r.ExtRepo, r.URL, r.KeyURL, r.Suites, r.Components))
+	}
+	return strings.Join(entries, "\x02")
+}
+
+// DerivedRef normalizes a RepoTag from ImageList into the canonical
+// tpod/packages:<hash> form, or "" if the tag doesn't belong to a derived
+// image. Engines qualify RepoTags with their registry (docker.io/,
+// localhost/, quay.io/, ...), so the match is on the reference path, not a
+// string prefix — a locally built image keeps its tag even though its hash
+// is what identifies it.
+func DerivedRef(repoTag string) string {
+	named, err := reference.ParseNormalizedNamed(repoTag)
+	if err != nil || reference.Path(named) != "tpod/packages" || reference.IsNameOnly(named) {
+		return ""
+	}
+	tagged, ok := named.(reference.NamedTagged)
+	if !ok {
+		return ""
+	}
+	return "tpod/packages:" + tagged.Tag()
 }
 
 // ResolveImageID returns the content-addressed image-config SHA of the
@@ -53,12 +107,13 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 	return inspect.ID, nil
 }
 
-// buildDerivedImage builds and tags a derived image (base + packages) as
-// derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef> (the
-// base image is already pulled), then a single apt-get install of the sorted,
-// shell-quoted package list. Build output is streamed through w.
-func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef string, packages []string, w ProgressWriter) error {
-	dockerfile := []byte(synthesizeDockerfile(baseRef, packages))
+// buildDerivedImage builds and tags a derived image (base + repos + packages)
+// as derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef> (the
+// base image is already pulled), an extrepo enable per sorted repo, then a
+// single apt-get install of the sorted, shell-quoted package list. Build
+// output is streamed through w.
+func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+	dockerfile := []byte(synthesizeDockerfile(baseRef, repos, packages))
 	buildContext, err := tarDockerfile(dockerfile)
 	if err != nil {
 		return fmt.Errorf("build context: %w", err)
@@ -158,8 +213,10 @@ func sortedCopy(s []string) []string {
 // synthesizeDockerfile renders the derived-image Dockerfile. The package list
 // is sorted (so reordering catalog entries can't change the emitted file) and
 // each name is shell-quoted (defense-in-depth; validation already rejects
-// metacharacters).
-func synthesizeDockerfile(baseRef string, packages []string) string {
+// metacharacters). Repos are emitted as an `extrepo enable <name>` chain
+// (sorted by map key) before apt-get update; the extrepo catalog name is the
+// Repo.ExtRepo value, not the map key.
+func synthesizeDockerfile(baseRef string, repos map[string]Repo, packages []string) string {
 	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
 	for i, p := range sorted {
@@ -167,11 +224,26 @@ func synthesizeDockerfile(baseRef string, packages []string) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", baseRef)
-	b.WriteString("RUN apt-get update \\\n")
+	b.WriteString("RUN")
+	for _, name := range sortedRepoKeys(repos) {
+		b.WriteString(" \\\n    extrepo enable ")
+		b.WriteString(shellQuote([]string{repos[name].ExtRepo}))
+		b.WriteString(" &&")
+	}
+	b.WriteString(" apt-get update \\\n")
 	b.WriteString("    && apt-get install -y --no-install-recommends \\\n")
 	b.WriteString("        " + strings.Join(quoted, " \\\n        ") + " \\\n")
 	b.WriteString("    && rm -rf /var/lib/apt/lists/*\n")
 	return b.String()
+}
+
+func sortedRepoKeys(repos map[string]Repo) []string {
+	names := make([]string, 0, len(repos))
+	for name := range repos {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // tarDockerfile wraps a Dockerfile body into a tar archive stream suitable as

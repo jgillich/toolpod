@@ -1,7 +1,13 @@
 version: 1
 image: ghcr.io/jgillich/tpod-mise:latest
 command: ["/usr/bin/mise"]
+repos:
+  mise:
+    extrepo: mise
 packages:
+  - mise
+  - curl
+  - git
   - build-essential
   - cmake
   - ninja-build

@@ -174,6 +174,8 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 
 	out.Packages = mergePackages(parent.Packages, child.Packages, child.NullKeys["packages"])
 
+	out.Repos = mergeMap(parent.Repos, child.Repos, child.NullKeys["repos"])
+
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
 	out.Tools = mergeStringMap(parent.Tools, child.Tools, child.NullKeys["tools"])

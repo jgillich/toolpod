@@ -6,6 +6,7 @@ type Spec struct {
 	ProfileName string
 	Image       string
 	Packages    []string
+	Repos       map[string]Repo
 	Command     []string
 	Mounts      []MountSpec
 	PortSpecs   []PortSpec
@@ -18,6 +19,18 @@ type Spec struct {
 	Workspace   WorkspaceSpec
 	TTY         string
 	RuntimeHome string
+}
+
+// Repo mirrors profile.Repo: a single extra apt source, either an extrepo
+// catalog name (ExtRepo) or a fully inline custom repo (URL/KeyURL/...).
+// Fields are duplicated (not the profile type) so the runtime package stays
+// independent of the profile package.
+type Repo struct {
+	ExtRepo    string
+	URL        string
+	KeyURL     string
+	Suites     string
+	Components string
 }
 
 type MountSpec struct {

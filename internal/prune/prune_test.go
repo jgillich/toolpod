@@ -104,7 +104,7 @@ caches:
 func setupFake(t *testing.T) (*fakeClient, string) {
 	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
 	const baseID = "sha256:baseid"
-	usedTag := runtime.DerivedTag(baseID, []string{"curl", "git"})
+	usedTag := runtime.DerivedTag(baseID, []string{"curl", "git"}, nil)
 
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
@@ -136,6 +136,36 @@ func TestRunDefaultPrunesUnusedKeepsUsed(t *testing.T) {
 	wantI := []string{"tpod/packages:deadbeefdeadbeef"}
 	if !equalSlice(res.ImagesRemoved, wantI) {
 		t.Errorf("images removed = %v, want %v", res.ImagesRemoved, wantI)
+	}
+	if sliceContains(res.ImagesRemoved, usedTag) {
+		t.Errorf("used derived image %q must not be pruned", usedTag)
+	}
+}
+
+func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
+	// Engines qualify RepoTags with a registry (docker.io/, localhost/, ...).
+	// A qualified tag of a catalog-unused hash must still be pruned.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	const baseID = "sha256:baseid"
+	usedTag := runtime.DerivedTag(baseID, []string{"curl", "git"}, nil)
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": baseID},
+		images: []image.Summary{
+			{RepoTags: []string{usedTag}},
+			{RepoTags: []string{"localhost/tpod/packages:deadbeefdeadbeef"}},
+			{RepoTags: []string{"quay.io/tpod/packages:cafebabe"}},
+		},
+	}
+	res, err := run(context.Background(), fc, Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantI := []string{"tpod/packages:deadbeefdeadbeef", "tpod/packages:cafebabe"}
+	sort.Strings(wantI)
+	gotI := append([]string(nil), res.ImagesRemoved...)
+	sort.Strings(gotI)
+	if !equalSlice(gotI, wantI) {
+		t.Errorf("images removed = %v, want %v (qualified tags normalized to canonical form)", gotI, wantI)
 	}
 	if sliceContains(res.ImagesRemoved, usedTag) {
 		t.Errorf("used derived image %q must not be pruned", usedTag)

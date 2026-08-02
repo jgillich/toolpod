@@ -9,6 +9,7 @@ type (
 	DeviceSpec    = runtime.DeviceSpec
 	CacheSpec     = runtime.CacheSpec
 	WorkspaceSpec = runtime.WorkspaceSpec
+	Repo          = runtime.Repo
 )
 
 type LaunchOpts struct {

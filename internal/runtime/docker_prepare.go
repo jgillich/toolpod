@@ -23,14 +23,17 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 	}
 
 	imageRef := baseRef
-	if len(spec.Packages) > 0 {
-		derivedRef := DerivedTag(baseID, spec.Packages)
+	if len(spec.Packages) > 0 || len(spec.Repos) > 0 {
+		if err := checkExtrepoOnly(spec.Repos); err != nil {
+			return "", err
+		}
+		derivedRef := DerivedTag(baseID, spec.Packages, spec.Repos)
 		exists, err := imageExists(ctx, d.cli, derivedRef)
 		if err != nil {
 			return "", err
 		}
 		if !exists {
-			if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, spec.Packages, w); err != nil {
+			if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, spec.Repos, spec.Packages, w); err != nil {
 				return "", fmt.Errorf("build derived image: %w", err)
 			}
 		}
@@ -48,6 +51,17 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 	}
 
 	return imageRef, nil
+}
+
+// checkExtrepoOnly rejects custom (URL-based) repos, which are schema-ready
+// but not yet synthesizable. Extrepo repos pass through untouched.
+func checkExtrepoOnly(repos map[string]Repo) error {
+	for name, repo := range repos {
+		if repo.ExtRepo == "" {
+			return fmt.Errorf("custom apt repos not yet supported; use extrepo: <name> (repo %q)", name)
+		}
+	}
+	return nil
 }
 
 func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) error {

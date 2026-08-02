@@ -147,3 +147,61 @@ func TestValidatePackages(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRepos(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	cases := []struct {
+		name    string
+		repos   map[string]Repo
+		wantErr bool
+	}{
+		{
+			"valid extrepo-only", map[string]Repo{
+				"mise": {ExtRepo: "mise"},
+			}, false,
+		},
+		{
+			"valid custom", map[string]Repo{
+				"my-custom": {URL: "https://example.com/deb", KeyURL: "https://example.com/key.pub", Suites: "stable", Components: "main"},
+			}, false,
+		},
+		{
+			"extrepo plus url", map[string]Repo{
+				"mise": {ExtRepo: "mise", URL: "https://example.com/deb"},
+			}, true,
+		},
+		{
+			"no url no extrepo", map[string]Repo{
+				"mise": {},
+			}, true,
+		},
+		{
+			"custom without key_url", map[string]Repo{
+				"my-custom": {URL: "https://example.com/deb"},
+			}, true,
+		},
+		{
+			"invalid map key", map[string]Repo{
+				"bad name": {ExtRepo: "mise"},
+			}, true,
+		},
+		{
+			"invalid extrepo name", map[string]Repo{
+				"mise": {ExtRepo: "bad name"},
+			}, true,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := RawProfile{Profile: base}
+			rc.Repos = tt.repos
+			err := validate(rc)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}

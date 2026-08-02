@@ -293,6 +293,33 @@ func TestBuiltinProfilesResolvePackages(t *testing.T) {
 	if !containsPkg(miseCfg.Packages, "libssl-dev") {
 		t.Errorf("mise packages must include libssl-dev, got %v", miseCfg.Packages)
 	}
+	if !containsPkg(miseCfg.Packages, "mise") {
+		t.Errorf("mise packages must include mise itself, got %v", miseCfg.Packages)
+	}
+	if !containsPkg(miseCfg.Packages, "curl") {
+		t.Errorf("mise packages must include curl (moved from the base image), got %v", miseCfg.Packages)
+	}
+}
+
+func TestMiseProfileResolvesMiseRepo(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	cfg, err := ResolveProfile(cat, "mise")
+	if err != nil {
+		t.Fatalf("resolve mise: %v", err)
+	}
+	if cfg.Repos == nil {
+		t.Fatal("mise profile must declare a repos map")
+	}
+	repo, ok := cfg.Repos["mise"]
+	if !ok {
+		t.Fatalf("mise repos must contain the \"mise\" repo, got %v", cfg.Repos)
+	}
+	if repo.ExtRepo != "mise" {
+		t.Errorf("repos[mise].ExtRepo = %q, want mise", repo.ExtRepo)
+	}
 }
 
 func TestBuiltinFragmentsDeclarePackages(t *testing.T) {

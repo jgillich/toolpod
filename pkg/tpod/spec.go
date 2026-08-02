@@ -47,6 +47,11 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		})
 	}
 
+	repos := make(map[string]Repo, len(cfg.Repos))
+	for name, r := range cfg.Repos {
+		repos[name] = Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+	}
+
 	tools := cfg.Tools
 	if tools == nil {
 		tools = map[string]string{}
@@ -94,6 +99,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
 		Packages:    cfg.Packages,
+		Repos:       repos,
 		Command:     cmd,
 		Mounts:      mounts,
 		PortSpecs:   portSpecs,

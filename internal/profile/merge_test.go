@@ -272,3 +272,78 @@ func TestResolvePackagesChildExtendsWithoutOverride(t *testing.T) {
 		t.Errorf("Packages = %v, want [libssl-dev] (inherited unchanged)", cfg.Packages)
 	}
 }
+
+func TestResolveReposMergeAcrossExtends(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "frag1.yaml", "version: 1\nimage: frag1:1\ncommand: [\"x\"]\nrepos:\n  mise: {extrepo: mise}\n")
+	mustWriteProfile(t, dir, "frag2.yaml", "version: 1\nimage: frag2:1\ncommand: [\"y\"]\nrepos:\n  nodejs: {extrepo: nodejs}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: [frag1, frag2]\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Repos["mise"].ExtRepo != "mise" {
+		t.Errorf("repos[mise].ExtRepo = %q, want mise (from frag1)", cfg.Repos["mise"].ExtRepo)
+	}
+	if cfg.Repos["nodejs"].ExtRepo != "nodejs" {
+		t.Errorf("repos[nodejs].ExtRepo = %q, want nodejs (from frag2)", cfg.Repos["nodejs"].ExtRepo)
+	}
+}
+
+func TestResolveReposOverrideByName(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nrepos:\n  mise: {extrepo: mise}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nrepos:\n  mise: {extrepo: mise-edge}\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Repos["mise"].ExtRepo != "mise-edge" {
+		t.Errorf("repos[mise].ExtRepo = %q, want mise-edge (child wins per key)", cfg.Repos["mise"].ExtRepo)
+	}
+}
+
+func TestResolveReposNullDelete(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nrepos:\n  mise: {extrepo: mise}\n  nodejs: {extrepo: nodejs}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nrepos:\n  mise: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, exists := cfg.Repos["mise"]; exists {
+		t.Error("repos[mise] should be deleted by null-to-delete")
+	}
+	if cfg.Repos["nodejs"].ExtRepo != "nodejs" {
+		t.Errorf("repos[nodejs].ExtRepo = %q, want nodejs (inherited unchanged)", cfg.Repos["nodejs"].ExtRepo)
+	}
+}
+
+func TestResolveReposWholeFieldNull(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nrepos:\n  mise: {extrepo: mise}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nrepos: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(cfg.Repos) != 0 {
+		t.Errorf("whole-field null should drop all inherited repos, got %v", cfg.Repos)
+	}
+}
