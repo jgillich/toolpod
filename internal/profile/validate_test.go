@@ -205,3 +205,50 @@ func TestValidateRepos(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateFiles(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := []struct {
+		name   string
+		target string
+		f      File
+	}{
+		{"absolute target", "/etc/tpod.conf", File{Content: "hi"}},
+		{"tilde target", "~/.config/foo", File{Content: "hi"}},
+		{"explicit mode", "/tmp/x", File{Content: "hi", Mode: 0o600}},
+		{"tilde alone", "~", File{Content: "hi"}},
+	}
+	for _, tt := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Files = map[string]File{tt.target: tt.f}
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(files[%q]) = %v, want nil", tt.name, err)
+		}
+	}
+	invalid := []struct {
+		name   string
+		target string
+		f      File
+	}{
+		{"relative target", "relative/path", File{Content: "hi"}},
+		{"tilde-username form", "~user/x", File{Content: "hi"}},
+		{"path traversal", "~/../etc/passwd", File{Content: "hi"}},
+		{"traversal absolute", "/etc/../../x", File{Content: "hi"}},
+		{"mode too large", "~/.config/x", File{Content: "hi", Mode: 0o10000}},
+	}
+	for _, tt := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Files = map[string]File{tt.target: tt.f}
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(files[%q]) = nil, want error", tt.name)
+		}
+	}
+}
+
+func TestValidateFilesAllowsEmptyContent(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Files = map[string]File{"~/.hushlogin": {Content: ""}}
+	if err := validate(rc); err != nil {
+		t.Errorf("empty content must be a valid empty file, got %v", err)
+	}
+}
