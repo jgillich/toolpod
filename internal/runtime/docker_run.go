@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -254,6 +256,36 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		closeConn()
 		return int(status.StatusCode), nil
 	}
+}
+
+// tarFiles renders the container-file tar stream: one regular file entry per
+// target with a relative path (CopyToContainer untars at "/"), the file's
+// mode, and the execution user's uid/gid. PAX format + explicit TypeReg avoid
+// relying on tar defaults across engines.
+func tarFiles(files []FileSpec, uid, gid int) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, f := range files {
+		rel := strings.TrimPrefix(f.Target, "/")
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     rel,
+			Typeflag: tar.TypeReg,
+			Mode:     int64(f.Mode),
+			Uid:      uid,
+			Gid:      gid,
+			Size:     int64(len(f.Content)),
+			Format:   tar.FormatPAX,
+		}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write([]byte(f.Content)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // homeParents returns the engine-created (root-owned) parent dirs under home
