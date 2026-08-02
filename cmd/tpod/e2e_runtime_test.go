@@ -75,3 +75,22 @@ func TestE2EShellLaunch(t *testing.T) {
 		t.Errorf("shell launch output missing echo; got:\n%s", out)
 	}
 }
+
+// TestE2EShellMiseOnPath pins the fix for 4418c8a: a login shell (bash -l)
+// resets PATH via /etc/profile, and the /etc/profile.d/mise.sh hook written
+// by the shell profile must re-apply mise's env so tools like jq resolve.
+func TestE2EShellMiseOnPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if !dockerAvailable() {
+		t.Skip("docker/podman not available")
+	}
+	out, err := runTpod(t, "-c", "command -v jq", "shell")
+	if err != nil {
+		t.Fatalf("shell jq lookup: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "/mise/installs/jq/") {
+		t.Errorf("mise jq not on PATH in login shell; got:\n%s", out)
+	}
+}

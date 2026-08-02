@@ -1,3 +1,9 @@
 version: 1
 extends: mise
 command: ["bash", "-l"]
+files:
+  /etc/profile.d/mise.sh:
+    content: |
+      if command -v mise >/dev/null 2>&1; then
+        eval "$(mise hook-env)"
+      fi
