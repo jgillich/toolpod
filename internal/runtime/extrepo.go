@@ -226,8 +226,8 @@ func parseOSReleaseCodename(content string) (string, error) {
 //
 // Engines differ on symlinks: Docker returns the symlink itself (TypeSymlink,
 // body = the target path), while Podman dereferences it. If the entry is a
-// symlink, resolve its target relative to the source path and re-read it. A
-// cycle (symlink → itself) is caught by the resolved-target-equals-path check.
+// symlink, resolve its target relative to the source path and read that path
+// from the same container, tracking visited paths to catch cycles.
 func readImageFile(ctx context.Context, cli *client.Client, imageRef, path string) ([]byte, error) {
 	created, err := cli.ContainerCreate(ctx, &container.Config{Image: imageRef, Cmd: []string{"true"}}, nil, nil, nil, "")
 	if err != nil {
@@ -236,24 +236,46 @@ func readImageFile(ctx context.Context, cli *client.Client, imageRef, path strin
 	defer func() {
 		_ = cli.ContainerRemove(context.WithoutCancel(ctx), created.ID, container.RemoveOptions{Force: true})
 	}()
-	rc, _, err := cli.CopyFromContainer(ctx, created.ID, path)
+
+	seen := map[string]bool{}
+	for {
+		if seen[path] {
+			return nil, fmt.Errorf("read %s from %s: symlink cycle", path, imageRef)
+		}
+		seen[path] = true
+
+		content, target, err := readImageFileEntry(ctx, cli, created.ID, imageRef, path)
+		if err != nil {
+			return nil, err
+		}
+		if target == "" {
+			return content, nil
+		}
+		path = target
+	}
+}
+
+// readImageFileEntry copies one file out of the given container. It returns
+// the file content, or a resolved symlink target when the entry is a symlink.
+func readImageFileEntry(ctx context.Context, cli *client.Client, containerID, imageRef, path string) ([]byte, string, error) {
+	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
 	if err != nil {
-		return nil, fmt.Errorf("copy %s out of %s: %w", path, imageRef, err)
+		return nil, "", fmt.Errorf("copy %s out of %s: %w", path, imageRef, err)
 	}
 	defer rc.Close()
 	tr := tar.NewReader(rc)
 	hdr, err := tr.Next()
 	if err != nil {
-		return nil, fmt.Errorf("read %s from %s: %w", path, imageRef, err)
+		return nil, "", fmt.Errorf("read %s from %s: %w", path, imageRef, err)
 	}
 	if hdr.Typeflag == tar.TypeSymlink {
-		target := resolveLinkTarget(path, hdr.Linkname)
-		if target == filepath.Clean(path) {
-			return nil, fmt.Errorf("read %s from %s: symlink resolves to itself", path, imageRef)
-		}
-		return readImageFile(ctx, cli, imageRef, target)
+		return nil, resolveLinkTarget(path, hdr.Linkname), nil
 	}
-	return io.ReadAll(tr)
+	content, err := io.ReadAll(tr)
+	if err != nil {
+		return nil, "", fmt.Errorf("read %s from %s: %w", path, imageRef, err)
+	}
+	return content, "", nil
 }
 
 // resolveLinkTarget resolves a symlink's Linkname against the symlink's own
