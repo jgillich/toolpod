@@ -90,7 +90,7 @@ func TestE2EShellMiseOnPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shell jq lookup: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "/mise/installs/jq/") {
+	if !strings.Contains(out, "/.local/share/mise/installs/jq/") {
 		t.Errorf("mise jq not on PATH in login shell; got:\n%s", out)
 	}
 }

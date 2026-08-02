@@ -16,7 +16,7 @@ func TestPluginInstallCommandWritesEmbeddedPlugins(t *testing.T) {
 		"hooks/backend_install.lua",
 		"hooks/backend_exec_env.lua",
 	} {
-		want := "/mise/plugins/appimage/" + p
+		want := "$HOME/.local/share/mise/plugins/appimage/" + p
 		if !strings.Contains(cmd, "> "+want) {
 			t.Errorf("command should write %s\ncmd: %s", want, cmd)
 		}
@@ -26,10 +26,10 @@ func TestPluginInstallCommandWritesEmbeddedPlugins(t *testing.T) {
 func TestPluginInstallCommandRemovesStalePluginDir(t *testing.T) {
 	cmd := PluginInstallCommand()
 
-	// A leftover file or dangling symlink at /mise/plugins/appimage makes
+	// A leftover file or dangling symlink at the plugin dir makes
 	// mkdir -p fail with "File exists"; the command must clear it first.
-	if !strings.HasPrefix(cmd, "rm -rf /mise/plugins/appimage") {
-		t.Errorf("command should remove any stale /mise/plugins/appimage first\ncmd: %s", cmd)
+	if !strings.HasPrefix(cmd, "rm -rf $HOME/.local/share/mise/plugins/appimage") {
+		t.Errorf("command should remove any stale plugin dir first\ncmd: %s", cmd)
 	}
 }
 

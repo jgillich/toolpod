@@ -26,7 +26,7 @@ mounts:
     optional: true
 caches:
   aube: ~/.aube
-  mise: /mise
+  mise: ~/.local/share/mise
 tools:
   bat: latest
   fd: latest

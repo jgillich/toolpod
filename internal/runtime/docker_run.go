@@ -533,7 +533,6 @@ func buildEnv(spec Spec, runtimeHome string) []string {
 	env := []string{
 		"HOME=" + runtimeHome,
 		"MISE_CONFIG_DIR=" + filepath.Join(runtimeHome, ".config", "mise"),
-		"MISE_DATA_DIR=/mise",
 		// aube (mise's npm backend) defaults its cache and store to $HOME, which
 		// is ephemeral inside the container; the mise profile declares an `aube`
 		// cache volume at ~/.aube, so point aube there to survive container exit.

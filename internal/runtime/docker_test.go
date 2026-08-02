@@ -70,23 +70,6 @@ func TestBuildEnvDropsEmptyEnvValues(t *testing.T) {
 	}
 }
 
-func TestBuildEnvSetsMiseDataDir(t *testing.T) {
-	spec := Spec{RuntimeHome: "/root"}
-	env := buildEnv(spec, "/root")
-	var hasMiseDataDir bool
-	for _, e := range env {
-		if strings.HasPrefix(e, "MISE_DATA_DIR=") {
-			hasMiseDataDir = true
-			if e != "MISE_DATA_DIR=/mise" {
-				t.Errorf("MISE_DATA_DIR = %q, want MISE_DATA_DIR=/mise", e)
-			}
-		}
-	}
-	if !hasMiseDataDir {
-		t.Error("missing MISE_DATA_DIR=/mise in env")
-	}
-}
-
 func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
 	spec := Spec{
 		RuntimeHome: "/root",
@@ -142,11 +125,12 @@ func TestBuildEnvPersistsAubeStore(t *testing.T) {
 }
 
 func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
-	// /mise is now a plain cache (tpod-cache-mise) declared by the mise profile;
-	// the hardcoded tpod-mise mount must be gone so there is exactly one /mise.
+	// The mise data dir is now a plain cache (tpod-cache-mise) declared by the
+	// mise profile; the hardcoded tpod-mise mount must be gone so there is
+	// exactly one.
 	spec := Spec{
 		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
-		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/mise"}},
+		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/root/.local/share/mise"}},
 	}
 	m, err := buildMounts(spec, "/root")
 	if err != nil {
@@ -154,15 +138,15 @@ func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
 	}
 	var miseMounts []mount.Mount
 	for _, mt := range m {
-		if mt.Target == "/mise" {
+		if mt.Target == "/root/.local/share/mise" {
 			miseMounts = append(miseMounts, mt)
 		}
 	}
 	if len(miseMounts) != 1 {
-		t.Fatalf("expected exactly one /mise mount, got %d: %+v", len(miseMounts), miseMounts)
+		t.Fatalf("expected exactly one mise mount, got %d: %+v", len(miseMounts), miseMounts)
 	}
 	if miseMounts[0].Source != "tpod-cache-mise" || miseMounts[0].Type != mount.TypeVolume {
-		t.Errorf("/mise mount = %+v, want volume tpod-cache-mise", miseMounts[0])
+		t.Errorf("mise mount = %+v, want volume tpod-cache-mise", miseMounts[0])
 	}
 }
 

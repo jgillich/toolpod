@@ -13,7 +13,7 @@ var pluginsFS embed.FS
 const appimageBackendPrefix = "appimage:"
 
 // PluginInstallCommand returns a shell command that writes the embedded mise
-// plugins into the shared MISE_DATA_DIR (/mise), so backend tools such as
+// plugins into the shared mise data dir, so backend tools such as
 // appimage:... resolve during a subsequent `mise install`. Files are
 // base64-encoded to survive the shell round-trip unchanged.
 func PluginInstallCommand() string {
@@ -21,7 +21,7 @@ func PluginInstallCommand() string {
 	// A leftover file or dangling symlink at the plugin dir would make
 	// mkdir -p fail with "File exists"; clear it first (rm -rf on a symlink
 	// removes the link, not its target).
-	b.WriteString("rm -rf /mise/plugins/appimage && ")
+	b.WriteString("rm -rf $HOME/.local/share/mise/plugins/appimage && ")
 	_ = fs.WalkDir(pluginsFS, "plugins", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -34,7 +34,7 @@ func PluginInstallCommand() string {
 			return err
 		}
 		rel := strings.TrimPrefix(p, "plugins/")
-		target := "/mise/plugins/" + rel
+		target := "$HOME/.local/share/mise/plugins/" + rel
 		dir := target[:strings.LastIndex(target, "/")]
 		b.WriteString("mkdir -p " + dir)
 		b.WriteString(" && printf '%s' '")
