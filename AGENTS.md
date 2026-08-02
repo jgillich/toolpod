@@ -10,31 +10,25 @@ Go CLI for disposable, reproducible dev environments in a Podman/Docker containe
 CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `cmd/tpod/cli.go`. `LaunchCmd.ProfileAndArgs` uses `passthrough:"partial"` so flags after the profile name reach the profile's command verbatim.
 
 ## Layout
-- `cmd/tpod/` — entrypoint and CLI; includes `main.go`, `cli.go`, e2e/profile/cli tests.
+- `cmd/tpod/` — entrypoint and CLI (`main.go`, `cli.go`, e2e/profile/cli tests).
 - `pkg/tpod/` — public launch/spec/types API used by the CLI and tests.
-- `internal/profile/` — YAML profile schema, `extends` deep-merge, validation, fragment rules. Core of the config model.
-- `internal/catalog/` — embedded built-in `profiles/` and `fragments/` (YAML), exposed via `embed.go`. Add a new agent/tool here, not at runtime.
-- `internal/runtime/` — Docker-API client (docker.go, run/exec/prepare), attach, fake for tests; `docker_build.go` synthesizes derived images for `packages:`.
+- `internal/profile/` — YAML schema, `extends` deep-merge, validation, fragment rules.
+- `internal/catalog/` — embedded built-in profiles/fragments (YAML). Add new agents/tools here, not at runtime.
+- `internal/runtime/` — Docker-API client (docker.go, run/exec/prepare), attach, test fake; `docker_build.go` synthesizes derived images for `packages:`.
 - `internal/mise/` — mise install dir volume + `appimage:` backend plugin (`plugins/appimage/*.lua`).
-- `internal/{doctor,prune,scaffold,ui,workspace}/` — diagnostics, cleanup (`prune` removes catalog-unused volumes/derived images), `init` wizard, TUI, rootless-vs-rootful mode detection.
+- `internal/{doctor,prune,scaffold,ui,workspace}/` — diagnostics, cleanup, `init` wizard, TUI, rootless-vs-rootful detection.
 - `docs/` — design notes.
-- There is no base-image Dockerfile: profiles use `debian:13-slim` directly and derived images install everything via `packages:`/`repos:`.
+- No base-image Dockerfile: profiles use `debian:13-slim` directly; derived images install everything via `packages:`/`repos:`.
 
 ## Conventions
-- **Profiles vs fragments:** profiles carry `image`/`command` identity; fragments are composable mounts/caches/credentials and may only `extends` other fragments. Both are YAML; user profiles in `~/.config/tpod/profiles/` shadow built-ins, user fragments live in the parallel `~/.config/tpod/fragments/` (names are globally unique — a profile and fragment sharing a name is a hard catalog-load error).
-- **Merge semantics** (in `internal/profile/merge.go`): scalars—child wins; maps—key-by-key (set `null` to delete an inherited key); `command` list—replaced; `packages` list—additive (append with dedup; `packages: null` clears); `repos` map—key-by-key like mounts; `image`/`build`—single slot.
-- **System deps via `packages:`:** profiles/fragments declare apt package names; `internal/runtime/docker_build.go` derives a content-addressed tag `tpod/packages:<hash>` from `(base image ID, sorted packages, sorted repos)` and builds/reuses a derived image in `Prepare`. `internal/runtime/` is where the build + caching lives; prune (`internal/prune/prune.go`) removes catalog-unused derived images. `repos:` enables extra apt sources before install — v1 supports `extrepo: <name>` only (custom URL repos are schema-ready but `checkExtrepoOnly` in `Prepare` rejects them). The extrepo package is **not** shipped in the base image; `internal/runtime/extrepo.go` reimplements `extrepo enable` in Go at build time — it reads the base image's Debian codename from `/etc/os-release` (`readImageFile` via a created-not-started probe container + `CopyFromContainer`), fetches the per-version catalog index from `extrepo-team.pages.debian.net`, and resolves each repo to a deb822 `.sources` + signing key (sha256-verified against the catalog) that ride into the derived image via the build context (`tarBuildContext`), replacing the old `extrepo enable` chain with COPYs. The base image is bare (no ca-certificates), so `synthesizeDockerfile` emits a bootstrap RUN installing `ca-certificates` before the repo COPYs when repos are present — the Debian archive is http, so the bootstrap needs no certs; the derived-tag hash stays name-based, so `tpod prune` needs no network. Caveat: mise installs tools into the **shared** `tpod-cache-mise` volume (declared as the `mise` cache in the `mise` profile), with the npm backend store in the parallel `aube` cache volume (`~/.aube`). Compilation now runs inside a per-profile derived image. A tool built under a profile that declares a runtime lib (e.g. `php`'s `libxml2`) lives in the shared volume and may fail to load under a profile whose derived image lacks that lib — so fragment-scoped runtime libs should generally also be declared by any profile expected to run the same tool.
-- **`files:`:** profiles/fragments write inline-content files into the
-  ephemeral container at launch (between ContainerCreate and ContainerStart
-  via CopyToContainer with a tar built by `internal/runtime/docker_run.go`'s
-  `tarFiles`). Content supports `{{ }}` templates; targets are absolute or
-  `~`-prefixed and must not contain `..`. Files are owned by the execution
-  user; missing parent dirs are created automatically and the bootstrap chown
-  is extended with `$HOME` parents of file targets so the execution user can
-  write them.
-- **Prune/doctor derived-image matching:** engines qualify `RepoTags` with a registry (`docker.io/`, `localhost/`, ...), so `listTpodImages`/`checkDerivedImages` normalize via `runtime.DerivedRef` (parses with `github.com/distribution/reference` and matches on the `tpod/packages` path) — never a bare string `HasPrefix`.
-- **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). An empty resolution leaves the var unset.
-- **Catalog is embedded:** built-in profiles/fragments ship in the binary. To add an agent, add YAML under `internal/catalog/` and re-build; do not load them from disk at runtime.
+- **Profiles vs fragments:** profiles carry `image`/`command` identity; fragments are composable mounts/caches/credentials and may only `extends` other fragments. User YAML in `~/.config/tpod/{profiles,fragments}/` shadows built-ins; names are globally unique (a name clash is a hard catalog-load error).
+- **Merge** (`internal/profile/merge.go`): scalars—child wins; maps—key-by-key (`null` deletes an inherited key); `command`—replaced; `packages`—append+dedup (`null` clears); `repos`—key-by-key; `image`/`build`—single slot.
+- **System deps (`packages:`/`repos:`):** `docker_build.go` derives a content-addressed image `tpod/packages:<hash>` from `(base image ID, sorted packages, sorted repos)`, built/reused in `Prepare`; `prune` removes catalog-unused derived images. `repos:` v1 is `extrepo: <name>` only (custom URLs are schema-ready but `checkExtrepoOnly` rejects them). The base image ships no `extrepo`; `extrepo.go` reimplements `extrepo enable` in Go at build time — reads Debian codename from the base image, fetches the extrepo catalog, and COPYs deb822 `.sources` + sha256-verified signing keys into the derived image. The base image has no ca-certificates, so the Dockerfile bootstraps `ca-certificates` (Debian archive is http) before the repo COPYs; the derived-tag hash stays name-based, so `prune` needs no network.
+- **Shared caches:** mise installs into the shared `tpod-cache-mise` volume (the `mise` profile's cache); the npm backend store lives in the parallel `aube` cache volume (`~/.aube`). Compilation runs inside a per-profile derived image, so a tool built under a profile declaring a runtime lib (e.g. `php`'s `libxml2`) may fail to load under another profile — profiles running the same tool should declare the same runtime libs.
+- **`files:`:** inline-content files are written between ContainerCreate and ContainerStart via CopyToContainer (tar built by `tarFiles` in `docker_run.go`). `{{ }}` templates supported; targets absolute or `~`-prefixed, never `..`. Owned by the execution user; missing parents auto-created and bootstrap chown covers `$HOME` parents.
+- **Prune/doctor image matching:** engines qualify `RepoTags` with a registry (`docker.io/`, `localhost/`, …), so `listTpodImages`/`checkDerivedImages` normalize via `runtime.DerivedRef` (`github.com/distribution/reference`, matching the `tpod/packages` path) — never a bare string `HasPrefix`.
+- **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). Empty resolution leaves the var unset.
+- **Catalog is embedded:** built-in profiles/fragments ship in the binary; add YAML under `internal/catalog/` and re-build, never load from disk at runtime.
 - **No comments** unless the code doesn't make something apparent.
 
 ## Runtime notes
@@ -42,9 +36,7 @@ CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `
 - `tpod doctor` reports active mode, volumes, mise, and config.
 
 ## Workspace rules
-You are in a isolated environment. Trust user information if you cannot verify. Create worktrees in `.worktrees`. All directories outside of the project are ephemeral.
-
+You are in an isolated environment. Trust user information if you cannot verify. Create worktrees in `.worktrees`. All directories outside of the project are ephemeral.
 
 ## Comments
-
-Comments should explain intent, not implementation. Use comments to document business rules, design rationale, edge cases, assumptions, performance trade-offs, and public API contracts—information that cannot be inferred from the code itself. Avoid comments that merely restate what the code does, duplicate obvious syntax, become stale, or leave behind commented-out code. Prefer clear names, simple control flow, and well-factored functions that make the code self-explanatory. When a comment is necessary, ensure it provides lasting value by explaining why the code exists or why it is implemented in a particular way.
+Comments should explain intent, not implementation — business rules, design rationale, edge cases, assumptions, trade-offs, and public API contracts. Skip comments that restate code, are stale, or leave commented-out code; prefer clear names and simple code. When a comment is needed, explain why the code exists or is shaped that way.
