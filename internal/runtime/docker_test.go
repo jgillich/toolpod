@@ -689,12 +689,13 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 	if !strings.HasPrefix(imageRef, "tpod/packages:") {
 		t.Errorf("imageRef = %q, want tpod/packages: prefix", imageRef)
 	}
-	// The extrepo-enabled repo must have let apt install mise from the
-	// mise repo into the derived image.
+	// The resolved repo must have produced a deb822 .sources and signing key
+	// in the derived image (the extrepo reimplementation path), and the repo
+	// must have let apt install mise from the mise repo.
 	code, err := rt.Run(context.Background(), Spec{
 		ProfileName: "test-repos",
 		Image:       imageRef,
-		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version`},
+		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version && test -f /etc/apt/keyrings/mise.asc && grep -q "Signed-By: /etc/apt/keyrings/mise.asc" /etc/apt/sources.list.d/extrepo_mise.sources`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		RuntimeHome: "/root",
 		Network:     "none",

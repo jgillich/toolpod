@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"archive/tar"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -234,32 +236,37 @@ func TestSynthesizeDockerfile(t *testing.T) {
 
 func TestSynthesizeDockerfileRepos(t *testing.T) {
 	const baseRef = "base:1"
-	got := synthesizeDockerfile(baseRef, map[string]Repo{
-		"mise":    {ExtRepo: "mise"},
-		"nodejs":  {ExtRepo: "nodejs"},
-		"extrane": {ExtRepo: "extrane"},
-	}, []string{"mise"})
+	repos := []resolvedRepo{
+		{name: "mise"},
+		{name: "nodejs"},
+		{name: "extrane"},
+	}
+	got := synthesizeDockerfile(baseRef, repos, []string{"mise"})
 	if !strings.Contains(got, "FROM "+baseRef+"\n") {
 		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)
 	}
-	// extrepo enables emitted in sorted map-key order, before apt-get update.
-	for _, want := range []string{"extrepo enable 'extrane'", "extrepo enable 'mise'", "extrepo enable 'nodejs'"} {
+	// Each repo emits a COPY of its .sources and key, in sorted repo order,
+	// before apt-get update.
+	for _, want := range []string{"COPY extrepo/extrane.sources", "COPY extrepo/mise.sources", "COPY extrepo/nodejs.sources"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("dockerfile must contain %q:\n%s", want, got)
 		}
 	}
 	pos := make([]int, 3)
-	for i, want := range []string{"'extrane'", "'mise'", "'nodejs'"} {
-		pos[i] = strings.Index(got, want)
+	for i, want := range []string{"extrane", "mise", "nodejs"} {
+		pos[i] = strings.Index(got, "COPY extrepo/"+want+".sources")
 		if pos[i] < 0 {
 			t.Fatalf("missing %q in dockerfile:\n%s", want, got)
 		}
 	}
 	if !(pos[0] < pos[1] && pos[1] < pos[2]) {
-		t.Errorf("extrepo enables must be sorted by map key: %v", pos)
+		t.Errorf("repo COPYs must be sorted by name: %v", pos)
+	}
+	if !strings.Contains(got, "COPY extrepo/mise.asc /etc/apt/keyrings/mise.asc") {
+		t.Errorf("dockerfile must COPY the key to apt keyrings:\n%s", got)
 	}
 	if !strings.Contains(got, "apt-get update") {
-		t.Errorf("dockerfile must run apt-get update after enabling repos:\n%s", got)
+		t.Errorf("dockerfile must run apt-get update after copying repos:\n%s", got)
 	}
 }
 
@@ -281,29 +288,34 @@ func TestSynthesizeDockerfileShellQuotesPackages(t *testing.T) {
 	}
 }
 
-func TestTarDockerfileProducesUsableTar(t *testing.T) {
+func TestTarBuildContextProducesUsableTar(t *testing.T) {
 	body := []byte("FROM base:1\n")
-	r, err := tarDockerfile(body)
+	files := map[string][]byte{
+		"extrepo/mise.sources": []byte("Types: deb\nURIs: https://mise.jdx.dev/deb\n"),
+		"extrepo/mise.asc":     []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n"),
+	}
+	r, err := tarBuildContext(body, files)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tr := tar.NewReader(r)
-	hdr, err := tr.Next()
-	if err != nil {
-		t.Fatal(err)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, hdr.Name)
+		if got, _ := io.ReadAll(tr); !bytes.Equal(got, files[hdr.Name]) && hdr.Name != "Dockerfile" {
+			t.Errorf("tar entry %q content mismatch", hdr.Name)
+		}
 	}
-	if hdr.Name != "Dockerfile" {
-		t.Errorf("tar entry name = %q, want Dockerfile", hdr.Name)
-	}
-	got, err := io.ReadAll(tr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(body) {
-		t.Errorf("tar content = %q, want %q", got, body)
-	}
-	if _, err := tr.Next(); err != io.EOF {
-		t.Errorf("expected only one tar entry, got %v", err)
+	want := []string{"Dockerfile", "extrepo/mise.asc", "extrepo/mise.sources"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("tar entry names = %v, want %v", names, want)
 	}
 }
 

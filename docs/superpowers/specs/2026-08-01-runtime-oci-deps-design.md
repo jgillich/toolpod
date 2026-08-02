@@ -199,7 +199,7 @@ identically for build and runtime deps because nothing is relocated.
 - `internal/catalog/fragments/gui.yaml` — gains a `packages:` block with the
   full GUI/GTK/X11/nss/alsa/GStreamer set currently at Dockerfile L41-81.
 - `Dockerfile` — shrinks to `FROM debian:13`, install just the bare-minimum
-  bootstrap (`extrepo`, `ca-certificates`; `curl`/`git`/`mise`/libs all move to
+  bootstrap (`ca-certificates`; `curl`/`git`/`mise`/libs all move to
   catalog `packages:`). `mise` is no longer in
   the base — the `mise` profile's derived image installs it via its
   `repos:`/`packages:`. The `xdg-open` host-portal wrapper moved out of the
@@ -284,18 +284,18 @@ Generated in-memory by Go and piped to the Docker daemon via
 
 ```dockerfile
 FROM <base-ref>
-RUN <extrepo enable <name>, one per sorted repo, chained with &&> \
-    apt-get update \
+COPY extrepo/<name>.sources /etc/apt/sources.list.d/extrepo_<name>.sources
+COPY extrepo/<name>.asc /etc/apt/keyrings/<name>.asc
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         <sorted package list, shell-quoted> \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-The `extrepo enable` chain appears only when the profile declares repos, each
-emitted in sorted map-key order, using the `ExtRepo` value (the catalog name).
-The base image already carries `extrepo` and `ca-certificates`, so the enable
-fetches the repo's signing key and `.sources` file over https in a single
-layer before the shared `apt-get update`.
+The `COPY` pair appears only when the profile declares repos, one per sorted
+repo name. The `.sources` and key are resolved at build time by
+`internal/runtime/extrepo.go` and carried in the build context (`tarBuildContext`).
+The extrepo package is **not** in the base image.
 
 `FROM` uses the original base-image **reference** (e.g.
 `ghcr.io/jgillich/tpod-mise:latest`), not the image ID. `ensureImagePulled`
@@ -330,8 +330,8 @@ repos:
     extrepo: mise    # extrepo catalog name; may differ from the key
 ```
 
-`Repo.ExtRepo` is the extrepo catalog name (`extrepo enable <ExtRepo>`). The
-schema also carries `url`/`key_url`/`suites`/`components` for fully inline
+`Repo.ExtRepo` is the extrepo catalog name. The schema also carries
+`url`/`key_url`/`suites`/`components` for fully inline
 custom repos, but v1 `Prepare` rejects those with "custom apt repos not yet
 supported; use extrepo: <name>" — the deferred branch is additive, no schema
 migration later. Canonical-repos serialization (hash input):
@@ -339,15 +339,26 @@ migration later. Canonical-repos serialization (hash input):
 per repo, sorted by map key, entries joined with `\u0002` (distinct from the
 in-entry `\u0001`) so the encoding is injective even with arbitrary URL
 characters. The repos segment joins the hash only when non-empty, preserving
-back-compat for packages-only profiles.
+back-compat for packages-only profiles. The hash is **name-based** (the
+extrepo catalog name, not the resolved URL/key), so `tpod prune` — which
+computes "used" tags offline from profile repos — needs no network; a repo
+whose catalog entry rotates (key/URL change) is only picked up when the
+derived image is rebuilt for another reason.
 
-Rationale for extrepo over a hand-rolled custom source: extrepo is the
-Debian-native tool for adding third-party `.sources` with key management
-(apt-key deprecated), the base image already carries it for exactly this
-purpose, and catalog authors get a stable, vetted catalog name instead of
-re-encoding GPG-key fetching and `.sources` grammar per repo.
-
-The build implementation is intentionally opaque. Future versions may
+The extrepo package itself is **not** shipped in the base image.
+`internal/runtime/extrepo.go` reimplements `extrepo enable` in Go at build
+time: it reads the base image's Debian codename from `/etc/os-release`
+(via a created-but-not-started probe container + `CopyFromContainer`),
+fetches the per-version catalog index
+(`https://extrepo-team.pages.debian.net/extrepo-data/debian/<codename>/index.yaml`),
+and resolves each repo into a deb822 `.sources` document + signing key
+(sha256-verified against the catalog's `gpg-key-checksum`). Only the `main`
+license policy is enabled, mirroring extrepo's default config. The resolved
+files ride into the derived image as build-context COPYs, so no runtime
+dependency (curl, gpgv, perl) is needed. Keying the catalog fetch by the
+base image's codename keeps it correct when a user overrides `image:` with a
+different Debian version (we support Debian only). The build implementation
+is intentionally opaque. Future versions may
 replace Dockerfile synthesis with direct BuildKit APIs or another OCI
 builder without affecting the external behavior or the cache-key contract.
 

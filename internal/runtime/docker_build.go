@@ -109,12 +109,17 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 
 // buildDerivedImage builds and tags a derived image (base + repos + packages)
 // as derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef> (the
-// base image is already pulled), an extrepo enable per sorted repo, then a
+// base image is already pulled), a COPY per resolved repo (the deb822 .sources
+// and signing key resolved from the extrepo catalog at build time), then a
 // single apt-get install of the sorted, shell-quoted package list. Build
 // output is streamed through w.
 func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef string, repos map[string]Repo, packages []string, w ProgressWriter) error {
-	dockerfile := []byte(synthesizeDockerfile(baseRef, repos, packages))
-	buildContext, err := tarDockerfile(dockerfile)
+	resolved, err := resolveExtrepoRepos(ctx, cli, baseRef, repos)
+	if err != nil {
+		return fmt.Errorf("resolve repos: %w", err)
+	}
+	dockerfile := []byte(synthesizeDockerfile(baseRef, resolved, packages))
+	buildContext, err := tarBuildContext(dockerfile, repoFiles(resolved))
 	if err != nil {
 		return fmt.Errorf("build context: %w", err)
 	}
@@ -213,10 +218,11 @@ func sortedCopy(s []string) []string {
 // synthesizeDockerfile renders the derived-image Dockerfile. The package list
 // is sorted (so reordering catalog entries can't change the emitted file) and
 // each name is shell-quoted (defense-in-depth; validation already rejects
-// metacharacters). Repos are emitted as an `extrepo enable <name>` chain
-// (sorted by map key) before apt-get update; the extrepo catalog name is the
-// Repo.ExtRepo value, not the map key.
-func synthesizeDockerfile(baseRef string, repos map[string]Repo, packages []string) string {
+// metacharacters). Each resolved repo emits a COPY of its .sources and key
+// (sorted by map key) into the image before apt-get update, replacing the
+// old `extrepo enable <name>` chain. The context file names are
+// extrepo/<name>.sources and extrepo/<name>.asc.
+func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []string) string {
 	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
 	for i, p := range sorted {
@@ -224,17 +230,29 @@ func synthesizeDockerfile(baseRef string, repos map[string]Repo, packages []stri
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", baseRef)
-	b.WriteString("RUN")
-	for _, name := range sortedRepoKeys(repos) {
-		b.WriteString(" \\\n    extrepo enable ")
-		b.WriteString(shellQuote([]string{repos[name].ExtRepo}))
-		b.WriteString(" &&")
+	for _, r := range sortedResolvedRepos(repos) {
+		fmt.Fprintf(&b, "COPY extrepo/%s.sources /etc/apt/sources.list.d/extrepo_%s.sources\n", r.name, r.name)
+		fmt.Fprintf(&b, "COPY extrepo/%s.asc /etc/apt/keyrings/%s.asc\n", r.name, r.name)
 	}
-	b.WriteString(" apt-get update \\\n")
+	b.WriteString("RUN apt-get update \\\n")
 	b.WriteString("    && apt-get install -y --no-install-recommends \\\n")
 	b.WriteString("        " + strings.Join(quoted, " \\\n        ") + " \\\n")
 	b.WriteString("    && rm -rf /var/lib/apt/lists/*\n")
 	return b.String()
+}
+
+// repoFiles maps resolved repos to their build-context files, keyed by the
+// paths the synthesized Dockerfile COPYs from.
+func repoFiles(repos []resolvedRepo) map[string][]byte {
+	if len(repos) == 0 {
+		return nil
+	}
+	files := make(map[string][]byte, 2*len(repos))
+	for _, r := range repos {
+		files["extrepo/"+r.name+".sources"] = []byte(r.sources)
+		files["extrepo/"+r.name+".asc"] = r.key
+	}
+	return files
 }
 
 func sortedRepoKeys(repos map[string]Repo) []string {
@@ -246,23 +264,47 @@ func sortedRepoKeys(repos map[string]Repo) []string {
 	return names
 }
 
-// tarDockerfile wraps a Dockerfile body into a tar archive stream suitable as
-// an ImageBuild build context.
-func tarDockerfile(dockerfile []byte) (io.Reader, error) {
+// sortedResolvedRepos returns a name-sorted copy of resolved repos so the
+// emitted COPY lines are deterministic regardless of input order.
+func sortedResolvedRepos(repos []resolvedRepo) []resolvedRepo {
+	out := append([]resolvedRepo(nil), repos...)
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// tarBuildContext wraps a Dockerfile body plus per-repo context files (the
+// .sources and .asc the synthesized Dockerfile COPYs) into a tar archive
+// stream suitable as an ImageBuild build context.
+func tarBuildContext(dockerfile []byte, files map[string][]byte) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := tw.WriteHeader(&tar.Header{
-		Name: "Dockerfile",
-		Mode: 0o644,
-		Size: int64(len(dockerfile)),
-	}); err != nil {
+	if err := writeTarEntry(tw, "Dockerfile", 0o644, dockerfile); err != nil {
 		return nil, err
 	}
-	if _, err := tw.Write(dockerfile); err != nil {
-		return nil, err
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := writeTarEntry(tw, name, 0o644, files[name]); err != nil {
+			return nil, err
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
 	return &buf, nil
+}
+
+func writeTarEntry(tw *tar.Writer, name string, mode int64, content []byte) error {
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: mode,
+		Size: int64(len(content)),
+	}); err != nil {
+		return err
+	}
+	_, err := tw.Write(content)
+	return err
 }
