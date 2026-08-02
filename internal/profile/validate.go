@@ -22,8 +22,6 @@ var reservedNames = map[string]bool{
 	"init":       true,
 }
 
-// validate checks a resolved profile for required fields and invariants.
-// It runs on the merged result (after extends resolution).
 func validate(rc RawProfile) error {
 	if rc.Version == 0 {
 		return ProfileError{Path: rc.Path, Message: "missing required field: version"}
@@ -182,8 +180,6 @@ func checkPortNum(s, what, path string) error {
 	}
 	return nil
 }
-// validateReservedName rejects profile names that collide with subcommands.
-// Called during catalog load, not on the merged profile.
 func validateReservedName(rc RawProfile, name string) error {
 	if reservedNames[name] {
 		return ProfileError{Path: rc.Path, Message: "profile name " + name + " is reserved (collides with a subcommand)"}
@@ -208,7 +204,6 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// ProfileNameFromPath extracts the profile name from a profile file path.
 func ProfileNameFromPath(path string) string {
 	base := path
 	if idx := strings.LastIndex(base, "/"); idx >= 0 {

@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// ProgressWriter reports progress during Prepare/Run.
 type ProgressWriter interface {
 	WriteProgress(line string)
 }
@@ -58,7 +57,6 @@ func NeedsEmbeddedPlugin(tools map[string]string) bool {
 	return false
 }
 
-// shq single-quotes s for embedding in a shell command.
 func shq(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

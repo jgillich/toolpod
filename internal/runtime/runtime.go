@@ -34,7 +34,6 @@ type Repo struct {
 	Components string
 }
 
-// FileSpec is a single file written into the container at launch.
 type FileSpec struct {
 	Target  string
 	Content string

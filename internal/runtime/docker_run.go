@@ -40,12 +40,6 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// drop to the host user via setpriv (see containerIdentity).
 	userns, rootUser, hostUID, hostGID := containerIdentity(d.podman)
 
-	// Build the container entrypoint:
-	// 1. Write profile tools to mise global config + activate (sets up shims on PATH)
-	// 2. Install project tools (mise auto-detects mise.toml/.tool-versions in CWD)
-	// 3. Evaluate project environment (adds project tools to PATH immediately)
-	// 4. If shell command, inject activate hooks into .bashrc for interactive cd-switching
-	// 5. exec the profile command
 	configDir := filepath.Join(runtimeHome, ".config", "mise")
 	activateCmd := mise.ActivateCommand(configDir, spec.Tools)
 	parts := []string{}
@@ -160,7 +154,6 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		}
 	}
 
-	// Signal forwarding with cleanup
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer func() {
@@ -309,7 +302,6 @@ func writeContainerFiles(ctx context.Context, cli *client.Client, containerID st
 	return cli.CopyToContainer(ctx, containerID, "/", bytes.NewReader(data), container.CopyToContainerOptions{})
 }
 
-// fileTargets lists every container file target for a spec.
 func fileTargets(spec Spec) []string {
 	targets := make([]string, 0, len(spec.Files))
 	for _, f := range spec.Files {
@@ -344,7 +336,6 @@ func homeParents(home string, targets []string) []string {
 	return out
 }
 
-// mountTargets lists every container mount target for a spec.
 func mountTargets(spec Spec) []string {
 	targets := []string{spec.Workspace.Target}
 	for _, mt := range spec.Mounts {
@@ -371,12 +362,10 @@ func containerIdentity(podman bool) (container.UsernsMode, string, int, int) {
 	return "", containerUser, os.Getuid(), os.Getgid()
 }
 
-// shq single-quotes s for embedding in a shell command.
 func shq(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// quoteJoin single-quotes and joins a list of shell arguments.
 func quoteJoin(paths []string) string {
 	quoted := make([]string, len(paths))
 	for i, p := range paths {

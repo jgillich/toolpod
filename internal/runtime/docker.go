@@ -60,7 +60,6 @@ func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
 		host = "unix:///var/run/docker.sock"
 	}
 
-	// For unix sockets, use http.Client with a custom transport.
 	var httpClient *http.Client
 	var url string
 	if len(host) > 7 && host[:7] == "unix://" {
@@ -99,8 +98,6 @@ func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
 	return info.Rootless, nil
 }
 
-// isLikelyRootlessSocket checks whether the DOCKER_HOST socket path matches
-// known rootless Podman locations (e.g. /run/user/<uid>/podman/podman.sock).
 func isLikelyRootlessSocket(host string) bool {
 	return strings.Contains(host, "/run/user/") && strings.Contains(host, "podman")
 }

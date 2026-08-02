@@ -433,7 +433,6 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Read the generated file
 	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
 	if err != nil {
 		t.Fatal(err)

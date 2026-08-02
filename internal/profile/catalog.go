@@ -20,12 +20,10 @@ type Catalog struct {
 	fragments map[string]bool       // names that are fragments (not profiles)
 }
 
-// IsFragment returns true if name is a fragment, not a profile.
 func (c Catalog) IsFragment(name string) bool {
 	return c.fragments[name]
 }
 
-// Get returns the raw profile for a profile name, plus whether it was found.
 func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok
@@ -44,18 +42,15 @@ func (c Catalog) GetBuiltin(name string) (RawProfile, bool) {
 	return rc, ok
 }
 
-// IsUserShadow returns true if a user file shadows a built-in of this name.
 func (c Catalog) IsUserShadow(name string) bool {
 	_, hasBuiltin := c.builtins[name]
 	_, hasEntry := c.entries[name]
 	if !hasBuiltin || !hasEntry {
 		return false
 	}
-	// The entry is a shadow if its Path is not a built-in path.
 	return c.entries[name].Path != c.builtins[name].Path
 }
 
-// Names returns all names in the catalog (profiles and fragments), sorted.
 func (c Catalog) Names() []string {
 	names := make([]string, 0, len(c.entries))
 	for n := range c.entries {
@@ -65,7 +60,6 @@ func (c Catalog) Names() []string {
 	return names
 }
 
-// ProfileNames returns only profile names (excluding fragments), sorted.
 func (c Catalog) ProfileNames() []string {
 	names := make([]string, 0, len(c.entries))
 	for n := range c.entries {
@@ -118,7 +112,6 @@ func LoadProfiles(userDir string) (Catalog, error) {
 		if err := loadUserDir(userDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
 		}
-		// Load user fragments from <userDir>/fragments/
 		userFragDir := filepath.Join(userDir, "fragments")
 		if err := loadUserFragments(userFragDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
@@ -301,7 +294,7 @@ func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[st
 		if fragmentNames[name] {
 			return ProfileError{Path: rc.Path, Message: "name collision: profile and fragment share name " + name}
 		}
-		entries[name] = rc // shadow
+		entries[name] = rc
 		return nil
 	})
 }
@@ -516,7 +509,6 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 	})
 }
 
-// ParseRaw parses raw YAML bytes into a RawProfile with the given source path.
 func ParseRaw(data []byte, path string) (RawProfile, error) {
 	return parseRaw(data, path)
 }

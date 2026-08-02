@@ -28,8 +28,6 @@ var extrepoCatalogBase = "https://extrepo-team.pages.debian.net/extrepo-data/deb
 // out). Repos whose policy isn't enabled are rejected at resolve time.
 var extrepoEnabledPolicies = map[string]bool{"main": true}
 
-// extrepoEntry is one repo in the catalog index.yaml. Only the fields needed
-// to synthesize an apt source are parsed.
 type extrepoEntry struct {
 	Policy         string            `yaml:"policy"`
 	Policies       map[string]string `yaml:"policies"`
@@ -140,7 +138,6 @@ func (e extrepoEntry) renderSources(name, components, keyPath string) string {
 	return b.String()
 }
 
-// fetchExtrepoIndex downloads and parses the per-version catalog index.yaml.
 func fetchExtrepoIndex(ctx context.Context, codename string) (map[string]extrepoEntry, error) {
 	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/index.yaml")
 	if err != nil {
@@ -153,7 +150,6 @@ func fetchExtrepoIndex(ctx context.Context, codename string) (map[string]extrepo
 	return index, nil
 }
 
-// fetchExtrepoKey downloads the armored signing key for a repo.
 func fetchExtrepoKey(ctx context.Context, codename, keyFile string) ([]byte, error) {
 	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/"+keyFile)
 	if err != nil {

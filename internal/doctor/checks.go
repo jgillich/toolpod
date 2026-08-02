@@ -88,9 +88,6 @@ func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "mise base image", Status: Pass, Message: "present"}
 }
 
-// checkDerivedImages reports how many cached tpod/packages:<hash> derived
-// images exist locally (the profile-level system-dep images) and their
-// combined reclaimable size.
 func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	f := filters.NewArgs()
 	f.Add("reference", "tpod/packages")
@@ -219,7 +216,6 @@ func checkUserOverrides(userDir string) []Check {
 		if !ok {
 			continue
 		}
-		// Skip built-in profiles and all fragments; only check user-overridden profile files.
 		if strings.HasPrefix(rc.Path, "built-in:") || catMerged.IsFragment(name) {
 			continue
 		}

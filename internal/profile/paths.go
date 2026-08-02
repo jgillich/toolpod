@@ -19,7 +19,6 @@ type tmplData struct {
 	Ports map[string]string
 }
 
-// expandEnvMap builds a map[string]string from os.Environ for template execution.
 func expandEnvMap() map[string]string {
 	out := make(map[string]string)
 	for _, kv := range os.Environ() {

@@ -8,7 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// handleResize forwards terminal resize events to the container (spec §3.3).
 func (d *DockerRuntime) handleResize(ctx context.Context, containerID string, winCh chan os.Signal) {
 	for range winCh {
 		rows, cols := terminalSize()

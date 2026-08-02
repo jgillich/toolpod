@@ -32,7 +32,6 @@ type Options struct {
 const newProfileOption = "New"
 
 func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.Writer) error {
-	// Determine profile dir
 	userDir := opts.ProfileDir
 	if userDir == "" {
 		userDir = profile.DefaultProfileDir()
@@ -84,7 +83,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	bases := opts.Extends
 	profileName := opts.Name
 
-	// Resolve profile name (prompt if interactive and not provided)
 	if profileName == "" {
 		if !interactive {
 			return fmt.Errorf("profile name is required")
@@ -119,8 +117,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	// Validate the profile name: reserved subcommand names, path safety, and
-	// fragment collisions.
 	if err := profile.ValidateName(profileName); err != nil {
 		return err
 	}
@@ -162,7 +158,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		wizardUsed = true
 	}
 
-	// Validate extends targets (profiles and fragments alike).
 	bases = dedup(bases)
 	for _, b := range bases {
 		if _, ok := cat.Get(b); !ok {
@@ -170,7 +165,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	// Generate the profile content
 	content, err := generate(profileName, bases, cat)
 	if err != nil {
 		return fmt.Errorf("generating profile: %w", err)
@@ -214,21 +208,18 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	// Dry run
 	if opts.DryRun {
 		fmt.Fprintf(stdout, "# dry-run: would write %s\n", targetPath)
 		fmt.Fprint(stdout, content)
 		return nil
 	}
 
-	// Check existing file
 	if _, err := os.Stat(targetPath); err == nil {
 		needPrompt := false
 		if !opts.Force {
 			if !wizardUsed {
 				return fmt.Errorf("%s already exists (use --force to overwrite)", targetPath)
 			}
-			// Interactive wizard was used: confirm overwrite
 			needPrompt = true
 		}
 
@@ -244,12 +235,10 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	// Create directory
 	if err := os.MkdirAll(userDir, 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
 
-	// Write file
 	if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", targetPath, err)
 	}
@@ -431,7 +420,6 @@ func promptFragmentsHuh(names []string, stdin io.Reader, stdout io.Writer) ([]st
 	return selected, nil
 }
 
-// promptConfirm asks a yes/no question. Uses huh on a TTY, text fallback otherwise.
 func promptConfirm(tty bool, title string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (bool, error) {
 	if tty {
 		var confirmed bool
@@ -455,13 +443,10 @@ func promptConfirm(tty bool, title string, stdin io.Reader, stdout io.Writer, re
 	return line == "y" || line == "yes", nil
 }
 
-// promptOverwrite asks whether to overwrite an existing profile file.
 func promptOverwrite(tty bool, targetPath string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (bool, error) {
 	return promptConfirm(tty, fmt.Sprintf("%s already exists. Overwrite?", targetPath), stdin, stdout, reader)
 }
 
-// promptReviewChoice offers a three-way choice after showing the summary:
-// proceed, view the details in $EDITOR, or abort.
 func promptReviewChoice(tty bool, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (string, error) {
 	if tty {
 		var selected string

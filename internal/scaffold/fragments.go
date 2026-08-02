@@ -27,7 +27,6 @@ func Fragments() map[string]profile.RawProfile {
 	return fragments
 }
 
-// FragmentNames returns sorted fragment names for display.
 func FragmentNames() []string {
 	names := make([]string, 0, len(Fragments()))
 	for n := range Fragments() {

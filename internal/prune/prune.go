@@ -85,9 +85,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 			}
 		}
 		if len(remove) > 0 {
-			if !opts.Force && !confirm("volumes", remove, os.Stdin) {
-				// Skip volumes; continue to images if scoped.
-			} else {
+			if opts.Force || confirm("volumes", remove, os.Stdin) {
 				for _, name := range remove {
 					if err := cli.VolumeRemove(ctx, name, true); err != nil {
 						fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", name, err)
@@ -111,9 +109,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 			}
 		}
 		if len(remove) > 0 {
-			if !opts.Force && !confirm("images", remove, os.Stdin) {
-				// Skip images.
-			} else {
+			if opts.Force || confirm("images", remove, os.Stdin) {
 				for _, ref := range remove {
 					if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
 						fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", ref, err)

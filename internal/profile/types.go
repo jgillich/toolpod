@@ -58,7 +58,6 @@ type DbusConfig struct {
 	Own  map[string]*struct{} `yaml:"own,omitempty"`
 }
 
-// Mount is a single bind mount, keyed by container target path.
 type Mount struct {
 	Source   string `yaml:"source"`
 	ReadOnly bool   `yaml:"read_only"`
@@ -137,7 +136,6 @@ type File struct {
 	Mode    uint32 `yaml:"mode,omitempty"`
 }
 
-// DeviceBind attaches a host device node into the container.
 type DeviceBind struct {
 	Source      string `yaml:"source,omitempty"`
 	Permissions string `yaml:"permissions,omitempty"`

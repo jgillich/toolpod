@@ -10,7 +10,6 @@ import (
 //go:embed plugins
 var pluginsFS embed.FS
 
-// appimageBackendPrefix identifies tools backed by the embedded appimage plugin.
 const appimageBackendPrefix = "appimage:"
 
 // PluginInstallCommand returns a shell command that writes the embedded mise

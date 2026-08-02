@@ -251,8 +251,6 @@ func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []strin
 	return b.String()
 }
 
-// repoFiles maps resolved repos to their build-context files, keyed by the
-// paths the synthesized Dockerfile COPYs from.
 func repoFiles(repos []resolvedRepo) map[string][]byte {
 	if len(repos) == 0 {
 		return nil
@@ -282,9 +280,6 @@ func sortedResolvedRepos(repos []resolvedRepo) []resolvedRepo {
 	return out
 }
 
-// tarBuildContext wraps a Dockerfile body plus per-repo context files (the
-// .sources and .asc the synthesized Dockerfile COPYs) into a tar archive
-// stream suitable as an ImageBuild build context.
 func tarBuildContext(dockerfile []byte, files map[string][]byte) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

@@ -27,7 +27,6 @@ func expectedTag(baseID string, packages []string, repos map[string]Repo) string
 		return ""
 	}
 	sorted := append([]string(nil), packages...)
-	// sort
 	for i := 1; i < len(sorted); i++ {
 		for j := i; j > 0 && sorted[j-1] > sorted[j]; j-- {
 			sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
@@ -49,7 +48,6 @@ func expectedCanonicalRepos(repos map[string]Repo) string {
 	for name := range repos {
 		names = append(names, name)
 	}
-	// sort
 	for i := 1; i < len(names); i++ {
 		for j := i; j > 0 && names[j-1] > names[j]; j-- {
 			names[j-1], names[j] = names[j], names[j-1]
