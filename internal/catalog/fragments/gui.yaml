@@ -57,3 +57,43 @@ environment:
 dbus:
   talk:
     org.freedesktop.portal.Desktop: {}
+files:
+  /usr/local/bin/xdg-open:
+    content: |
+      #!/bin/sh
+      # Open URLs in the host browser by forwarding to the XDG desktop portal on the
+      # session bus (gui fragment mounts the host XDG_RUNTIME_DIR); fall back to the
+      # real xdg-open otherwise.
+      portal_open() {
+        timeout 10 env LD_LIBRARY_PATH= DBUS_SESSION_BUS_ADDRESS="$1" /usr/bin/dbus-send --session --print-reply \
+          --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
+          org.freedesktop.portal.OpenURI.OpenURI \
+          string:'' "string:$2" dict:string:variant: >/dev/null 2>&1
+      }
+
+      case "$1" in
+        [a-zA-Z][a-zA-Z0-9+.-]*:*)
+          for a in "${DBUS_SESSION_BUS_ADDRESS:-}" "unix:path=${XDG_RUNTIME_DIR:-/nonexistent}/bus"; do
+            [ -n "$a" ] || continue
+            case "$a" in
+              unix:path=*)
+                p="${a#unix:path=}"
+                p="${p%%,*}"
+                [ -S "$p" ] || continue
+                ;;
+            esac
+            if portal_open "$a" "$1"; then
+              exit 0
+            fi
+          done
+          ;;
+      esac
+      case "$0" in
+        */*) self=$(readlink -f "$0") ;;
+        *) self=$(command -v "$0") ;;
+      esac
+      if [ -x "${self%/*}/xdg-open.real" ]; then
+        exec "${self%/*}/xdg-open.real" "$@"
+      fi
+      exec /usr/bin/xdg-open "$@"
+    mode: 0755

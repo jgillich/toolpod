@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -319,6 +320,30 @@ func TestMiseProfileResolvesMiseRepo(t *testing.T) {
 	}
 	if repo.ExtRepo != "mise" {
 		t.Errorf("repos[mise].ExtRepo = %q, want mise", repo.ExtRepo)
+	}
+}
+
+func TestGuiFragmentCarriesXdgOpenWrapper(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	cfg, err := ResolveProfile(cat, "buzz")
+	if err != nil {
+		t.Fatalf("resolve buzz: %v", err)
+	}
+	f, ok := cfg.Files["/usr/local/bin/xdg-open"]
+	if !ok {
+		t.Fatal("buzz should carry the xdg-open wrapper via the gui fragment")
+	}
+	if f.Mode != 0o755 {
+		t.Errorf("wrapper mode = %o, want 755", f.Mode)
+	}
+	if !strings.Contains(f.Content, "org.freedesktop.portal.Desktop") {
+		t.Error("wrapper should forward URLs to the host portal")
+	}
+	if !strings.Contains(f.Content, "xdg-open.real") {
+		t.Error("wrapper should fall back to the real xdg-open")
 	}
 }
 

@@ -200,11 +200,12 @@ identically for build and runtime deps because nothing is relocated.
   full GUI/GTK/X11/nss/alsa/GStreamer set currently at Dockerfile L41-81.
 - `Dockerfile` — shrinks to `FROM debian:13`, install just the bare-minimum
   bootstrap (`extrepo`, `ca-certificates`; `curl`/`git`/`mise`/libs all move to
-  catalog `packages:`), and the `docker/xdg-open` copy. `mise` is no longer in
+  catalog `packages:`). `mise` is no longer in
   the base — the `mise` profile's derived image installs it via its
-  `repos:`/`packages:`. The `xdg-open.real → /usr/bin/xdg-open` symlink is
-  dangling until a GUI profile's derived image installs xdg-utils (harmless;
-  the helper only runs inside AppImage tools).
+  `repos:`/`packages:`. The `xdg-open` host-portal wrapper moved out of the
+  base into the `gui` fragment's `files:` (written to `/usr/local/bin/xdg-open`
+  at launch; the appimage backend swaps it into bundles). Its fallback execs a
+  sibling `xdg-open.real` when present (AppImage bundles) else `/usr/bin/xdg-open`.
 - `README.md` — `packages:` added to the profile schema reference; merge
   semantics documented; `tpod prune --images` documented; the "host lacks build
   permission" escape hatch (ship a custom `image:` yourself) documented.
