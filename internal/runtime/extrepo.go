@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -222,6 +223,11 @@ func parseOSReleaseCodename(content string) (string, error) {
 // readImageFile copies a file out of a locally-present image. The container
 // is created (which materializes the merged layer) but never started, so the
 // operation needs no runtime.
+//
+// Engines differ on symlinks: Docker returns the symlink itself (TypeSymlink,
+// body = the target path), while Podman dereferences it. If the entry is a
+// symlink, resolve its target relative to the source path and re-read it. A
+// cycle (symlink → itself) is caught by the resolved-target-equals-path check.
 func readImageFile(ctx context.Context, cli *client.Client, imageRef, path string) ([]byte, error) {
 	created, err := cli.ContainerCreate(ctx, &container.Config{Image: imageRef, Cmd: []string{"true"}}, nil, nil, nil, "")
 	if err != nil {
@@ -236,8 +242,26 @@ func readImageFile(ctx context.Context, cli *client.Client, imageRef, path strin
 	}
 	defer rc.Close()
 	tr := tar.NewReader(rc)
-	if _, err := tr.Next(); err != nil {
+	hdr, err := tr.Next()
+	if err != nil {
 		return nil, fmt.Errorf("read %s from %s: %w", path, imageRef, err)
 	}
+	if hdr.Typeflag == tar.TypeSymlink {
+		target := resolveLinkTarget(path, hdr.Linkname)
+		if target == filepath.Clean(path) {
+			return nil, fmt.Errorf("read %s from %s: symlink resolves to itself", path, imageRef)
+		}
+		return readImageFile(ctx, cli, imageRef, target)
+	}
 	return io.ReadAll(tr)
+}
+
+// resolveLinkTarget resolves a symlink's Linkname against the symlink's own
+// path: absolute targets stay absolute, relative targets resolve against the
+// containing directory.
+func resolveLinkTarget(path, linkname string) string {
+	if filepath.IsAbs(linkname) {
+		return filepath.Clean(linkname)
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(path), linkname))
 }

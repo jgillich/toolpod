@@ -243,3 +243,19 @@ func TestParseOSReleaseCodenameMissing(t *testing.T) {
 		t.Error("parseOSReleaseCodename must fail without VERSION_CODENAME")
 	}
 }
+
+func TestResolveLinkTarget(t *testing.T) {
+	cases := []struct {
+		path, linkname, want string
+	}{
+		{"/etc/os-release", "../usr/lib/os-release", "/usr/lib/os-release"},
+		{"/etc/os-release", "os-release", "/etc/os-release"},
+		{"/etc/os-release", "/usr/lib/os-release", "/usr/lib/os-release"},
+		{"/usr/lib/os-release", "os-release", "/usr/lib/os-release"},
+	}
+	for _, c := range cases {
+		if got := resolveLinkTarget(c.path, c.linkname); got != c.want {
+			t.Errorf("resolveLinkTarget(%q, %q) = %q, want %q", c.path, c.linkname, got, c.want)
+		}
+	}
+}
