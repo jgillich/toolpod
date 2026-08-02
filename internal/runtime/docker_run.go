@@ -58,7 +58,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	parts = append(parts, "exec "+shellQuote(spec.Command))
 	userCmd := strings.Join(parts, " && ")
 
-	writable := []string{runtimeHome, "/mise"}
+	writable := []string{runtimeHome}
 	for _, c := range spec.Caches {
 		writable = append(writable, c.Target)
 	}
@@ -449,12 +449,6 @@ func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
 			})
 		}
 	}
-	miseVol := mise.MiseVolume(runtimeHome)
-	m = append(m, mount.Mount{
-		Type:   mount.TypeVolume,
-		Source: miseVol.Name,
-		Target: miseVol.Target,
-	})
 	for _, c := range spec.Caches {
 		m = append(m, mount.Mount{
 			Type:   mount.TypeVolume,
@@ -540,6 +534,11 @@ func buildEnv(spec Spec, runtimeHome string) []string {
 		"HOME=" + runtimeHome,
 		"MISE_CONFIG_DIR=" + filepath.Join(runtimeHome, ".config", "mise"),
 		"MISE_DATA_DIR=/mise",
+		// aube (mise's npm backend) defaults its cache and store to $HOME, which
+		// is ephemeral inside the container; the mise profile declares an `aube`
+		// cache volume at ~/.aube, so point aube there to survive container exit.
+		"AUBE_CACHE_DIR=" + filepath.Join(runtimeHome, ".aube", "cache"),
+		"AUBE_STORE_DIR=" + filepath.Join(runtimeHome, ".aube", "store"),
 	}
 	for k, v := range spec.Env {
 		if v == "" {

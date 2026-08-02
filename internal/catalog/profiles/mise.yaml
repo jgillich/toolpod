@@ -24,6 +24,9 @@ mounts:
   /etc/mise:
     source: ~/.config/mise
     optional: true
+caches:
+  aube: ~/.aube
+  mise: /mise
 tools:
   bat: latest
   fd: latest

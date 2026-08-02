@@ -124,25 +124,6 @@ func TestLoadProfilesRejectsReservedName(t *testing.T) {
 	}
 }
 
-func TestBuiltinsHaveNoDefaultCaches(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range cat.Names() {
-		if cat.IsFragment(name) {
-			continue
-		}
-		rc, ok := cat.Get(name)
-		if !ok {
-			continue
-		}
-		if len(rc.Caches) != 0 {
-			t.Errorf("built-in %q should not declare caches; got %v", name, rc.Caches)
-		}
-	}
-}
-
 func TestBuiltinsDoNotMountUserDirs(t *testing.T) {
 	cat, err := LoadProfiles("")
 	if err != nil {

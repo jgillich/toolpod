@@ -11,8 +11,6 @@ import (
 )
 
 func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
-	runtimeHome := spec.RuntimeHome
-
 	baseRef := spec.Image
 	if err := ensureImagePulled(ctx, d.cli, baseRef, w); err != nil {
 		return "", fmt.Errorf("ensure base image: %w", err)
@@ -40,10 +38,6 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		imageRef = derivedRef
 	}
 
-	miseVol := mise.MiseVolume(runtimeHome)
-	if err := mise.EnsureVolume(ctx, d.cli, miseVol.Name); err != nil {
-		return "", fmt.Errorf("mise volume: %w", err)
-	}
 	for _, cache := range spec.Caches {
 		if err := mise.EnsureVolume(ctx, d.cli, cache.Name); err != nil {
 			return "", fmt.Errorf("cache volume %s: %w", cache.Name, err)

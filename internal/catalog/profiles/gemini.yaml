@@ -3,6 +3,7 @@ extends: mise
 command: ["gemini"]
 tools:
   gemini: latest
+  node: latest
 mounts:
   ~/.gemini:
     source: ~/.gemini

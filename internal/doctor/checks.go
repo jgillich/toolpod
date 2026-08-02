@@ -232,13 +232,6 @@ func checkUserOverrides(userDir string) []Check {
 		if err != nil {
 			continue
 		}
-		if len(cfg.Caches) == 0 {
-			checks = append(checks, Check{
-				Name:    "caches",
-				Status:  Info,
-				Message: fmt.Sprintf("%s: none configured (run `tpod init %s` to enable)", name, name),
-			})
-		}
 		if _, hasGit := cfg.Mounts["~/.gitconfig"]; !hasGit {
 			checks = append(checks, Check{
 				Name:    "gitconfig",
@@ -249,10 +242,10 @@ func checkUserOverrides(userDir string) []Check {
 	}
 
 	if userFileCount == 0 {
-		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides; built-in profiles no longer auto-mount caches/gitconfig — run `tpod init <profile>` to add them"}}
+		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides — run `tpod init <profile>` to add caches and gitconfig"}}
 	}
 	if len(checks) == 0 {
-		return []Check{{Name: "fragments", Status: Pass, Message: "all user overrides have caches and gitconfig"}}
+		return []Check{{Name: "fragments", Status: Pass, Message: "all user overrides mount gitconfig"}}
 	}
 	return checks
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/jgillich/tpod/internal/workspace"
 	"golang.org/x/sys/unix"
 )
@@ -117,6 +118,51 @@ func TestBuildEnvSetsMiseConfigDir(t *testing.T) {
 	}
 	if !hasProfileEnv {
 		t.Error("missing profile env OPENCODE_CONFIG_CONTENT")
+	}
+}
+
+func TestBuildEnvPersistsAubeStore(t *testing.T) {
+	// aube (mise's npm backend) defaults its cache and store to $HOME, which is
+	// ephemeral inside the container; the mise profile declares an `aube` cache
+	// volume at ~/.aube, so point aube there to survive container teardown.
+	spec := Spec{RuntimeHome: "/root"}
+	env := buildEnv(spec, "/root")
+	got := map[string]string{}
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			got[k] = v
+		}
+	}
+	if got["AUBE_CACHE_DIR"] != "/root/.aube/cache" {
+		t.Errorf("AUBE_CACHE_DIR = %q, want /root/.aube/cache", got["AUBE_CACHE_DIR"])
+	}
+	if got["AUBE_STORE_DIR"] != "/root/.aube/store" {
+		t.Errorf("AUBE_STORE_DIR = %q, want /root/.aube/store", got["AUBE_STORE_DIR"])
+	}
+}
+
+func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
+	// /mise is now a plain cache (tpod-cache-mise) declared by the mise profile;
+	// the hardcoded tpod-mise mount must be gone so there is exactly one /mise.
+	spec := Spec{
+		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
+		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/mise"}},
+	}
+	m, err := buildMounts(spec, "/root")
+	if err != nil {
+		t.Fatalf("buildMounts: %v", err)
+	}
+	var miseMounts []mount.Mount
+	for _, mt := range m {
+		if mt.Target == "/mise" {
+			miseMounts = append(miseMounts, mt)
+		}
+	}
+	if len(miseMounts) != 1 {
+		t.Fatalf("expected exactly one /mise mount, got %d: %+v", len(miseMounts), miseMounts)
+	}
+	if miseMounts[0].Source != "tpod-cache-mise" || miseMounts[0].Type != mount.TypeVolume {
+		t.Errorf("/mise mount = %+v, want volume tpod-cache-mise", miseMounts[0])
 	}
 }
 

@@ -145,10 +145,6 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 		return usedVolumes, usedImages, nil
 	}
 
-	// tpod-mise is always mounted by every launch; consider it used if any
-	// profile resolves.
-	usedVolumes["tpod-mise"] = true
-
 	for _, name := range names {
 		cfg, err := profile.ResolveProfile(cat, name)
 		if err != nil {

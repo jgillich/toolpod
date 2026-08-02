@@ -109,7 +109,6 @@ func setupFake(t *testing.T) (*fakeClient, string) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		volumes: []*volume.Volume{
-			{Name: "tpod-mise"},
 			{Name: "tpod-cache-usedcache"},
 			{Name: "tpod-cache-orphan"},
 		},
@@ -127,7 +126,7 @@ func TestRunDefaultPrunesUnusedKeepsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Volumes: tpod-mise and tpod-cache-usedcache are used; orphan pruned.
+	// Volumes: tpod-cache-usedcache is used; orphan pruned.
 	wantV := []string{"tpod-cache-orphan"}
 	if !equalSlice(res.VolumesRemoved, wantV) {
 		t.Errorf("volumes removed = %v, want %v", res.VolumesRemoved, wantV)
@@ -178,7 +177,7 @@ func TestRunAllRemovesEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantV := []string{"tpod-cache-orphan", "tpod-cache-usedcache", "tpod-mise"}
+	wantV := []string{"tpod-cache-orphan", "tpod-cache-usedcache"}
 	sort.Strings(wantV)
 	gotV := append([]string(nil), res.VolumesRemoved...)
 	sort.Strings(gotV)
@@ -255,12 +254,35 @@ caches:
 	if !usedV["tpod-cache-usedcache"] {
 		t.Errorf("usedcache from good profile should be marked used; got %v", usedV)
 	}
-	if !usedV["tpod-mise"] {
-		t.Errorf("tpod-mise must be used when any profile resolves")
+	// Built-in tool profiles extend mise, so the mise caches stay used even
+	// though this standalone user profile does not declare them.
+	for _, v := range []string{"tpod-cache-mise", "tpod-cache-aube"} {
+		if !usedV[v] {
+			t.Errorf("%s should be marked used via built-in mise-extending profiles; got %v", v, usedV)
+		}
 	}
 	// good profile has no packages (packages omitted), so no derived image.
 	if len(usedI) != 0 {
 		t.Errorf("expected no used derived images, got %v", usedI)
+	}
+}
+
+func TestComputeUsedMarksMiseProfileCaches(t *testing.T) {
+	// A profile extending mise inherits its `aube` and `mise` caches; prune must
+	// keep those volumes while the profile resolves.
+	writeUserProfiles(t, map[string]string{"myagent": `version: 1
+extends: mise
+command: ["echo"]
+`})
+	fc := &fakeClient{inspects: map[string]string{"debian:13-slim": "sha256:baseid"}}
+	usedV, _, err := computeUsed(context.Background(), fc)
+	if err != nil {
+		t.Fatalf("computeUsed: %v", err)
+	}
+	for _, v := range []string{"tpod-cache-mise", "tpod-cache-aube"} {
+		if !usedV[v] {
+			t.Errorf("mise-extending profile should mark %s used; got %v", v, usedV)
+		}
 	}
 }
 
