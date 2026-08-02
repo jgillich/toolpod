@@ -6,6 +6,8 @@ Disposable, reproducible development environments in a container, with a persist
 
 `tpod opencode` spins up a container, mounts your current directory, runs the agent, and removes the container on exit. The next run is instant — mise, your tools, and your caches are already warm in shared volumes.
 
+![](./assets/tpod-banner.svg)
+
 ## Why
 
 Every developer eventually writes shell scripts or Makefiles that launch containers with the right mounts, SSH keys, caches, tool versions, and AI agents. Those scripts are project-specific, hard to share, and painful to maintain. tpod replaces them with **user-owned, reusable profiles** that follow you to every project without requiring repo changes.
