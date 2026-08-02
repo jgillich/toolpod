@@ -34,9 +34,26 @@ func TestFragmentProfileNameCollisionRejected(t *testing.T) {
 	}
 }
 
+func TestUserProfileUserFragmentCollisionRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "foo.yaml"), []byte("version: 1\nmounts:\n  /t:\n    host: /tmp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadProfiles(dir); err == nil {
+		t.Fatal("expected collision error for same-named user profile and fragment, got nil")
+	}
+}
+
 func TestUserFragmentsLoaded(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(dir, "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +76,7 @@ func TestUserFragmentsLoaded(t *testing.T) {
 
 func TestFragmentExtendsFragment(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(dir, "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +107,7 @@ func TestFragmentExtendsFragment(t *testing.T) {
 
 func TestFragmentWithoutVersionRejected(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(dir, "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +121,7 @@ func TestFragmentWithoutVersionRejected(t *testing.T) {
 
 func TestFragmentExtendingProfileRejected(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(dir, "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

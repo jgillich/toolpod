@@ -112,7 +112,9 @@ func LoadProfiles(userDir string) (Catalog, error) {
 		if err := loadUserDir(userDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
 		}
-		userFragDir := filepath.Join(userDir, "fragments")
+		// User fragments live in a directory parallel to profiles
+		// ($XDG_CONFIG_HOME/tpod/fragments/), not inside the profiles dir.
+		userFragDir := filepath.Join(filepath.Dir(userDir), "fragments")
 		if err := loadUserFragments(userFragDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
 		}
@@ -150,7 +152,7 @@ func LoadProfilesTolerant(userDir string, warn func(string)) (Catalog, error) {
 	}
 	if userDir != "" {
 		loadUserDirTolerant(userDir, entries, fragmentNames, warn)
-		userFragDir := filepath.Join(userDir, "fragments")
+		userFragDir := filepath.Join(filepath.Dir(userDir), "fragments")
 		loadUserFragmentsTolerant(userFragDir, entries, fragmentNames, warn)
 	}
 	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
@@ -532,4 +534,14 @@ func DefaultProfileDir() string {
 		return ""
 	}
 	return filepath.Join(base, "tpod", "profiles")
+}
+
+// DefaultFragmentDir returns the default user fragment directory, a sibling of
+// DefaultProfileDir under the tpod config root.
+func DefaultFragmentDir() string {
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		return ""
+	}
+	return filepath.Join(base, "tpod", "fragments")
 }

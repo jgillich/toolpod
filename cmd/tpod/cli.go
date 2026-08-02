@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
+	"github.com/jgillich/tpod/internal/catalog"
 	"github.com/jgillich/tpod/internal/doctor"
 	"github.com/jgillich/tpod/internal/profile"
 	"github.com/jgillich/tpod/internal/prune"
@@ -237,29 +238,63 @@ func (c *ProfileEditCmd) Run() error {
 	if userDir == "" {
 		return fmt.Errorf("cannot determine profile directory (set XDG_CONFIG_HOME)")
 	}
-	targetPath := filepath.Join(userDir, c.Name+".yaml")
-	if _, err := os.Stat(targetPath); err == nil {
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = "vi"
-		}
-		cmd := exec.Command(editor, targetPath)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
-	builtin, err := profile.LoadProfiles("")
+	cat, err := profile.LoadProfiles(userDir)
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
-	if _, ok := builtin.Get(c.Name); ok {
-		return fmt.Errorf("this is a built-in profile. Run 'tpod init %s' to create a user override.", c.Name)
+	if _, ok := cat.Get(c.Name); !ok {
+		return fmt.Errorf("profile not found: %s", c.Name)
 	}
-	if builtin.IsFragment(c.Name) {
-		return fmt.Errorf("%s is a fragment, not an editable profile file", c.Name)
+	targetPath := filepath.Join(userDir, c.Name+".yaml")
+	if cat.IsFragment(c.Name) {
+		targetPath = filepath.Join(profile.DefaultFragmentDir(), c.Name+".yaml")
 	}
-	return fmt.Errorf("profile not found: %s", c.Name)
+	if _, err := os.Stat(targetPath); err == nil {
+		return openEditor(targetPath)
+	}
+	// No user file yet: seed the target with the built-in's content so the
+	// editor loads it, then remove the seed unless the user actually saved.
+	fsys, root := catalog.Profiles, "profiles"
+	if cat.IsFragment(c.Name) {
+		fsys, root = catalog.Fragments, "fragments"
+	}
+	data, err := fsys.ReadFile(root + "/" + c.Name + ".yaml")
+	if err != nil {
+		return fmt.Errorf("reading built-in %s: %w", c.Name, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		return fmt.Errorf("creating profile directory: %w", err)
+	}
+	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", targetPath, err)
+	}
+	before, err := os.Stat(targetPath)
+	if err != nil {
+		return err
+	}
+	if err := openEditor(targetPath); err != nil {
+		return err
+	}
+	after, err := os.Stat(targetPath)
+	if err != nil {
+		return err
+	}
+	if after.ModTime().Equal(before.ModTime()) {
+		os.Remove(targetPath)
+	}
+	return nil
+}
+
+func openEditor(path string) error {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	cmd := exec.Command(editor, path)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func (c *ProfileListCmd) Run() error {

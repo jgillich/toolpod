@@ -1,10 +1,31 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// runTpodEnv runs the built binary with the given extra environment variables.
+func runTpodEnv(t *testing.T, env []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(buildTpod(t), args...)
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// writeEditor writes an executable fake $EDITOR script to dir.
+func writeEditor(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("writing editor script: %v", err)
+	}
+	return path
+}
 
 func TestProfileShowBuiltIn(t *testing.T) {
 	out, err := runTpod(t, "show", "shell")
@@ -65,10 +86,103 @@ func TestProfileList(t *testing.T) {
 	}
 }
 
-func TestProfileEditBuiltInErrors(t *testing.T) {
-	out, _ := runTpod(t, "edit", "shell")
-	if !strings.Contains(out, "built-in") || !strings.Contains(out, "init") {
-		t.Errorf("expected built-in + init hint for editing a built-in profile, got:\n%s", out)
+func TestProfileEditBuiltInNoSaveRemovesSeed(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
+	}
+	out, err := runTpodEnv(t, env, "edit", "shell")
+	if err != nil {
+		t.Fatalf("edit shell (no save): %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "tpod", "profiles", "shell.yaml")); !os.IsNotExist(err) {
+		t.Errorf("expected no user profile after quitting without saving, stat err: %v", err)
+	}
+}
+
+func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpodEnv(t, env, "edit", "shell")
+	if err != nil {
+		t.Fatalf("edit shell (save): %v\n%s", err, out)
+	}
+	target := filepath.Join(cfg, "tpod", "profiles", "shell.yaml")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("expected user override to be created on save: %v", err)
+	}
+	if !strings.Contains(string(data), "extends: mise") {
+		t.Errorf("expected override to carry the built-in content, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# saved by test") {
+		t.Errorf("expected override to carry the editor's write, got:\n%s", data)
+	}
+}
+
+func TestProfileEditBuiltInFragmentNoSaveRemovesSeed(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
+	}
+	out, err := runTpodEnv(t, env, "edit", "docker")
+	if err != nil {
+		t.Fatalf("edit docker fragment (no save): %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "tpod", "fragments", "docker.yaml")); !os.IsNotExist(err) {
+		t.Errorf("expected no user fragment after quitting without saving, stat err: %v", err)
+	}
+}
+
+func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpodEnv(t, env, "edit", "docker")
+	if err != nil {
+		t.Fatalf("edit docker fragment (save): %v\n%s", err, out)
+	}
+	target := filepath.Join(cfg, "tpod", "fragments", "docker.yaml")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
+	}
+	if !strings.Contains(string(data), "# saved by test") {
+		t.Errorf("expected fragment override to carry the editor's write, got:\n%s", data)
+	}
+}
+
+func TestProfileEditExistingUserFileUntouched(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpod", "profiles", "shell.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := "version: 1\ncommand: [\"bash\", \"-l\"]\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
+	}
+	out, err := runTpodEnv(t, env, "edit", "shell")
+	if err != nil {
+		t.Fatalf("edit existing user file: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("existing user file must not be removed: %v", err)
+	}
+	if string(data) != original {
+		t.Errorf("existing user file must be left untouched, got:\n%s", data)
 	}
 }
 
