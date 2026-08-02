@@ -7,7 +7,7 @@ import (
 )
 
 func TestProfileShowBuiltIn(t *testing.T) {
-	out, err := runTpod(t, "profile", "show", "shell")
+	out, err := runTpod(t, "show", "shell")
 	if err != nil {
 		t.Fatalf("profile show shell: %v\n%s", err, out)
 	}
@@ -17,7 +17,7 @@ func TestProfileShowBuiltIn(t *testing.T) {
 }
 
 func TestProfileShowResolved(t *testing.T) {
-	out, err := runTpod(t, "profile", "show", "--resolved", "shell")
+	out, err := runTpod(t, "show", "--resolved", "shell")
 	if err != nil {
 		t.Fatalf("profile show --resolved shell: %v\n%s", err, out)
 	}
@@ -27,7 +27,7 @@ func TestProfileShowResolved(t *testing.T) {
 }
 
 func TestProfileShowNonexistent(t *testing.T) {
-	out, _ := runTpod(t, "profile", "show", "nope")
+	out, _ := runTpod(t, "show", "nope")
 	if !strings.Contains(out, "not found") {
 		t.Errorf("expected 'not found' error for missing profile, got:\n%s", out)
 	}
@@ -35,7 +35,7 @@ func TestProfileShowNonexistent(t *testing.T) {
 
 func TestProfileList(t *testing.T) {
 	bin := buildTpod(t)
-	out, err := exec.Command(bin, "profile", "list").CombinedOutput()
+	out, err := exec.Command(bin, "list").CombinedOutput()
 	if err != nil {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
@@ -66,14 +66,14 @@ func TestProfileList(t *testing.T) {
 }
 
 func TestProfileEditBuiltInErrors(t *testing.T) {
-	out, _ := runTpod(t, "profile", "edit", "shell")
+	out, _ := runTpod(t, "edit", "shell")
 	if !strings.Contains(out, "built-in") || !strings.Contains(out, "init") {
 		t.Errorf("expected built-in + init hint for editing a built-in profile, got:\n%s", out)
 	}
 }
 
 func TestProfileShowResolvedFragmentRefused(t *testing.T) {
-	out, _ := runTpod(t, "profile", "show", "--resolved", "ssh")
+	out, _ := runTpod(t, "show", "--resolved", "ssh")
 	if !strings.Contains(out, "fragment") {
 		t.Errorf("expected --resolved on a fragment to be refused with a 'fragment' message, got:\n%s", out)
 	}

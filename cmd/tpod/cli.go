@@ -54,17 +54,13 @@ type PruneCmd struct {
 }
 
 type CLI struct {
-	Launch  LaunchCmd  `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
-	Init    InitCmd    `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
-	Profile ProfileCmd `cmd:"" help:"Inspect and edit profiles and fragments."`
-	Doctor  DoctorCmd  `cmd:"" help:"Run environment diagnostics."`
-	Prune   PruneCmd   `cmd:"" help:"Remove tpod-managed volumes and images."`
-}
-
-type ProfileCmd struct {
-	Show ProfileShowCmd `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
-	Edit ProfileEditCmd `cmd:"" help:"Open the user profile file in $EDITOR."`
-	List ProfileListCmd `cmd:"" help:"List all profiles and fragments."`
+	Launch LaunchCmd       `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
+	Init   InitCmd         `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
+	Show   ProfileShowCmd  `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
+	Edit   ProfileEditCmd  `cmd:"" help:"Open the user profile file in $EDITOR."`
+	List   ProfileListCmd  `cmd:"" help:"List all profiles and fragments."`
+	Doctor DoctorCmd       `cmd:"" help:"Run environment diagnostics."`
+	Prune  PruneCmd        `cmd:"" help:"Remove tpod-managed volumes and images."`
 }
 
 type ProfileShowCmd struct {
@@ -80,12 +76,20 @@ type ProfileListCmd struct{}
 
 func main() {
 	var cli CLI
-	ctx := kong.Parse(&cli,
+	parser := kong.Must(&cli,
 		kong.Name("tpod"),
 		kong.Description("ephemeral dev environments"),
 	)
-	err := ctx.Run()
-	ctx.FatalIfErrorf(err)
+	args := os.Args[1:]
+	if len(args) == 0 {
+		// Bare tpod would select the default launch command and print only its
+		// help; route it through --help to show the full command list.
+		args = []string{"--help"}
+	}
+	ctx, err := parser.Parse(args)
+	parser.FatalIfErrorf(err)
+	err = ctx.Run()
+	parser.FatalIfErrorf(err)
 	if err != nil {
 		// Non-parse errors from Run are handled per-command for exit codes;
 		// anything that reaches here is already printed.
@@ -203,7 +207,7 @@ func (c *ProfileShowCmd) Run() error {
 	}
 	if c.Resolved {
 		if cat.IsFragment(c.Name) {
-			return fmt.Errorf("%s is a fragment, not a profile (use 'profile show %s' without --resolved to view it)", c.Name, c.Name)
+			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", c.Name, c.Name)
 		}
 		resolved, err := profile.ResolveProfile(cat, c.Name)
 		if err != nil {

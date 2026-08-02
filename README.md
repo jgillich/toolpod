@@ -257,10 +257,10 @@ config can embed an auto-allocated host port.
 ### Inspecting profiles
 
 ```sh
-$ tpod profile show shell           # raw on-disk profile
-$ tpod profile show --resolved shell # fully merged with all extends inlined
-$ tpod profile list                 # every profile and fragment
-$ tpod profile edit myagent         # open in $EDITOR
+$ tpod show shell           # raw on-disk profile
+$ tpod show --resolved shell # fully merged with all extends inlined
+$ tpod list                 # every profile and fragment
+$ tpod edit myagent         # open in $EDITOR
 ```
 
 ## Fragments

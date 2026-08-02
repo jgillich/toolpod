@@ -32,6 +32,20 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 	}
 }
 
+func TestBareHelpShowsAllCommands(t *testing.T) {
+	bin := buildTpod(t)
+	cmd := exec.Command(bin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bare tpod should show help and exit 0, got err: %v\n%s", err, out)
+	}
+	for _, c := range []string{"launch", "init", "profile", "doctor", "prune"} {
+		if !strings.Contains(string(out), c) {
+			t.Errorf("expected bare tpod help to mention %q, got:\n%s", c, out)
+		}
+	}
+}
+
 func TestInitHelpMentionsExtends(t *testing.T) {
 	bin := buildTpod(t)
 	cmd := exec.Command(bin, "init", "--help")
