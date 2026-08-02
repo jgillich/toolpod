@@ -155,9 +155,9 @@ func validateRepos(rc RawProfile) error {
 
 // validateFiles checks each file target: absolute or ~-prefixed, and free of
 // ".." segments. The tar is rooted at "/", so a ".." target could traverse
-// outside the intended location; "~" expands later to a clean absolute
-// runtimeHome (no ".."), so rejecting raw ".." segments also guarantees the
-// expanded path is clean.
+// outside the intended location. Rejecting raw ".." segments covers the
+// literal target; template expansion can inject new ".." segments, so
+// ResolveTildes re-checks the expanded target and cleans the result.
 func validateFiles(rc RawProfile) error {
 	for target, f := range rc.Files {
 		if target != "~" && !strings.HasPrefix(target, "~/") && !strings.HasPrefix(target, "/") {

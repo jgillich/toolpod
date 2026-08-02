@@ -3,6 +3,7 @@ package profile
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -119,6 +120,16 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 			if newTarget == "" {
 				return out, fmt.Errorf("file %q resolved to an empty target after template expansion (is the host variable set?)", target)
 			}
+			// Template expansion can inject ".." segments that validateFiles
+			// never saw (e.g. {{ .Env.X }} with X=/..); reject them here so the
+			// resolved target is a clean path. Clean then normalizes //, /./,
+			// and trailing-slash noise; it cannot introduce "..".
+			for _, seg := range strings.Split(newTarget, "/") {
+				if seg == ".." {
+					return out, fmt.Errorf("file %q resolved to path %q containing '..' after template expansion", target, newTarget)
+				}
+			}
+			newTarget = filepath.Clean(newTarget)
 			f.Content, err = renderTemplate(f.Content, data)
 			if err != nil {
 				return out, fmt.Errorf("file %s: %w", target, err)

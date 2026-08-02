@@ -326,3 +326,18 @@ func TestResolveFilesEmptyRenderedTargetRejected(t *testing.T) {
 		t.Fatal("expected error for file target that renders empty, got nil")
 	}
 }
+
+func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
+	os.Setenv("TPOD_TEST_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPOD_TEST_TRAVERSAL") })
+
+	cfg := Profile{
+		Files: map[string]File{
+			"{{ .Env.TPOD_TEST_TRAVERSAL }}/etc/passwd": {Content: "x"},
+		},
+	}
+	_, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	if err == nil {
+		t.Fatal("expected error for file target expanding to a '..' path, got nil")
+	}
+}
