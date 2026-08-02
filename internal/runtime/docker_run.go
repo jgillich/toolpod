@@ -105,6 +105,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		Mounts:       mounts,
 		NetworkMode:  container.NetworkMode(spec.Network),
 		UsernsMode:   userns,
+		SecurityOpt:  d.securityOpts(),
 		AutoRemove:   false,
 		PortBindings: portBindings,
 		Init:         &initEnabled,
@@ -350,6 +351,17 @@ func mountTargets(spec Spec) []string {
 // containerUser runs the container as root so the bootstrap can create/chown
 // $HOME before setpriv drops to the host user.
 const containerUser = "0:0"
+
+// securityOpts disables SELinux label separation when SELinux is enforcing so
+// bind-mounted host paths (workspace, home, dbus socket) keep their host
+// labels and stay readable to the container. Relabeling with :Z would relabel
+// the user's own files, breaking host access to the shared workspace.
+func (d *DockerRuntime) securityOpts() []string {
+	if d.selinux {
+		return []string{"label=disable"}
+	}
+	return nil
+}
 
 // containerIdentity returns the userns mode, the container user, and the host
 // uid/gid to drop to via setpriv — getuid() must match SO_PEERCRED for

@@ -8,6 +8,24 @@ import (
 	"testing"
 )
 
+func TestCheckSELinux(t *testing.T) {
+	c := checkSELinux(true)
+	if c.Status != Pass || c.Name != "selinux" {
+		t.Fatalf("enforcing: check = %+v, want pass 'selinux'", c)
+	}
+	if !strings.Contains(c.Message, "label=disable") {
+		t.Errorf("enforcing: message should mention label=disable; got %q", c.Message)
+	}
+
+	c = checkSELinux(false)
+	if c.Status != Pass {
+		t.Fatalf("not enforcing: check = %+v, want pass", c)
+	}
+	if strings.Contains(c.Message, "label=disable") {
+		t.Errorf("not enforcing: message should not mention label=disable; got %q", c.Message)
+	}
+}
+
 func TestCheckWorkspaceWritable(t *testing.T) {
 	dir := t.TempDir()
 	c := checkWorkspaceWritable(context.Background(), dir)

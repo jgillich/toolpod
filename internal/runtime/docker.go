@@ -15,8 +15,9 @@ import (
 var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
-	cli    *client.Client
-	podman bool // rootless Podman: containers need --userns=keep-id
+	cli     *client.Client
+	podman  bool // rootless Podman: containers need --userns=keep-id
+	selinux bool // SELinux enforcing: containers need --security-opt label=disable
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {
@@ -26,7 +27,11 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 	}
 	// Best guess until DetectMode queries /info; also used by callers that
 	// skip DetectMode (e.g. integration tests).
-	return &DockerRuntime{cli: cli, podman: isLikelyRootlessSocket(cli.DaemonHost())}, nil
+	return &DockerRuntime{
+		cli:     cli,
+		podman:  isLikelyRootlessSocket(cli.DaemonHost()),
+		selinux: SELinuxEnforcing(),
+	}, nil
 }
 
 // DetectMode queries the engine's /info endpoint and checks for the Podman

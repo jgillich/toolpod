@@ -23,6 +23,7 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 
 	checks = append(checks, checkRuntimeReachable(ctx, rt))
 	checks = append(checks, checkRootless(ctx, rt))
+	checks = append(checks, checkSELinux(runtime.SELinuxEnforcing()))
 	checks = append(checks, checkMiseBaseImage(ctx, rt))
 	checks = append(checks, checkDerivedImages(ctx, rt))
 	checks = append(checks, checkVolumes(ctx, rt))
@@ -66,6 +67,13 @@ func checkRootless(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "rootless", Status: Pass, Message: "no → Mode B (/workspace fallback)"}
 	}
 	return Check{Name: "rootless", Status: Pass, Message: "yes → Mode A (full mirroring)"}
+}
+
+func checkSELinux(enforcing bool) Check {
+	if enforcing {
+		return Check{Name: "selinux", Status: Pass, Message: "enforcing → containers run with label=disable"}
+	}
+	return Check{Name: "selinux", Status: Pass, Message: "not enforcing (label separation left on)"}
 }
 
 func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
