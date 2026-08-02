@@ -28,6 +28,15 @@ func TestTarFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		entries = append(entries, hdr)
+		if len(entries) == 1 {
+			body, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != "hello\n" {
+				t.Errorf("entry content = %q, want %q (Size/content mismatch)", body, "hello\n")
+			}
+		}
 	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 tar entries, got %d", len(entries))

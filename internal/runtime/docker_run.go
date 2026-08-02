@@ -260,8 +260,10 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 
 // tarFiles renders the container-file tar stream: one regular file entry per
 // target with a relative path (CopyToContainer untars at "/"), the file's
-// mode, and the execution user's uid/gid. PAX format + explicit TypeReg avoid
-// relying on tar defaults across engines.
+// mode, and the execution user's uid/gid. The header requests FormatPAX
+// (Go's writer falls back to USTAR for short headers and uses PAX only when
+// needed, e.g. long paths); explicit TypeReg/mode/uid/gid are the real
+// guarantees.
 func tarFiles(files []FileSpec, uid, gid int) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
