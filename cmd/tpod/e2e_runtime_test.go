@@ -10,18 +10,7 @@ import (
 
 func runTpod(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	bin, err := exec.LookPath("tpod")
-	if err != nil {
-		buildPath := "/tmp/tpod"
-		if _, err := os.Stat(buildPath); os.IsNotExist(err) {
-			cmd := exec.Command("go", "build", "-o", buildPath, ".")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("go build: %v\n%s", err, out)
-			}
-		}
-		bin = buildPath
-	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(buildTpod(t), args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
