@@ -135,6 +135,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `image` | string | Container image. |
 | `packages` | string[] | System packages (apt names, e.g. `libxml2-dev`) to install in the runtime image. tpod builds a derived image from the base image plus these packages on first use, then reuses it. |
 | `repos` | map | Extra apt sources to enable before installing `packages:` (e.g. `repos: { mise: { extrepo: mise } }`). v1 supports `extrepo:` catalog names; inline `url`/`key_url` repos are schema-ready but rejected at build time. |
+| `files` | map | Files written into the container at launch, keyed by target path (absolute or `~`, which resolves to the in-container home). Each entry: `content` (inline, `{{ }}` templates resolved), `mode` (octal, default `0644`). Files are owned by the execution user and live only for the launch. |
 | `command` | string[] | Command to run. First element is the binary; the rest are default args used only when the user passes none on the CLI. User args replace the defaults. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true` — omit or set `read_only: false` for writable), `optional`, `create`. `~` → runtime home (target) / host `$HOME` (source). `{{ }}` template expressions evaluated against `.Env`, `uid`, and `trimPrefix`/`printf` helpers. `create: true` mkdirs a missing source directory before launch. |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
@@ -193,7 +194,7 @@ needs to create arbitrary device nodes).
 ### Merge semantics
 
 - **Scalars:** child replaces parent.
-- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `dbus`, `repos`): merged key-by-key. Set a key to `null` to delete an inherited entry.
+- **Maps** (`mounts`, `environment`, `tools`, `caches`, `labels`, `dbus`, `repos`, `files`): merged key-by-key. Set a key to `null` to delete an inherited entry.
 - **Lists** (`command`): replaced, not concatenated.
 - **`packages`:** additive — child's entries are appended to the inherited list with duplicates removed (so fragments compose; e.g. `php` contributes build deps, `gui` contributes runtime libs). Set `packages: null` to clear the inherited list.
 - **`image` / `build`:** single slot — setting either in a child clears the other.
@@ -229,6 +230,26 @@ If your host can't build images (read-only Docker socket, restricted Podman), ke
 A profile that declares `dbus` must also mount `$XDG_RUNTIME_DIR` (the `gui` fragment does) — the session bus address points at a proxy socket under that dir, so without the mount the container can't reach the bus.
 
 In GUI containers the session bus is a **filtered view**, not a raw passthrough: tpod spawns a per-launch host-side `xdg-dbus-proxy` and only the profile's `talk`/`own` names pass through it. The host system bus socket is not mounted into GUI containers at all.
+
+### Writing files at launch (`files:`)
+
+`files:` writes inline-content files into the ephemeral container before the
+profile command runs — owned by the execution user, gone when the container
+exits. Useful for a profile's own runtime config that doesn't belong on the
+host.
+
+```yaml
+files:
+  ~/.config/mytool/config.toml:
+    content: |
+      [settings]
+      task_output = "parses"
+    mode: 0600
+```
+
+Targets are absolute or `~`-prefixed; `~` resolves to the in-container home.
+Content is rendered as a `{{ }}` template (`.Env`, `uid`, `.Ports`), so a
+config can embed an auto-allocated host port.
 
 ### Inspecting profiles
 
