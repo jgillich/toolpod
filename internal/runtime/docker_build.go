@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
 )
 
 // DerivedTag returns the content-addressed tag tpod lays on a derived image
@@ -27,8 +30,7 @@ func DerivedTag(baseID string, packages []string) string {
 	if len(packages) == 0 {
 		return ""
 	}
-	sorted := append([]string(nil), packages...)
-	sort.Strings(sorted)
+	sorted := sortedCopy(packages)
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s", baseID, strings.Join(sorted, "\x01"))
 	return "tpod/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
@@ -72,10 +74,85 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 		return err
 	}
 	defer resp.Body.Close()
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return fmt.Errorf("drain build response: %w", err)
+	if err := drainBuildStream(resp.Body, w); err != nil {
+		return err
 	}
 	return nil
+}
+
+// drainBuildStream reads the JSON-message stream emitted by ImageBuild,
+// forwarding build output through w and surfacing embedded build errors.
+//
+// ImageBuild returns HTTP 200 even when a RUN step fails: the daemon writes
+// the error into the response body as a JSONMessage with an Error field and
+// returns nil from the API call. Discarding the body (as the original
+// io.Copy(io.Discard,...) did) silently swallowed build failures, leaving an
+// untagged derived image and an opaque "No such image" later at launch.
+//
+// On apt "Unable to locate package" errors we synthesise a cleaner message
+// naming the offending entries, per spec failure-mode #3.
+func drainBuildStream(body io.Reader, w ProgressWriter) error {
+	dec := json.NewDecoder(body)
+	var unknownPackages []string
+	var buildErr error
+	for {
+		var msg jsonmessage.JSONMessage
+		if err := dec.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("read build stream: %w", err)
+		}
+		if msg.Error != nil && buildErr == nil {
+			buildErr = fmt.Errorf("build: %s", msg.Error.Message)
+		}
+		if msg.ErrorMessage != "" && buildErr == nil {
+			buildErr = fmt.Errorf("build: %s", msg.ErrorMessage)
+		}
+		if msg.Stream != "" {
+			for _, line := range strings.Split(msg.Stream, "\n") {
+				if line == "" {
+					continue
+				}
+				if p := missingPackage(line); p != "" {
+					unknownPackages = appendUnique(unknownPackages, p)
+				}
+				w.WriteProgress(line)
+			}
+		}
+	}
+	if len(unknownPackages) > 0 {
+		return fmt.Errorf("build: apt could not locate package(s): %s (check the packages: entries)", strings.Join(unknownPackages, ", "))
+	}
+	return buildErr
+}
+
+var missingPackageRE = regexp.MustCompile(`E: Unable to locate package ([^\s]+)`)
+
+func missingPackage(line string) string {
+	m := missingPackageRE.FindStringSubmatch(line)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+func appendUnique(s []string, v string) []string {
+	for _, x := range s {
+		if x == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
+
+// sortedCopy returns a lexicographically sorted copy of s. Used by both
+// DerivedTag (hash input) and synthesizeDockerfile (emitted apt line) so the
+// "identical list for hashing and emission" invariant can't drift.
+func sortedCopy(s []string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
 }
 
 // synthesizeDockerfile renders the derived-image Dockerfile. The package list
@@ -83,8 +160,7 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 // each name is shell-quoted (defense-in-depth; validation already rejects
 // metacharacters).
 func synthesizeDockerfile(baseRef string, packages []string) string {
-	sorted := append([]string(nil), packages...)
-	sort.Strings(sorted)
+	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
 	for i, p := range sorted {
 		quoted[i] = shellQuote([]string{p})

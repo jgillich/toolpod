@@ -128,6 +128,120 @@ func LoadProfiles(userDir string) (Catalog, error) {
 	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
 }
 
+// LoadProfilesTolerant is like LoadProfiles but skips a malformed user
+// profile/fragment file (logging it via warn) instead of aborting the whole
+// load. Built-ins always load strictly. Used by `tpod prune`, where one
+// broken user file must not prevent computing liveness for the rest — a
+// strict abort there is a regression from the old prune (which never read
+// profiles) and risks pruning live resources.
+func LoadProfilesTolerant(userDir string, warn func(string)) (Catalog, error) {
+	builtins := map[string]RawProfile{}
+	if err := loadBuiltins(builtins); err != nil {
+		return Catalog{}, err
+	}
+	entries := make(map[string]RawProfile, len(builtins))
+	for k, v := range builtins {
+		entries[k] = v
+	}
+	fragmentNames := map[string]bool{}
+	builtinFragments := map[string]RawProfile{}
+	if err := loadBuiltinFragments(builtinFragments); err != nil {
+		return Catalog{}, err
+	}
+	for name, frag := range builtinFragments {
+		if _, exists := entries[name]; exists {
+			return Catalog{}, ProfileError{Path: frag.Path, Message: "name collision: fragment and profile share name " + name}
+		}
+		entries[name] = frag
+		fragmentNames[name] = true
+	}
+	if userDir != "" {
+		loadUserDirTolerant(userDir, entries, fragmentNames, warn)
+		userFragDir := filepath.Join(userDir, "fragments")
+		loadUserFragmentsTolerant(userFragDir, entries, fragmentNames, warn)
+	}
+	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
+}
+
+func loadUserDirTolerant(dir string, entries map[string]RawProfile, fragmentNames map[string]bool, warn func(string)) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return
+	}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			warn(fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == "fragments" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".yaml") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			warn(fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		rc, err := parseRaw(data, path)
+		if err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
+		if err := validateReservedName(rc, name); err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
+		if fragmentNames[name] {
+			warn(path + ": name collision: profile and fragment share name " + name)
+			return nil
+		}
+		entries[name] = rc
+		return nil
+	})
+}
+
+func loadUserFragmentsTolerant(dir string, entries map[string]RawProfile, fragmentNames map[string]bool, warn func(string)) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return
+	}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			warn(fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			warn(fmt.Sprintf("%s: %v", path, err))
+			return nil
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		rc, err := parseRaw(data, path)
+		if err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
+		if err := validateFragmentName(name, rc); err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
+		if _, exists := entries[name]; exists {
+			warn(path + ": name collision: fragment and profile share name " + name)
+			return nil
+		}
+		entries[name] = rc
+		fragmentNames[name] = true
+		return nil
+	})
+}
+
 func loadBuiltins(entries map[string]RawProfile) error {
 	root := "profiles"
 	return fs.WalkDir(catalog.Profiles, root, func(path string, d fs.DirEntry, err error) error {

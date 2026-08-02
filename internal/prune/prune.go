@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
@@ -17,6 +18,16 @@ import (
 	"github.com/jgillich/tpod/internal/runtime"
 	"golang.org/x/term"
 )
+
+// dockerClient is the subset of the Docker/Podman API the prune path needs.
+// The real *client.Client satisfies it; tests supply a fake.
+type dockerClient interface {
+	VolumeList(ctx context.Context, opts volume.ListOptions) (volume.ListResponse, error)
+	VolumeRemove(ctx context.Context, name string, force bool) error
+	ImageList(ctx context.Context, opts image.ListOptions) ([]image.Summary, error)
+	ImageRemove(ctx context.Context, ref string, opts image.RemoveOptions) ([]image.DeleteResponse, error)
+	ImageInspectWithRaw(ctx context.Context, ref string) (types.ImageInspect, []byte, error)
+}
 
 type Options struct {
 	All     bool // remove every tpod-managed resource regardless of liveness
@@ -44,12 +55,16 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("docker client: %w", err)
 	}
+	return run(ctx, cli, opts)
+}
 
+func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	scopeVolumes := !opts.Images || opts.Volumes
 	scopeImages := !opts.Volumes || opts.Images
 
 	var usedVolumes, usedImages map[string]bool
 	if !opts.All {
+		var err error
 		usedVolumes, usedImages, err = computeUsed(ctx, cli)
 		if err != nil {
 			return Result{}, fmt.Errorf("compute used: %w", err)
@@ -118,12 +133,14 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 // that would be produced by some current profile. Profiles whose base image
 // is not present locally contribute no derived-image hashes (no local base
 // ⇒ no possible derived image).
-func computeUsed(ctx context.Context, cli *client.Client) (map[string]bool, map[string]bool, error) {
+func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[string]bool, error) {
 	usedVolumes := map[string]bool{}
 	usedImages := map[string]bool{}
 
 	userDir := profile.DefaultProfileDir()
-	cat, err := profile.LoadProfiles(userDir)
+	cat, err := profile.LoadProfilesTolerant(userDir, func(msg string) {
+		fmt.Fprintf(os.Stderr, "  warning: skipping %s\n", msg)
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("load profiles: %w", err)
 	}
@@ -149,19 +166,19 @@ func computeUsed(ctx context.Context, cli *client.Client) (map[string]bool, map[
 		if len(cfg.Packages) == 0 || cfg.Image == "" {
 			continue
 		}
-		baseID, err := runtime.ResolveImageID(ctx, cli, cfg.Image)
+		inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image)
 		if err != nil {
 			// Base image not present locally ⇒ no derived image yet.
 			continue
 		}
-		if tag := runtime.DerivedTag(baseID, cfg.Packages); tag != "" {
+		if tag := runtime.DerivedTag(inspect.ID, cfg.Packages); tag != "" {
 			usedImages[tag] = true
 		}
 	}
 	return usedVolumes, usedImages, nil
 }
 
-func listTpodVolumes(ctx context.Context, cli *client.Client) ([]*volume.Volume, error) {
+func listTpodVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, error) {
 	resp, err := cli.VolumeList(ctx, volume.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -175,7 +192,7 @@ func listTpodVolumes(ctx context.Context, cli *client.Client) ([]*volume.Volume,
 	return found, nil
 }
 
-func listTpodImages(ctx context.Context, cli *client.Client) ([]string, error) {
+func listTpodImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	f := filters.NewArgs()
 	f.Add("reference", "tpod/packages")
 	images, err := cli.ImageList(ctx, image.ListOptions{Filters: f})

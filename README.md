@@ -82,9 +82,11 @@ A name matching a built-in profile shadows it (`init opencode` extends the built
 
 ```sh
 tpod doctor              # diagnose runtime, mise, volumes, configs, workspace
-tpod prune --volumes     # remove tpod-managed named volumes
-tpod prune --images      # remove tpod-tagged local images
-tpod prune --force --volumes   # skip the confirmation prompt
+tpod prune               # remove catalog-unused tpod resources (volumes + tpod/packages:* images)
+tpod prune --volumes     # scope to tpod-managed named volumes only
+tpod prune --images      # scope to tpod/packages:* derived images only
+tpod prune --all         # remove every tpod-managed resource, even ones still referenced
+tpod prune --force       # skip the confirmation prompt
 ```
 
 ## Profiles

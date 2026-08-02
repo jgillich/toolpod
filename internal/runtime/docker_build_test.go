@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+type recordingWriter struct {
+	lines []string
+}
+
+func (r *recordingWriter) WriteProgress(line string) { r.lines = append(r.lines, line) }
+
 // expectedTag mirrors DerivedTag's algorithm so tests assert the contract
 // (determinism, sort-normalisation, namespace) rather than re-implement
 // the function. If the algorithm intentionally changes, these tests
@@ -164,5 +170,62 @@ func TestTarDockerfileProducesUsableTar(t *testing.T) {
 	}
 	if _, err := tr.Next(); err != io.EOF {
 		t.Errorf("expected only one tar entry, got %v", err)
+	}
+}
+
+func TestDrainBuildStreamSuccess(t *testing.T) {
+	body := strings.NewReader(
+		`{"stream":"Step 1/2 : FROM base:1\n"}` + "\n" +
+			`{"stream":" ---> abc123\n"}` + "\n" +
+			`{"stream":"Successfully built abc123\n"}` + "\n",
+	)
+	var w recordingWriter
+	if err := drainBuildStream(body, &w); err != nil {
+		t.Fatalf("drainBuildStream: %v", err)
+	}
+	if len(w.lines) == 0 {
+		t.Errorf("expected build output forwarded to writer, got none")
+	}
+}
+
+func TestDrainBuildStreamEmbeddedError(t *testing.T) {
+	body := strings.NewReader(`{"errorDetail":{"message":"RUN failed: exit code 1"}}` + "\n")
+	err := drainBuildStream(body, &recordingWriter{})
+	if err == nil {
+		t.Fatal("expected error from embedded build failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "RUN failed") {
+		t.Errorf("error should surface the embedded message; got %q", err.Error())
+	}
+}
+
+func TestDrainBuildStreamMissingPackage(t *testing.T) {
+	body := strings.NewReader(
+		`{"stream":"E: Unable to locate package libxml2-dev\n"}` + "\n" +
+			`{"stream":"E: Unable to locate package foodev\n"}` + "\n" +
+			`{"errorDetail":{"message":"The command '/bin/sh -c apt-get install ...' returned a non-zero code: 100"}}` + "\n",
+	)
+	err := drainBuildStream(body, &recordingWriter{})
+	if err == nil {
+		t.Fatal("expected error listing missing packages, got nil")
+	}
+	for _, want := range []string{"libxml2-dev", "foodev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name missing package %q; got %q", want, err.Error())
+		}
+	}
+}
+
+func TestDrainBuildStreamMissingPackageDedup(t *testing.T) {
+	body := strings.NewReader(
+		`{"stream":"E: Unable to locate package libxml2-dev\n"}` + "\n" +
+			`{"stream":"E: Unable to locate package libxml2-dev\n"}` + "\n",
+	)
+	err := drainBuildStream(body, &recordingWriter{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if c := strings.Count(err.Error(), "libxml2-dev"); c != 1 {
+		t.Errorf("missing package should be reported once, got %d in %q", c, err.Error())
 	}
 }

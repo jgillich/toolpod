@@ -21,6 +21,12 @@ func RenderSpec(w io.Writer, spec Spec) error {
 	if err != nil {
 		return err
 	}
+	if len(spec.Packages) > 0 {
+		_, err = fmt.Fprintf(w, "packages: %v\n", spec.Packages)
+		if err != nil {
+			return err
+		}
+	}
 	_, err = fmt.Fprintf(w, "workspace:\n  host: %s\n  target: %s\n  mode: %s\n", spec.Workspace.HostPath, spec.Workspace.Target, spec.Workspace.Mode)
 	if err != nil {
 		return err

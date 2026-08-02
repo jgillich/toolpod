@@ -89,7 +89,8 @@ func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
 }
 
 // checkDerivedImages reports how many cached tpod/packages:<hash> derived
-// images exist locally (the profile-level system-dep images).
+// images exist locally (the profile-level system-dep images) and their
+// combined reclaimable size.
 func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	f := filters.NewArgs()
 	f.Add("reference", "tpod/packages")
@@ -98,18 +99,37 @@ func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "derived images", Status: Warn, Message: err.Error()}
 	}
 	var tags []string
+	var total int64
 	for _, img := range images {
+		hasTpodTag := false
 		for _, t := range img.RepoTags {
 			if strings.HasPrefix(t, "tpod/packages:") {
 				tags = append(tags, t)
+				hasTpodTag = true
 			}
+		}
+		if hasTpodTag && img.Size > 0 {
+			total += img.Size
 		}
 	}
 	sort.Strings(tags)
 	if len(tags) == 0 {
 		return Check{Name: "derived images", Status: Pass, Message: "none yet (built on first launch of a profile with packages)"}
 	}
-	return Check{Name: "derived images", Status: Pass, Message: fmt.Sprintf("%d cached: %s", len(tags), strings.Join(tags, ", "))}
+	return Check{Name: "derived images", Status: Pass, Message: fmt.Sprintf("%d cached (%s reclaimable): %s", len(tags), humanSize(total), strings.Join(tags, ", "))}
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func checkVolumes(ctx context.Context, rt *dockerRT) Check {

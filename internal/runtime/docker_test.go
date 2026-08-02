@@ -377,7 +377,10 @@ func TestWrapAsUser(t *testing.T) {
 }
 
 // integrationImage is the production base image: it carries util-linux
-// setpriv (for the launch wrapper) and python3 (for the port listener).
+// setpriv (for the launch wrapper). python3 moved from the base image to
+// mise.yaml packages: in the runtime-oci-deps migration, so the port
+// listener test installs it via a derived image (exercising the packages:
+// build path the feature added).
 const integrationImage = "ghcr.io/jgillich/tpod-mise:latest"
 
 func TestIntegrationRunShellEcho(t *testing.T) {
@@ -434,14 +437,17 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	spec := Spec{
 		ProfileName: "test-port",
 		Image:       integrationImage,
+		Packages:    []string{"python3"},
 		Command:     []string{"sh", "-c", `python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',8080));s.listen(1);c,_=s.accept();c.send(b'hi')"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		RuntimeHome: "/root",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
-	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
+	spec.Image = imageRef
 	done := make(chan error, 1)
 	go func() {
 		_, err := rt.Run(context.Background(), spec)
