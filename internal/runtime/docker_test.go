@@ -706,3 +706,42 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		t.Errorf("mise run exit code = %d, want 0", code)
 	}
 }
+
+func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	// Target under /root/.config with a parent dir that does not exist in the
+	// base image — exercises implied-directory creation. The target uses the
+	// resolved path (/root = Mode B RuntimeHome), since a Spec's Files targets
+	// are post-ResolveTildes.
+	spec := Spec{
+		ProfileName: "test-files",
+		Image:       integrationImage,
+		Files: []FileSpec{
+			{Target: "/root/.config/tpod-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
+		},
+		// Existence + content + permissions are all exercised end-to-end.
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644"`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
+		RuntimeHome: "/root",
+		Network:     "none",
+	}
+	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	code, err := rt.Run(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("cat-check exit code = %d, want 0", code)
+	}
+}
