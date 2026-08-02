@@ -222,6 +222,11 @@ func sortedCopy(s []string) []string {
 // (sorted by map key) into the image before apt-get update, replacing the
 // old `extrepo enable <name>` chain. The context file names are
 // extrepo/<name>.sources and extrepo/<name>.asc.
+//
+// When repos are present, a bootstrap RUN installs ca-certificates first: the
+// base image is bare (no certs), and apt-get update needs them to verify the
+// https repos the COPYs add. The Debian archive itself is http, so the
+// bootstrap works without certificates.
 func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []string) string {
 	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
@@ -230,6 +235,11 @@ func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []strin
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", baseRef)
+	if len(repos) > 0 {
+		b.WriteString("RUN apt-get update \\\n")
+		b.WriteString("    && apt-get install -y --no-install-recommends ca-certificates \\\n")
+		b.WriteString("    && rm -rf /var/lib/apt/lists/*\n")
+	}
 	for _, r := range sortedResolvedRepos(repos) {
 		fmt.Fprintf(&b, "COPY extrepo/%s.sources /etc/apt/sources.list.d/extrepo_%s.sources\n", r.name, r.name)
 		fmt.Fprintf(&b, "COPY extrepo/%s.asc /etc/apt/keyrings/%s.asc\n", r.name, r.name)

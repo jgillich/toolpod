@@ -203,7 +203,7 @@ needs to create arbitrary device nodes).
 
 ### System packages (`packages:`) and derived images
 
-The base image ships the bare OS and the minimal bootstrap (`ca-certificates`).
+The base image ships the bare OS and nothing else.
 Per-profile system libraries are declared with `packages:`
 and installed into a **derived image** — the base image plus that profile's
 package list — which tpod builds on first use and reuses on later runs. The

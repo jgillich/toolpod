@@ -198,9 +198,9 @@ identically for build and runtime deps because nothing is relocated.
   libmariadb-dev libgd-dev libpng-dev libjpeg-dev bison re2c`.
 - `internal/catalog/fragments/gui.yaml` — gains a `packages:` block with the
   full GUI/GTK/X11/nss/alsa/GStreamer set currently at Dockerfile L41-81.
-- `Dockerfile` — shrinks to `FROM debian:13`, install just the bare-minimum
-  bootstrap (`ca-certificates`; `curl`/`git`/`mise`/libs all move to
-  catalog `packages:`). `mise` is no longer in
+- `Dockerfile` — shrinks to `FROM debian:13` (bare; `curl`/`git`/`mise`/libs and
+  `ca-certificates` all move to
+  catalog `packages:`/repos). `mise` is no longer in
   the base — the `mise` profile's derived image installs it via its
   `repos:`/`packages:`. The `xdg-open` host-portal wrapper moved out of the
   base into the `gui` fragment's `files:` (written to `/usr/local/bin/xdg-open`
@@ -284,6 +284,9 @@ Generated in-memory by Go and piped to the Docker daemon via
 
 ```dockerfile
 FROM <base-ref>
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY extrepo/<name>.sources /etc/apt/sources.list.d/extrepo_<name>.sources
 COPY extrepo/<name>.asc /etc/apt/keyrings/<name>.asc
 RUN apt-get update \
@@ -292,7 +295,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-The `COPY` pair appears only when the profile declares repos, one per sorted
+The bootstrap `RUN` (installing `ca-certificates`) appears only when the
+profile declares repos: the base image is bare, and apt needs certificates to
+verify the https repos the `COPY` lines add. The Debian archive itself is
+http, so the bootstrap works without certificates. The `COPY` pair appears
+only when the profile declares repos, one per sorted
 repo name. The `.sources` and key are resolved at build time by
 `internal/runtime/extrepo.go` and carried in the build context (`tarBuildContext`).
 The extrepo package is **not** in the base image.

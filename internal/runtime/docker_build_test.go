@@ -232,6 +232,12 @@ func TestSynthesizeDockerfile(t *testing.T) {
 	if !strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
 		t.Errorf("dockerfile must clean apt lists:\n%s", got)
 	}
+	if strings.Contains(got, "ca-certificates") {
+		t.Errorf("repo-less dockerfile must not bootstrap ca-certificates:\n%s", got)
+	}
+	if strings.Count(got, "apt-get update") != 1 {
+		t.Errorf("repo-less dockerfile must have a single apt-get update:\n%s", got)
+	}
 }
 
 func TestSynthesizeDockerfileRepos(t *testing.T) {
@@ -267,6 +273,19 @@ func TestSynthesizeDockerfileRepos(t *testing.T) {
 	}
 	if !strings.Contains(got, "apt-get update") {
 		t.Errorf("dockerfile must run apt-get update after copying repos:\n%s", got)
+	}
+	// A bare base has no ca-certificates; the first RUN must install them so
+	// apt can verify the https repos the COPYs add. It must precede both the
+	// COPYs and the main apt-get update.
+	certInstall := "apt-get install -y --no-install-recommends ca-certificates"
+	if !strings.Contains(got, certInstall) {
+		t.Errorf("dockerfile must bootstrap ca-certificates when repos present:\n%s", got)
+	}
+	firstRun := strings.Index(got, "RUN apt-get update")
+	firstCopy := strings.Index(got, "COPY extrepo/extrane.sources")
+	secondRun := strings.LastIndex(got, "RUN apt-get update")
+	if !(firstRun < firstCopy && firstCopy < secondRun) {
+		t.Errorf("bootstrap RUN must precede COPYs and main RUN:\n%s", got)
 	}
 }
 
