@@ -1,5 +1,5 @@
 version: 1
-image: ghcr.io/jgillich/tpod-mise:latest
+image: debian:13-slim
 command: ["/usr/bin/mise"]
 repos:
   mise:

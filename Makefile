@@ -1,7 +1,4 @@
-.PHONY: install image
+.PHONY: install
 
 install:
 	go install ./cmd/tpod
-
-image:
-	podman build -t ghcr.io/jgillich/tpod-mise .

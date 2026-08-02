@@ -4,7 +4,6 @@ Go CLI for disposable, reproducible dev environments in a Podman/Docker containe
 
 ## Build & test
 - `make install` — `go install ./cmd/tpod`
-- `make image` — build the mise base image (`ghcr.io/jgillich/tpod-mise`)
 - `go test ./...` — full test suite (Go 1.25, CGO off in releases)
 - `go vet ./...` — lint check
 
@@ -19,7 +18,7 @@ CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `
 - `internal/mise/` — mise install dir volume + `appimage:` backend plugin (`plugins/appimage/*.lua`).
 - `internal/{doctor,prune,scaffold,ui,workspace}/` — diagnostics, cleanup (`prune` removes catalog-unused volumes/derived images), `init` wizard, TUI, rootless-vs-rootful mode detection.
 - `docs/` — design notes.
-- `Dockerfile` — the mise base image (bare `debian:13`; `mise.toml` pins `opencode` for development). `mise` itself installs via the `mise` profile's `repos:`/`packages:` into a derived image.
+- There is no base-image Dockerfile: profiles use `debian:13-slim` directly and derived images install everything via `packages:`/`repos:`.
 
 ## Conventions
 - **Profiles vs fragments:** profiles carry `image`/`command` identity; fragments are composable mounts/caches/credentials and may only `extends` other fragments. Both are YAML; user profiles in `~/.config/tpod/profiles/` shadow built-ins.

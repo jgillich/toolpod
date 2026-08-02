@@ -216,7 +216,7 @@ func TestDerivedTagEmptyReposEqualsPackagesOnly(t *testing.T) {
 	}
 }
 func TestSynthesizeDockerfile(t *testing.T) {
-	const baseRef = "ghcr.io/jgillich/tpod-mise:latest"
+	const baseRef = "debian:13-slim"
 	got := synthesizeDockerfile(baseRef, nil, []string{"libxml2-dev", "git"})
 	if !strings.Contains(got, "FROM "+baseRef+"\n") {
 		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)

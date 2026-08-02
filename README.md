@@ -23,7 +23,7 @@ This is the key difference from [devcontainers](https://containers.dev/), which 
 
 The two are complementary. What tpod adds:
 
-- **mise as the foundation.** Tools (and the agents themselves) are `mise` entries declared in profiles, not image layers. One base image serves every profile; no per-language image, no rebuild when a tool version bumps. Per-project versions are optional via the project's own `mise.toml`.
+- **mise as the foundation.** Tools (and the agents themselves) are `mise` entries declared in profiles, not image layers. Profiles use a shared `debian:13-slim` base; no per-language image, no rebuild when a tool version bumps. Per-project versions are optional via the project's own `mise.toml`.
 - **Persistent shared volumes.** The mise install dir and package caches (npm, cargo, pip, go…) live in Docker named volumes shared across *all* profiles and runs. First launch of a tool is slow; every subsequent launch is instant.
 - **Rootless-Podman parity.** When `DOCKER_HOST` points at a rootless Podman socket, the workspace is mounted at its host absolute path and the agent runs as your host user — paths and file ownership match exactly. No `sudo chown` cleanup.
 
@@ -65,7 +65,7 @@ $ tpod -c "make test" shell    # → one-off command
 $ tpod --workspace ~/p2 --verbose opencode --model foo
 ```
 
-The first launch pulls the mise base image and installs tools (slow). Subsequent launches reuse them (instant).
+The first launch pulls the `debian:13-slim` base image, builds the profile's derived image (system packages), and installs tools (slow). Subsequent launches reuse them (instant).
 
 ### `tpod init`
 

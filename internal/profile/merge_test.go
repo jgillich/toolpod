@@ -84,8 +84,8 @@ func TestResolveExtendsSelfViaBuiltin(t *testing.T) {
 		t.Fatalf("ResolveProfile: %v", err)
 	}
 	// Should inherit image/command from the built-in opencode, plus the user caches.
-	if cfg.Image != "ghcr.io/jgillich/tpod-mise:latest" {
-		t.Errorf("Image = %q, want ghcr.io/jgillich/tpod-mise:latest (inherited from built-in)", cfg.Image)
+	if cfg.Image != "debian:13-slim" {
+		t.Errorf("Image = %q, want debian:13-slim (inherited from built-in)", cfg.Image)
 	}
 	if cfg.Caches["npm"] != "~/.npm" {
 		t.Errorf("Caches[npm] = %q, want ~/.npm", cfg.Caches["npm"])

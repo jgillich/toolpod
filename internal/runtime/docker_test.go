@@ -376,12 +376,12 @@ func TestWrapAsUser(t *testing.T) {
 	}
 }
 
-// integrationImage is the production base image: it carries util-linux
-// setpriv (for the launch wrapper). python3 moved from the base image to
-// mise.yaml packages: in the runtime-oci-deps migration, so the port
-// listener test installs it via a derived image (exercising the packages:
+// integrationImage is the production base image (bare debian:13-slim): it
+// carries util-linux setpriv (for the launch wrapper). python3 moved from the
+// base image to mise.yaml packages: in the runtime-oci-deps migration, so the
+// port listener test installs it via a derived image (exercising the packages:
 // build path the feature added).
-const integrationImage = "ghcr.io/jgillich/tpod-mise:latest"
+const integrationImage = "debian:13-slim"
 
 func TestIntegrationRunShellEcho(t *testing.T) {
 	if testing.Short() {
