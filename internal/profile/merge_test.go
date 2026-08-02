@@ -347,3 +347,81 @@ func TestResolveReposWholeFieldNull(t *testing.T) {
 		t.Errorf("whole-field null should drop all inherited repos, got %v", cfg.Repos)
 	}
 }
+
+func TestResolveFilesMergeAcrossExtends(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "frag1.yaml", "version: 1\nimage: frag1:1\ncommand: [\"x\"]\nfiles:\n  ~/.config/a: {content: \"one\"}\n")
+	mustWriteProfile(t, dir, "frag2.yaml", "version: 1\nimage: frag2:1\ncommand: [\"y\"]\nfiles:\n  ~/.config/b: {content: \"two\"}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: [frag1, frag2]\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Files["~/.config/a"].Content != "one" {
+		t.Errorf("files[~/.config/a].Content = %q, want one (from frag1)", cfg.Files["~/.config/a"].Content)
+	}
+	if cfg.Files["~/.config/b"].Content != "two" {
+		t.Errorf("files[~/.config/b].Content = %q, want two (from frag2)", cfg.Files["~/.config/b"].Content)
+	}
+}
+
+func TestResolveFilesOverrideByTarget(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nfiles:\n  ~/.config/a: {content: \"one\"}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nfiles:\n  ~/.config/a: {content: \"two\", mode: 0600}\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Files["~/.config/a"].Content != "two" {
+		t.Errorf("files[~/.config/a].Content = %q, want two (child wins per key)", cfg.Files["~/.config/a"].Content)
+	}
+	if cfg.Files["~/.config/a"].Mode != 0o600 {
+		t.Errorf("files[~/.config/a].Mode = %o, want 600", cfg.Files["~/.config/a"].Mode)
+	}
+}
+
+func TestResolveFilesNullDelete(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nfiles:\n  ~/.config/a: {content: \"one\"}\n  ~/.config/b: {content: \"two\"}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nfiles:\n  ~/.config/a: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, exists := cfg.Files["~/.config/a"]; exists {
+		t.Error("files[~/.config/a] should be deleted by null-to-delete")
+	}
+	if cfg.Files["~/.config/b"].Content != "two" {
+		t.Errorf("files[~/.config/b].Content = %q, want two (inherited unchanged)", cfg.Files["~/.config/b"].Content)
+	}
+}
+
+func TestResolveFilesWholeFieldNull(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nfiles:\n  ~/.config/a: {content: \"one\"}\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\nfiles: null\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(cfg.Files) != 0 {
+		t.Errorf("whole-field null should drop all inherited files, got %v", cfg.Files)
+	}
+}

@@ -49,6 +49,9 @@ func validate(rc RawProfile) error {
 	if err := validateRepos(rc); err != nil {
 		return err
 	}
+	if err := validateFiles(rc); err != nil {
+		return err
+	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
 		fmt.Fprintln(os.Stderr, "warning: network: host makes ports redundant; ports are ignored by the engine")
 	}
@@ -150,6 +153,28 @@ func validateRepos(rc RawProfile) error {
 	return nil
 }
 
+// validateFiles checks each file target: absolute or ~-prefixed, and free of
+// ".." segments. The tar is rooted at "/", so a ".." target could traverse
+// outside the intended location. Rejecting raw ".." segments covers the
+// literal target; template expansion can inject new ".." segments, so
+// ResolveTildes re-checks the expanded target and cleans the result.
+func validateFiles(rc RawProfile) error {
+	for target, f := range rc.Files {
+		if target != "~" && !strings.HasPrefix(target, "~/") && !strings.HasPrefix(target, "/") {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q must be an absolute path or ~-prefixed", target)}
+		}
+		for _, seg := range strings.Split(target, "/") {
+			if seg == ".." {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q must not contain '..' segments", target)}
+			}
+		}
+		if f.Mode > 0o7777 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q: mode %o out of range (want 0-07777)", target, f.Mode)}
+		}
+	}
+	return nil
+}
+
 func checkPortNum(s, what, path string) error {
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 1 || n > 65535 {
@@ -157,7 +182,6 @@ func checkPortNum(s, what, path string) error {
 	}
 	return nil
 }
-
 // validateReservedName rejects profile names that collide with subcommands.
 // Called during catalog load, not on the merged profile.
 func validateReservedName(rc RawProfile, name string) error {

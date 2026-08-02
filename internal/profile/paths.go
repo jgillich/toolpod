@@ -3,6 +3,7 @@ package profile
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -60,9 +61,11 @@ func renderTemplate(s string, data tmplData) (string, error) {
 
 // ResolveTildes expands leading ~/ on mount sources (→ hostHome) and
 // mount/cache targets (→ runtimeHome) per spec §5.6, then renders
-// {{ }} text/template expressions against the host environment. Absolute
-// paths are left as-is. The mode ("A" or "B") is informational only here;
-// the caller has already determined runtimeHome based on the mode.
+// {{ }} text/template expressions against the host environment. Files
+// targets expand ~ (→ runtimeHome) too, and each File.Content is rendered
+// as a template. Absolute paths are left as-is. The mode ("A" or "B") is
+// informational only here; the caller has already determined runtimeHome
+// based on the mode.
 func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
 	out := cfg
 	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports}
@@ -105,6 +108,35 @@ func ResolveTildes(cfg Profile, mode, hostHome, runtimeHome string, ports map[st
 			}
 		}
 		out.Caches = expanded
+	}
+
+	if out.Files != nil {
+		expanded := make(map[string]File, len(out.Files))
+		for target, f := range out.Files {
+			newTarget, err := expandTarget(target, runtimeHome, data)
+			if err != nil {
+				return out, err
+			}
+			if newTarget == "" {
+				return out, fmt.Errorf("file %q resolved to an empty target after template expansion (is the host variable set?)", target)
+			}
+			// Template expansion can inject ".." segments that validateFiles
+			// never saw (e.g. {{ .Env.X }} with X=/..); reject them here so the
+			// resolved target is a clean path. Clean then normalizes //, /./,
+			// and trailing-slash noise; it cannot introduce "..".
+			for _, seg := range strings.Split(newTarget, "/") {
+				if seg == ".." {
+					return out, fmt.Errorf("file %q resolved to path %q containing '..' after template expansion", target, newTarget)
+				}
+			}
+			newTarget = filepath.Clean(newTarget)
+			f.Content, err = renderTemplate(f.Content, data)
+			if err != nil {
+				return out, fmt.Errorf("file %s: %w", target, err)
+			}
+			expanded[newTarget] = f
+		}
+		out.Files = expanded
 	}
 
 	if out.Env != nil {

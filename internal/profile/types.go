@@ -33,6 +33,7 @@ type Profile struct {
 	Image       string                `yaml:"image,omitempty"`
 	Packages    []string              `yaml:"packages,omitempty"`
 	Repos       map[string]Repo       `yaml:"repos,omitempty"`
+	Files       map[string]File       `yaml:"files,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
 	Caches      map[string]string     `yaml:"caches,omitempty"`
 	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
@@ -126,6 +127,14 @@ type Repo struct {
 	KeyURL     string `yaml:"key_url,omitempty"`
 	Suites     string `yaml:"suites,omitempty"`
 	Components string `yaml:"components,omitempty"`
+}
+
+// File is a single file written into the container at launch, keyed by its
+// target path. Content is embedded inline and rendered as a {{ }} template;
+// Mode is the raw permission bits (default 0644).
+type File struct {
+	Content string `yaml:"content"`
+	Mode    uint32 `yaml:"mode,omitempty"`
 }
 
 // DeviceBind attaches a host device node into the container.

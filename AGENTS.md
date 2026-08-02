@@ -25,6 +25,14 @@ CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `
 - **Profiles vs fragments:** profiles carry `image`/`command` identity; fragments are composable mounts/caches/credentials and may only `extends` other fragments. Both are YAML; user profiles in `~/.config/tpod/profiles/` shadow built-ins.
 - **Merge semantics** (in `internal/profile/merge.go`): scalars—child wins; maps—key-by-key (set `null` to delete an inherited key); `command` list—replaced; `packages` list—additive (append with dedup; `packages: null` clears); `repos` map—key-by-key like mounts; `image`/`build`—single slot.
 - **System deps via `packages:`:** profiles/fragments declare apt package names; `internal/runtime/docker_build.go` derives a content-addressed tag `tpod/packages:<hash>` from `(base image ID, sorted packages, sorted repos)` and builds/reuses a derived image in `Prepare`. `internal/runtime/` is where the build + caching lives; prune (`internal/prune/prune.go`) removes catalog-unused derived images. `repos:` enables extra apt sources before install — v1 supports `extrepo: <name>` only (custom URL repos are schema-ready but `checkExtrepoOnly` in `Prepare` rejects them). Caveat: mise installs tools into the **shared** `tpod-mise` volume, but compilation now runs inside a per-profile derived image. A tool built under a profile that declares a runtime lib (e.g. `php`'s `libxml2`) lives in the shared volume and may fail to load under a profile whose derived image lacks that lib — so fragment-scoped runtime libs should generally also be declared by any profile expected to run the same tool.
+- **`files:`:** profiles/fragments write inline-content files into the
+  ephemeral container at launch (between ContainerCreate and ContainerStart
+  via CopyToContainer with a tar built by `internal/runtime/docker_run.go`'s
+  `tarFiles`). Content supports `{{ }}` templates; targets are absolute or
+  `~`-prefixed and must not contain `..`. Files are owned by the execution
+  user; missing parent dirs are created automatically and the bootstrap chown
+  is extended with `$HOME` parents of file targets so the execution user can
+  write them.
 - **Prune/doctor derived-image matching:** engines qualify `RepoTags` with a registry (`docker.io/`, `localhost/`, ...), so `listTpodImages`/`checkDerivedImages` normalize via `runtime.DerivedRef` (parses with `github.com/distribution/reference` and matches on the `tpod/packages` path) — never a bare string `HasPrefix`.
 - **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). An empty resolution leaves the var unset.
 - **Catalog is embedded:** built-in profiles/fragments ship in the binary. To add an agent, add YAML under `internal/catalog/` and re-build; do not load them from disk at runtime.

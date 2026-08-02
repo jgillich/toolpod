@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -18,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/jgillich/tpod/internal/mise"
@@ -63,6 +66,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		writable = append(writable, c.Target)
 	}
 	writable = append(writable, homeParents(runtimeHome, mountTargets(spec))...)
+	writable = append(writable, homeParents(runtimeHome, fileTargets(spec))...)
 	bootstrap := fmt.Sprintf("mkdir -p %s && chown %d:%d %s", shq(runtimeHome), hostUID, hostGID, quoteJoin(writable))
 	cmd := wrapAsUser(bootstrap, hostUID, hostGID, []string{"sh", "-c", userCmd})
 
@@ -124,6 +128,12 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		defer cancel()
 		_ = d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true})
 	}()
+
+	if len(spec.Files) > 0 {
+		if err := writeContainerFiles(ctx, d.cli, resp.ID, spec.Files, hostUID, hostGID); err != nil {
+			return 3, fmt.Errorf("write profile files: %w", err)
+		}
+	}
 
 	// Attach BEFORE start so we don't miss early output (spec §3.3).
 	// attachAndPump would block until the stream closes, but the container
@@ -254,6 +264,58 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		closeConn()
 		return int(status.StatusCode), nil
 	}
+}
+
+// tarFiles renders the container-file tar stream: one regular file entry per
+// target with a relative path (CopyToContainer untars at "/"), the file's
+// mode, and the execution user's uid/gid. The header requests FormatPAX
+// (Go's writer falls back to USTAR for short headers and uses PAX only when
+// needed, e.g. long paths); explicit TypeReg/mode/uid/gid are the real
+// guarantees.
+func tarFiles(files []FileSpec, uid, gid int) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, f := range files {
+		rel := strings.TrimPrefix(f.Target, "/")
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     rel,
+			Typeflag: tar.TypeReg,
+			Mode:     int64(f.Mode),
+			Uid:      uid,
+			Gid:      gid,
+			Size:     int64(len(f.Content)),
+			Format:   tar.FormatPAX,
+		}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write([]byte(f.Content)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// writeContainerFiles untars the profile's files into the created-but-not-
+// yet-started container, so they exist before the command runs and are owned
+// by the execution user.
+func writeContainerFiles(ctx context.Context, cli *client.Client, containerID string, files []FileSpec, uid, gid int) error {
+	data, err := tarFiles(files, uid, gid)
+	if err != nil {
+		return err
+	}
+	return cli.CopyToContainer(ctx, containerID, "/", bytes.NewReader(data), container.CopyToContainerOptions{})
+}
+
+// fileTargets lists every container file target for a spec.
+func fileTargets(spec Spec) []string {
+	targets := make([]string, 0, len(spec.Files))
+	for _, f := range spec.Files {
+		targets = append(targets, f.Target)
+	}
+	return targets
 }
 
 // homeParents returns the engine-created (root-owned) parent dirs under home

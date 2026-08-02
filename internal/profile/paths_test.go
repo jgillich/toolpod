@@ -288,3 +288,56 @@ func TestResolveTildesMissingPortKeyRendersEmpty(t *testing.T) {
 		t.Errorf("PORT = %q, want \"\" (Go template index on missing map key yields zero value, no error)", out.Env["PORT"])
 	}
 }
+
+func TestResolveFilesTildeAndTemplate(t *testing.T) {
+	cfg := Profile{
+		Files: map[string]File{
+			"~/.config/foo": {
+				Content: "port={{ index .Ports \"8080\" }} uid={{ uid }}",
+			},
+			"~/.config/bar": {Content: "plain"},
+		},
+	}
+	out, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", map[string]string{"8080": "5173"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out.Files["/home/me/.config/foo"]; !ok {
+		t.Fatalf("~ target should expand to runtimeHome, got %v", out.Files)
+	}
+	got := out.Files["/home/me/.config/foo"].Content
+	want := "port=5173 uid=" + currentUID()
+	if got != want {
+		t.Errorf("content = %q, want %q (template rendered)", got, want)
+	}
+	if out.Files["/home/me/.config/bar"].Content != "plain" {
+		t.Errorf("plain content must pass through unchanged, got %q", out.Files["/home/me/.config/bar"].Content)
+	}
+}
+
+func TestResolveFilesEmptyRenderedTargetRejected(t *testing.T) {
+	cfg := Profile{
+		Files: map[string]File{
+			"{{ .Env.MISSING_VAR }}": {Content: "x"},
+		},
+	}
+	_, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	if err == nil {
+		t.Fatal("expected error for file target that renders empty, got nil")
+	}
+}
+
+func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
+	os.Setenv("TPOD_TEST_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPOD_TEST_TRAVERSAL") })
+
+	cfg := Profile{
+		Files: map[string]File{
+			"{{ .Env.TPOD_TEST_TRAVERSAL }}/etc/passwd": {Content: "x"},
+		},
+	}
+	_, err := ResolveTildes(cfg, "A", "/home/me", "/home/me", nil)
+	if err == nil {
+		t.Fatal("expected error for file target expanding to a '..' path, got nil")
+	}
+}

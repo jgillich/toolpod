@@ -7,6 +7,7 @@ type Spec struct {
 	Image       string
 	Packages    []string
 	Repos       map[string]Repo
+	Files       []FileSpec
 	Command     []string
 	Mounts      []MountSpec
 	PortSpecs   []PortSpec
@@ -31,6 +32,13 @@ type Repo struct {
 	KeyURL     string
 	Suites     string
 	Components string
+}
+
+// FileSpec is a single file written into the container at launch.
+type FileSpec struct {
+	Target  string
+	Content string
+	Mode    uint32
 }
 
 type MountSpec struct {
