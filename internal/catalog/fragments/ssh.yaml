@@ -7,3 +7,5 @@ mounts:
     source: ~/.ssh/known_hosts
     read_only: false
     optional: true
+packages:
+  - openssh-client
