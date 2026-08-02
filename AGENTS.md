@@ -43,3 +43,8 @@ CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `
 
 ## Workspace rules
 You are in a isolated environment. Trust user information if you cannot verify. Create worktrees in `.worktrees`. All directories outside of the project are ephemeral.
+
+
+## Comments
+
+Comments should explain intent, not implementation. Use comments to document business rules, design rationale, edge cases, assumptions, performance trade-offs, and public API contracts—information that cannot be inferred from the code itself. Avoid comments that merely restate what the code does, duplicate obvious syntax, become stale, or leave behind commented-out code. Prefer clear names, simple control flow, and well-factored functions that make the code self-explanatory. When a comment is necessary, ensure it provides lasting value by explaining why the code exists or why it is implemented in a particular way.
