@@ -728,8 +728,8 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		Files: []FileSpec{
 			{Target: "/root/.config/tpod-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
 		},
-		// Existence + content + permissions are all exercised end-to-end.
-		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644"`},
+		// Existence + content + permissions + ownership are all exercised end-to-end.
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644" && test "$(stat -c %u /root/.config/tpod-test/deep.conf)" = "$(id -u)"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		RuntimeHome: "/root",
 		Network:     "none",
