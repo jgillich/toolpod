@@ -367,7 +367,7 @@
       <!-- Wordmark -->
       <g
          font-family="'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-         font-size="115"
+         font-size="135"
          font-weight="800"
          fill="#f8fafc"
          filter="url(#soft-glow)"
@@ -377,15 +377,15 @@
            y="220"
            id="text29">t</text>
         <text
-           x="50"
+           x="59"
            y="220"
            id="text30">p</text>
         <text
-           x="124"
+           x="146"
            y="220"
            id="text31">o</text>
         <text
-           x="198"
+           x="232"
            y="220"
            id="text32">d</text>
       </g>
@@ -393,7 +393,7 @@
       <rect
          x="2"
          y="234"
-         width="46"
+         width="54"
          height="3"
          rx="1.5"
          fill="#fbbf24"
@@ -414,26 +414,26 @@
            dominant-baseline="central"
            fill="#a5b4c8"
            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-           font-size="17"
+           font-size="21"
            font-weight="600"
-           letter-spacing="3"
+           letter-spacing="3.5"
            id="text33">
         INSTANT DEVELOPMENT SANDBOX
       </text>
       </g>
       <!-- Feature pills -->
       <g
-         transform="translate(5, 298)"
+         transform="translate(5, 302)"
          font-family="'JetBrains Mono', 'Fira Code', ui-monospace, monospace"
-         font-size="12"
+         font-size="15"
          font-weight="600"
          id="g36">
         <rect
            x="0"
            y="0"
-           width="85"
-           height="25"
-           rx="12.5"
+           width="106"
+           height="31"
+           rx="15.5"
            fill="#22d3ee"
            fill-opacity="0.10"
            stroke="#22d3ee"
@@ -441,18 +441,18 @@
            stroke-width="1"
            id="rect33" />
         <text
-           x="42.5"
-           y="13"
+           x="53"
+           y="16"
            dominant-baseline="central"
            fill="#5eead4"
            text-anchor="middle"
            id="text34">&lt; 1s boot</text>
         <rect
-           x="97"
+           x="121"
            y="0"
-           width="95"
-           height="25"
-           rx="12.5"
+           width="119"
+           height="31"
+           rx="15.5"
            fill="#8b5cf6"
            fill-opacity="0.12"
            stroke="#8b5cf6"
@@ -460,29 +460,29 @@
            stroke-width="1"
            id="rect34" />
         <text
-           x="144.5"
-           y="13"
+           x="180.5"
+           y="16"
            dominant-baseline="central"
            fill="#c4b5fd"
            text-anchor="middle"
            id="text35">ephemeral</text>
         <rect
-           x="204"
+           x="255"
            y="0"
-           width="107"
-           height="25"
-           rx="12.5"
-           fill="#ffffff"
-           fill-opacity="0.05"
-           stroke="#ffffff"
-           stroke-opacity="0.2"
+           width="134"
+           height="31"
+           rx="15.5"
+           fill="#fbbf24"
+           fill-opacity="0.12"
+           stroke="#fbbf24"
+           stroke-opacity="0.4"
            stroke-width="1"
            id="rect35" />
         <text
-           x="257.5"
-           y="13"
+           x="322"
+           y="16"
            dominant-baseline="central"
-           fill="#cbd5e1"
+           fill="#fde68a"
            text-anchor="middle"
            id="text36">composable</text>
       </g>
