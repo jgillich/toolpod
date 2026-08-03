@@ -74,10 +74,10 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 
 func newLaunchCommand(o *launchFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                "launch <profile> [args...]",
-		Short:              "Launch a profile (e.g. \"shell\").",
-		Args:               cobra.ArbitraryArgs,
-		ValidArgsFunction:  completeProfileNames,
+		Use:               "launch <profile> [args...]",
+		Short:             "Launch a profile (e.g. \"shell\").",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeProfileNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return c.Help()
@@ -125,9 +125,9 @@ func (e *exitError) Unwrap() error { return e.err }
 func newShowCommand() *cobra.Command {
 	var resolved bool
 	cmd := &cobra.Command{
-		Use:   "show <name>",
-		Short: "Print a profile (use --resolved to inline extends).",
-		Args:  cobra.ExactArgs(1),
+		Use:               "show <name>",
+		Short:             "Print a profile (use --resolved to inline extends).",
+		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runShow(args[0], resolved)
@@ -177,9 +177,9 @@ func runShow(name string, resolved bool) error {
 
 func newEditCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <name>",
-		Short: "Open the user profile file in $EDITOR.",
-		Args:  cobra.ExactArgs(1),
+		Use:               "edit <name>",
+		Short:             "Open the user profile file in $EDITOR.",
+		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runEdit(args[0])
@@ -464,12 +464,12 @@ func newPruneCommand() *cobra.Command {
 func newRootCommand() *cobra.Command {
 	o := &launchFlags{}
 	root := &cobra.Command{
-		Use:           "tpd",
-		Short:         "ephemeral dev environments",
-		Args:          cobra.ArbitraryArgs,
+		Use:               "tpd",
+		Short:             "ephemeral dev environments",
+		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeProfileNames,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				// Bare tpd shows the full command list; otherwise the only

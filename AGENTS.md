@@ -7,7 +7,7 @@ Go CLI for disposable, reproducible dev environments in a Podman/Docker containe
 - `go test ./...` — full test suite (Go 1.25, CGO off in releases)
 - `go vet ./...` — lint check
 
-CLI is wired with [kong](https://github.com/alecthomas/kong); commands live in `cmd/tpd/cli.go`. `LaunchCmd.ProfileAndArgs` uses `passthrough:"partial"` so flags after the profile name reach the profile's command verbatim.
+CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd/tpd/cli.go`. The launch command (root and `tpd launch`) disables interspersed flag parsing (`SetInterspersed(false)`), so flags parse only before the profile name and everything after it reaches the profile's command verbatim. `cmd/tpd/completion.go` provides native shell completion for profile/fragment names via `ValidArgsFunction`; `tpd completion bash|zsh|fish|powershell` prints the activation script.
 
 ## Layout
 - `cmd/tpd/` — entrypoint and CLI (`main.go`, `cli.go`, e2e/profile/cli tests).
