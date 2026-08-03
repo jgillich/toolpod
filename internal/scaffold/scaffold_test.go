@@ -52,19 +52,19 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	output := string(data)
 
 	// extends list references profile + fragments
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
-		t.Errorf("missing extends list with opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/opencode") {
+		t.Errorf("missing extends list with core/opencode, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- javascript") {
+	if !strings.Contains(output, "- core/javascript") {
 		t.Errorf("missing javascript in extends list, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- go") {
+	if !strings.Contains(output, "- core/go") {
 		t.Errorf("missing go in extends list, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- gitconfig") {
+	if !strings.Contains(output, "- core/gitconfig") {
 		t.Errorf("missing gitconfig in extends list, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- ssh") {
+	if !strings.Contains(output, "- core/ssh") {
 		t.Errorf("missing ssh in extends list, got:\n%s", output)
 	}
 
@@ -175,7 +175,7 @@ func TestForceOverwritesExisting(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "- javascript") {
+	if !strings.Contains(string(data), "- core/javascript") {
 		t.Errorf("file should reference javascript fragment after force overwrite")
 	}
 }
@@ -242,7 +242,7 @@ func TestForceInteractiveNoPrompt(t *testing.T) {
 		t.Error("--force should not prompt, got skipped")
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "- javascript") {
+	if !strings.Contains(string(data), "- core/javascript") {
 		t.Error("file should reference javascript fragment after force overwrite")
 	}
 }
@@ -284,7 +284,7 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 		t.Errorf("should print created, got: %s", stdout.String())
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
-	if !strings.Contains(string(data), "- javascript") {
+	if !strings.Contains(string(data), "- core/javascript") {
 		t.Error("file should reference javascript fragment from new generation")
 	}
 }
@@ -328,7 +328,7 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 		t.Errorf("should prompt for fragments on stderr")
 	}
 	// YAML goes to stdout
-	if !strings.Contains(stdout.String(), "- opencode") {
+	if !strings.Contains(stdout.String(), "- core/opencode") {
 		t.Error("stdout should contain generated YAML")
 	}
 	// No file written
@@ -386,8 +386,8 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- shell") {
-		t.Errorf("should contain extends list with shell, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/shell") {
+		t.Errorf("should contain extends list with core/shell, got:\n%s", output)
 	}
 	if strings.Contains(output, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
@@ -442,10 +442,10 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	if !strings.Contains(content, "extends:") {
 		t.Error("generated file should contain extends:")
 	}
-	if !strings.Contains(content, "javascript") {
+	if !strings.Contains(content, "core/javascript") {
 		t.Error("generated file should reference javascript fragment")
 	}
-	if !strings.Contains(content, "go") {
+	if !strings.Contains(content, "core/go") {
 		t.Error("generated file should reference go fragment")
 	}
 	// Should NOT contain inlined cache paths from npm fragment
@@ -494,13 +494,13 @@ func TestInteractiveWizard(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
-		t.Errorf("missing extends list with opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/opencode") {
+		t.Errorf("missing extends list with core/opencode, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- javascript") {
+	if !strings.Contains(output, "- core/javascript") {
 		t.Errorf("missing javascript in extends list, got:\n%s", output)
 	}
-	if !strings.Contains(output, "- gitconfig") {
+	if !strings.Contains(output, "- core/gitconfig") {
 		t.Errorf("missing gitconfig in extends list, got:\n%s", output)
 	}
 	// Prompts should go to stderr, not stdout

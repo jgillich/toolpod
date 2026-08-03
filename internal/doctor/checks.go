@@ -87,7 +87,7 @@ func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
 	if err != nil {
 		return Check{Name: "mise base image", Status: Warn, Message: err.Error()}
 	}
-	base, ok := cat.GetBuiltin("mise")
+	base, ok := cat.Get("core/mise")
 	if !ok {
 		return Check{Name: "mise base image", Status: Warn, Message: "built-in mise profile not found"}
 	}
@@ -309,7 +309,7 @@ func checkProfileValidity(userDir string) Check {
 		// tolerate that one error for base profiles and count them as valid.
 		cfg, err := profile.ResolveProfile(cat, name)
 		if err != nil {
-			if len(rc.Command) == 0 && len(rc.ExtendsList) == 0 {
+			if len(rc.Command) == 0 && len(rc.ExtendsList.Raw) == 0 {
 				// Base profile: missing command is expected, not an error.
 				continue
 			}
@@ -347,7 +347,7 @@ func checkUserOverrides(userDir string) []Check {
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(rc.Path, "built-in:") || catMerged.IsFragment(name) {
+		if rc.Namespace == "core" || catMerged.IsFragment(name) {
 			continue
 		}
 		userFileCount++

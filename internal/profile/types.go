@@ -6,26 +6,83 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ExtendsList is a list of profile/fragment names to extend.
-// It unmarshals from both a string ("extends: foo") and a list
-// ("extends: [foo, bar]"). A single string is normalized to a
-// one-element slice.
-type ExtendsList []string
+// Ref is a parsed-but-not-yet-resolved reference to a profile or fragment.
+// Namespace == "" means unqualified (resolve via user-first-then-core fallback);
+// any other value ("core", a future remote namespace) means qualified (direct
+// lookup, no fallback).
+type Ref struct {
+	Namespace string
+	Name      string
+}
 
+// FullName returns the canonical string form: "ns/name", or the bare name
+// when Namespace is "".
+func (r Ref) FullName() string {
+	if r.Namespace == "" {
+		return r.Name
+	}
+	return r.Namespace + "/" + r.Name
+}
+
+// ExtendsList is the yaml-decoded extends field. Raw holds the strings as
+// written; Resolved is filled by Resolve splitting each Raw string against the
+// registered namespaces. MarshalYAML emits Resolved (canonical strings) when
+// available, else Raw (for round-tripping un-resolved lists).
+type ExtendsList struct {
+	Raw      []string `yaml:"-"`
+	Resolved []Ref    `yaml:"-"`
+}
+
+// UnmarshalYAML decodes a scalar or list of strings into Raw. No namespace
+// splitting happens here (yaml.v3 gives no context). Resolved stays nil.
 func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		var s string
 		if err := value.Decode(&s); err != nil {
 			return err
 		}
-		*e = ExtendsList{s}
+		e.Raw = []string{s}
 		return nil
 	}
 	var list []string
 	if err := value.Decode(&list); err != nil {
 		return err
 	}
-	*e = ExtendsList(list)
+	e.Raw = list
+	return nil
+}
+
+// MarshalYAML emits Resolved (if non-empty) as canonical strings, else Raw.
+func (e ExtendsList) MarshalYAML() (interface{}, error) {
+	if len(e.Resolved) > 0 {
+		out := make([]string, len(e.Resolved))
+		for i, r := range e.Resolved {
+			out[i] = r.FullName()
+		}
+		return out, nil
+	}
+	if len(e.Raw) > 0 {
+		return e.Raw, nil
+	}
+	return nil, nil
+}
+
+// Resolve splits each Raw string against the registered namespaces into
+// Resolved. Idempotent. An unregistered prefix or empty local name is an error.
+func (e *ExtendsList) Resolve(namespaces map[string]bool) error {
+	if len(e.Raw) == 0 {
+		e.Resolved = nil
+		return nil
+	}
+	resolved := make([]Ref, len(e.Raw))
+	for i, s := range e.Raw {
+		r, err := ParseRef(s, namespaces)
+		if err != nil {
+			return err
+		}
+		resolved[i] = r
+	}
+	e.Resolved = resolved
 	return nil
 }
 
@@ -233,10 +290,29 @@ type Resources struct {
 	CPUs   string `yaml:"cpus,omitempty"`
 }
 
-// RawProfile is a profile as loaded from disk, before extends-merge.
-// It carries the source file path for error reporting.
+// RawProfile is a profile as loaded from disk, before extends-merge. It
+// carries its source identity (Namespace + Name) and file path. Namespace is
+// "core" for embedded built-ins, "" for user files, or a future remote
+// namespace ("github.com/user/project"). Name is the local single-segment name
+// (file basename). FullName is the canonical catalog key; DisplayName is the
+// unqualified name used in user-facing output.
 type RawProfile struct {
 	Profile
-	Path     string                     `yaml:"-"` // file path for error reporting
-	NullKeys map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+	Namespace string                    `yaml:"-"` // source identity, stamped by loaders
+	Name      string                    `yaml:"-"` // local single-segment name (file basename)
+	Path      string                    `yaml:"-"` // file path for error reporting
+	NullKeys  map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+}
+
+// FullName is the canonical catalog key and the qualified YAML/string form.
+func (rc RawProfile) FullName() string {
+	if rc.Namespace == "" {
+		return rc.Name
+	}
+	return rc.Namespace + "/" + rc.Name
+}
+
+// DisplayName is the unqualified name used in user-facing output (list, wizard).
+func (rc RawProfile) DisplayName() string {
+	return rc.Name
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jgillich/tpd/internal/profile"
 )
 
 // runTpdEnv runs the built binary with the given extra environment variables.
@@ -62,28 +64,72 @@ func TestProfileList(t *testing.T) {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
 	s := string(out)
+	// Task 5 restores bare display names (no core/ keys) with core source.
+	if strings.Contains(s, "core/shell") {
+		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
+	}
 	if !strings.Contains(s, "shell") {
 		t.Errorf("expected profile list to contain 'shell', got:\n%s", s)
 	}
-	if !strings.Contains(s, "built-in") {
-		t.Errorf("expected profile list to label built-in entries, got:\n%s", s)
+	if !strings.Contains(s, "core") {
+		t.Errorf("expected profile list to label core entries, got:\n%s", s)
 	}
 	if !strings.Contains(s, "fragment") {
 		t.Errorf("expected profile list to label fragments, got:\n%s", s)
 	}
-	// Regression: built-in fragments must be marked as built-in (not just
+	// Regression: built-in fragments must be marked as core (not just
 	// "fragment" with no origin).
 	dockerMarked := false
 	for _, line := range strings.Split(s, "\n") {
 		if strings.Contains(line, "docker") {
-			if !strings.Contains(line, "fragment") || !strings.Contains(line, "built-in") {
-				t.Errorf("docker fragment row should be marked 'fragment' 'built-in', got: %q", line)
+			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
+				t.Errorf("docker fragment row should be marked 'fragment' 'core', got: %q", line)
 			}
 			dockerMarked = true
 		}
 	}
 	if !dockerMarked {
 		t.Errorf("expected profile list to contain the docker fragment")
+	}
+}
+
+func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
+	cfg := t.TempDir()
+	userProfile := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
+	if err := os.MkdirAll(filepath.Dir(userProfile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userProfile, []byte("version: 1\ncommand: [\"bash\", \"-l\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runTpdEnv(t, []string{"XDG_CONFIG_HOME=" + cfg}, "list")
+	if err != nil {
+		t.Fatalf("profile list: %v\n%s", err, out)
+	}
+	s := string(out)
+	if strings.Contains(s, "core/shell") {
+		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
+	}
+	shellRow, dockerRow := false, false
+	for _, line := range strings.Split(s, "\n") {
+		switch {
+		case strings.HasPrefix(line, "shell"):
+			if !strings.Contains(line, "profile") || !strings.Contains(line, "user shadow") {
+				t.Errorf("shell row should be 'profile' 'user shadow', got: %q", line)
+			}
+			shellRow = true
+		case strings.HasPrefix(line, "docker"):
+			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
+				t.Errorf("docker row should be 'fragment' 'core', got: %q", line)
+			}
+			dockerRow = true
+		}
+	}
+	if !shellRow {
+		t.Errorf("expected profile list to contain the shell row")
+	}
+	if !dockerRow {
+		t.Errorf("expected profile list to contain the docker fragment row")
 	}
 }
 
@@ -118,16 +164,16 @@ func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
 		t.Fatalf("expected user override to be created on save: %v", err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "extends: shell") {
+	if !strings.Contains(s, "extends: core/shell") {
 		t.Errorf("seed must extend the built-in itself, got:\n%s", s)
 	}
-	if !strings.Contains(s, `shadows the built-in "shell"`) {
+	if !strings.Contains(s, `shadows the built-in "core/shell"`) {
 		t.Errorf("seed must explain the shadow/merge, got:\n%s", s)
 	}
 	if !strings.Contains(s, "Resolved profile (reference)") {
 		t.Errorf("seed must carry a resolved-reference banner, got:\n%s", s)
 	}
-	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved shell`) {
+	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved core/shell`) {
 		t.Errorf("seed must note the resolved block is a stale snapshot and how to refresh it, got:\n%s", s)
 	}
 	if !strings.Contains(s, "# image: debian:13-slim") {
@@ -169,7 +215,7 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "extends: docker") {
+	if !strings.Contains(s, "extends: core/docker") {
 		t.Errorf("fragment seed must extend the built-in fragment, got:\n%s", s)
 	}
 	if !strings.Contains(s, "Resolved fragment (reference)") {
@@ -238,9 +284,57 @@ func (f fakeFileInfo) ModTime() time.Time { return f.t }
 func (f fakeFileInfo) IsDir() bool        { return false }
 func (f fakeFileInfo) Sys() interface{}   { return nil }
 
-func TestProfileShowResolvedFragmentRefused(t *testing.T) {
-	out, _ := runTpd(t, "show", "--resolved", "ssh")
-	if !strings.Contains(out, "fragment") {
-		t.Errorf("expected --resolved on a fragment to be refused with a 'fragment' message, got:\n%s", out)
+func TestProfileShowResolvedFragment(t *testing.T) {
+	out, err := runTpd(t, "show", "--resolved", "ssh")
+	if err != nil {
+		t.Fatalf("show --resolved ssh: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "is a fragment") {
+		t.Errorf("expected fragment to resolve, got refusal:\n%s", out)
+	}
+	if !strings.Contains(out, "openssh-client") {
+		t.Errorf("expected resolved fragment output to contain ssh content, got:\n%s", out)
+	}
+}
+
+func TestProfileEditCoreMiseSeedsUserMiseYaml(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "core/mise")
+	if err != nil {
+		t.Fatalf("edit core/mise (save): %v\n%s", err, out)
+	}
+	// The namespace prefix is stripped: the seed lands in profiles/mise.yaml.
+	target := filepath.Join(cfg, "tpd", "profiles", "mise.yaml")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("expected core/mise edit to seed user mise.yaml: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "extends: core/mise") {
+		t.Errorf("seed must extend the built-in core/mise, got:\n%s", s)
+	}
+	if !strings.Contains(s, "# image: debian:13-slim") {
+		t.Errorf("seed must carry the resolved mise profile commented out, got:\n%s", s)
+	}
+	if !strings.Contains(s, "# saved by test") {
+		t.Errorf("expected override to carry the editor's write, got:\n%s", s)
+	}
+}
+
+func TestResolveQualifiedCoreMise(t *testing.T) {
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := profile.ResolveProfile(cat, "core/mise")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Image != "debian:13-slim" {
+		t.Errorf("ResolveProfile(core/mise).Image = %q, want debian:13-slim", cfg.Image)
 	}
 }

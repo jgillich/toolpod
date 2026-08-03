@@ -1,5 +1,5 @@
 version: 1
-extends: javascript
+extends: core/javascript
 tools:
   biome: latest
   npm:ts-node: latest

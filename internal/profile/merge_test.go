@@ -153,8 +153,9 @@ func TestResolveListReplaced(t *testing.T) {
 
 func TestResolveExtendsSelfViaBuiltin(t *testing.T) {
 	dir := t.TempDir()
-	// User file shadows built-in "opencode" and extends "opencode" (the built-in).
-	mustWriteProfile(t, dir, "opencode.yaml", "version: 1\nextends: opencode\ncaches:\n  npm: ~/.npm\n")
+	// User file shadows built-in "opencode" and extends it via the qualified
+	// core/ prefix to avoid a self-cycle.
+	mustWriteProfile(t, dir, "opencode.yaml", "version: 1\nextends: core/opencode\ncaches:\n  npm: ~/.npm\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
@@ -190,6 +191,38 @@ func TestResolveCycle(t *testing.T) {
 	}
 	if ce.Message == "" || !strings.Contains(ce.Message, "cycle") {
 		t.Errorf("error message %q should mention cycle", ce.Message)
+	}
+}
+
+func TestResolveExtendsSelfUnqualifiedIsCycle(t *testing.T) {
+	dir := t.TempDir()
+	// Unqualified extends: mise from user mise.yaml now resolves to the user
+	// entry itself (user-first fallback), so it's a self-cycle.
+	mustWriteProfile(t, dir, "mise.yaml", "version: 1\nextends: mise\ncaches:\n  npm: ~/.npm\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+	_, err = ResolveProfile(cat, "mise")
+	if err == nil {
+		t.Fatal("expected self-cycle error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
+	}
+}
+
+func TestResolveExtendsCoreSelfIsCycle(t *testing.T) {
+	// core/mise extending core/mise (qualified self) is a cycle.
+	cat := NewProfileCatalogForTest(map[string]RawProfile{
+		"mise": {Profile: Profile{Version: 1, ExtendsList: ExtendsList{Raw: []string{"core/mise"}}, Image: "x", Command: []string{"x"}}},
+	})
+	_, err := ResolveProfile(cat, "mise")
+	if err == nil {
+		t.Fatal("expected self-cycle error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention cycle, got: %v", err)
 	}
 }
 

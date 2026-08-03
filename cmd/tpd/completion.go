@@ -25,7 +25,7 @@ func completeProfileNames(c *cobra.Command, args []string, toComplete string) ([
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return filterCompletion(cat.ProfileNames(), toComplete)
+	return filterCompletion(cat.ProfileDisplayNames(), toComplete)
 }
 
 // completeNames completes profile and fragment names for commands that accept
@@ -35,7 +35,7 @@ func completeNames(c *cobra.Command, args []string, toComplete string) ([]string
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return filterCompletion(cat.Names(), toComplete)
+	return filterCompletion(cat.DisplayNames(), toComplete)
 }
 
 // completeNamesOnce completes profile and fragment names for single-positional

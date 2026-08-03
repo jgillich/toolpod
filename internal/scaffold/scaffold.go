@@ -72,14 +72,15 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	if err != nil {
 		return fmt.Errorf("loading built-in profiles: %w", err)
 	}
-	builtinProfiles := builtinCat.ProfileNames()
+	builtinProfiles := builtinCat.ProfileDisplayNames()
 	if len(builtinProfiles) == 0 {
 		return fmt.Errorf("no built-in profiles available")
 	}
 
-	// All extendable names for the wizard base picker: profiles (built-in +
-	// user) and fragments. "mise" is listed first so it reads as the default.
-	baseNames := dedup(append([]string{"mise"}, cat.ProfileNames()...))
+	// All extendable display names for the wizard base picker: profiles
+	// (built-in + user) and fragments. "mise" is listed first so it reads as
+	// the default.
+	baseNames := dedup(append([]string{"mise"}, cat.ProfileDisplayNames()...))
 
 	bases := opts.Extends
 	profileName := opts.Name
@@ -116,12 +117,26 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		if profileName == "" {
 			return fmt.Errorf("profile name is required")
 		}
+		// Bases from the wizard are display names; resolve to canonical.
+		canonicalBases := make([]string, 0, len(bases))
+		for _, dn := range bases {
+			ref, err := profile.ParseRef(dn, cat.Namespaces())
+			if err != nil {
+				return err
+			}
+			key, ok := cat.ResolveRef(ref)
+			if !ok {
+				return fmt.Errorf("unknown base: %s", dn)
+			}
+			canonicalBases = append(canonicalBases, key)
+		}
+		bases = canonicalBases
 	}
 
 	if err := profile.ValidateName(profileName); err != nil {
 		return err
 	}
-	if cat.IsFragment(profileName) {
+	if key, ok := resolveCatalogName(cat, profileName); ok && cat.IsFragment(key) {
 		return fmt.Errorf("profile name %q collides with an existing fragment", profileName)
 	}
 
@@ -131,43 +146,64 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// so fragments stay additions to a base, not replacements.
 	hasProfile := false
 	for _, b := range bases {
-		if _, ok := cat.Get(b); ok && !cat.IsFragment(b) {
+		ref, err := profile.ParseRef(b, cat.Namespaces())
+		if err != nil {
+			// Defer the error to the validation loop below.
+			continue
+		}
+		key, ok := cat.ResolveRef(ref)
+		if ok && !cat.IsFragment(key) {
 			hasProfile = true
 			break
 		}
 	}
 	if !hasProfile {
-		if _, ok := cat.GetBuiltin(profileName); ok {
-			bases = append([]string{profileName}, bases...)
+		if _, ok := cat.Get("core/" + profileName); ok {
+			bases = append([]string{"core/" + profileName}, bases...)
 		} else {
-			bases = append([]string{"mise"}, bases...)
+			bases = append([]string{"core/mise"}, bases...)
 		}
 	}
 
 	// Interactively pick extra fragments when the user gave no --extends.
-	// Picked fragments are appended to the same extends list as bases.
+	// Picked fragments are appended to the same extends list as bases, mapped
+	// from their display names to canonical FullNames.
 	if interactive && len(opts.Extends) == 0 {
+		var picked []string
 		if tty {
-			picked, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
+			p, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
 			if err != nil {
 				return err
 			}
-			bases = append(bases, picked...)
+			picked = p
 		} else {
-			bases = append(bases, promptFragments(FragmentNames(), reader, stderr)...)
+			picked = promptFragments(FragmentNames(), reader, stderr)
+		}
+		for _, dn := range picked {
+			full, ok := cat.FragmentByDisplayName(dn)
+			if !ok {
+				return fmt.Errorf("unknown fragment: %s", dn)
+			}
+			bases = append(bases, full)
 		}
 		wizardUsed = true
 	}
 
-	bases = dedup(bases)
-	for _, b := range bases {
-		if _, ok := cat.Get(b); !ok {
+	for i, b := range bases {
+		ref, err := profile.ParseRef(b, cat.Namespaces())
+		if err != nil {
+			return fmt.Errorf("invalid extends target %q: %w", b, err)
+		}
+		key, ok := cat.ResolveRef(ref)
+		if !ok {
 			return fmt.Errorf("unknown extends target: %s", b)
 		}
+		bases[i] = key
 	}
+	bases = dedup(bases)
 	for _, b := range bases {
-		if msg := catalog.Advisory(b); msg != "" {
-			fmt.Fprintf(stderr, "note: %s grants: %s\n", b, msg)
+		if msg := catalog.Advisory(displayName(b)); msg != "" {
+			fmt.Fprintf(stderr, "note: %s grants: %s\n", displayName(b), msg)
 		}
 	}
 
@@ -254,19 +290,21 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 }
 
 func generate(name string, extends []string, cat profile.Catalog) (string, error) {
+	el := profile.ExtendsList{Raw: extends}
+	if err := el.Resolve(cat.Namespaces()); err != nil {
+		return "", err
+	}
 	p := profile.Profile{
 		Version:     1,
-		ExtendsList: profile.ExtendsList(extends),
+		ExtendsList: el,
 	}
 	if !basesProvideCommand(cat, extends) {
 		p.Command = []string{"bash"}
 	}
-
 	data, err := yaml.Marshal(p)
 	if err != nil {
 		return "", err
 	}
-
 	return string(data), nil
 }
 
@@ -308,6 +346,25 @@ func dedup(items []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+// resolveCatalogName maps a user-supplied extends target to its canonical
+// catalog key (user entry first, then core fallback).
+func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return "", false
+	}
+	return cat.ResolveRef(ref)
+}
+
+// displayName is the local name segment of a canonical catalog key ("mise"
+// for both "mise" and "core/mise"), used for advisory lookups.
+func displayName(key string) string {
+	if i := strings.LastIndex(key, "/"); i >= 0 {
+		return key[i+1:]
+	}
+	return key
 }
 
 // IsTTY reports whether r is an interactive terminal.
@@ -491,7 +548,7 @@ func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	cat.AddRaw(profileName, rc)
+	cat.AddRaw("", profileName, rc)
 	return profile.ResolveProfile(cat, profileName)
 }
 

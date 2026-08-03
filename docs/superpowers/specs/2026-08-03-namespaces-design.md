@@ -210,7 +210,7 @@ Existing user files fall into two groups:
 - Hand-written profiles extending a built-in by an unqualified name that is *not* their own (e.g. `extends: mise` from `myagent.yaml`) keep working: `mise` resolves to user `mise` if present, else `core/mise`. No change.
 - User shadows that today extend the built-in of the same name via the `extends: <self>` special-case (e.g. a user `mise.yaml` with `extends: mise`). Under the new rules that is a self-reference and becomes an error. The fix is mechanical: change `extends: mise` to `extends: core/mise`. Existing `tpd init`/`tpd edit` seed files are the primary source of these; re-running `tpd init` regenerates them with the correct `core/` form.
 
-The change in `init`/`edit` output (emitting `extends: core/mise` instead of `extends: mise`) only affects newly generated files. `tpd doctor` (or a one-line migration note in release notes) can flag the broken `extends: <self>` pattern for existing files.
+The change in `init`/`edit` output (emitting `extends: core/mise` instead of `extends: mise`) only affects newly generated files. `tpd doctor` flags the broken `extends: <self>` pattern for existing files: its profile-validity check resolves each user profile and reports the self-reference as an extends cycle error (e.g. `extends: opencode` from a user `opencode.yaml` fails with `extends cycle detected at: opencode`). The fix is `extends: core/opencode`.
 
 Built-in fragment files that extend other built-in fragments (`core/typescript.yaml` → `javascript`, and any others) are updated to `extends: core/javascript` in the same change. Built-in profile files keep unqualified `extends: mise`.
 

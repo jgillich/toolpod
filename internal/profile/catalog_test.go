@@ -8,12 +8,131 @@ import (
 	"testing"
 )
 
+func TestRawProfileFullName(t *testing.T) {
+	if got := (RawProfile{Namespace: "core", Name: "mise"}).FullName(); got != "core/mise" {
+		t.Errorf("core/mise FullName = %q", got)
+	}
+	if got := (RawProfile{Namespace: "", Name: "mise"}).FullName(); got != "mise" {
+		t.Errorf("user mise FullName = %q, want \"mise\"", got)
+	}
+}
+
+func TestRawProfileDisplayName(t *testing.T) {
+	if got := (RawProfile{Namespace: "core", Name: "mise"}).DisplayName(); got != "mise" {
+		t.Errorf("DisplayName = %q, want mise", got)
+	}
+}
+
+func TestLoadProfilesStampsCoreNamespace(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("core/mise")
+	if !ok {
+		t.Fatal("core/mise not keyed under FullName")
+	}
+	if rc.Namespace != "core" || rc.Name != "mise" {
+		t.Errorf("core/mise identity = {%q, %q}, want {core, mise}", rc.Namespace, rc.Name)
+	}
+	// Bare "mise" (user namespace) must not exist when there's no user file.
+	if _, ok := cat.Get("mise"); ok {
+		t.Error("bare \"mise\" should not exist without a user file")
+	}
+}
+
+func TestLoadProfilesUserEntryStampsEmptyNamespace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("rustdev")
+	if !ok {
+		t.Fatal("user rustdev not found under bare FullName")
+	}
+	if rc.Namespace != "" || rc.Name != "rustdev" {
+		t.Errorf("user identity = {%q, %q}, want {\"\", rustdev}", rc.Namespace, rc.Name)
+	}
+	if rc.Path == "" {
+		t.Error("user entry has empty Path")
+	}
+}
+
+func TestLoadProfilesUserShadowsCoreCoexist(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both must coexist under distinct FullNames.
+	if rc, ok := cat.Get("shell"); !ok || rc.Namespace != "" {
+		t.Errorf("user shell = {%q, %q}, want {\"\", shell}", rc.Namespace, rc.Name)
+	}
+	if rc, ok := cat.Get("core/shell"); !ok || rc.Namespace != "core" {
+		t.Errorf("core/shell = {%q, %q}, want {core, shell}", rc.Namespace, rc.Name)
+	}
+}
+
+func TestLoadProfilesRejectsCrossTypeDisplayNameCollision(t *testing.T) {
+	// A user fragment named "shell" and core/shell (profile) share the display
+	// name "shell"; unqualified resolution and ProfileDisplayNames can't
+	// disambiguate. This must be a hard error.
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "shell.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadProfiles(dir)
+	if err == nil {
+		t.Fatal("expected cross-type display-name collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "shell") || !strings.Contains(err.Error(), "fragment") {
+		t.Errorf("error should name shell and fragment, got: %v", err)
+	}
+}
+
+func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *testing.T) {
+	// A user profile named ssh collides with the built-in core/ssh fragment.
+	// Tolerant mode keeps the profile (launchable) and drops the fragment.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ssh.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	cat, err := LoadProfilesTolerant(dir, func(w string) { warnings = append(warnings, w) })
+	if err != nil {
+		t.Fatalf("LoadProfilesTolerant: %v", err)
+	}
+	if rc, ok := cat.Get("ssh"); !ok || rc.Namespace != "" {
+		t.Errorf("user profile ssh = {%q, %q}, want {\"\", ssh}", rc.Namespace, rc.Name)
+	}
+	if cat.IsFragment("ssh") {
+		t.Error("user profile ssh should not be a fragment")
+	}
+	if _, ok := cat.Get("core/ssh"); ok {
+		t.Error("core/ssh fragment should be dropped on cross-type collision")
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "ssh") || !strings.Contains(warnings[0], "fragment") {
+		t.Errorf("warn should name ssh and fragment, got %v", warnings)
+	}
+}
+
 func TestLoadProfilesBuiltinsOnly(t *testing.T) {
 	cat, err := LoadProfiles("")
 	if err != nil {
 		t.Fatalf("LoadProfiles(\"\"): %v", err)
 	}
-	for _, name := range []string{"opencode", "codex", "shell"} {
+	for _, name := range []string{"core/opencode", "core/codex", "core/shell"} {
 		if _, ok := cat.Get(name); !ok {
 			t.Errorf("built-in %q missing from catalog", name)
 		}
@@ -32,7 +151,7 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	}
 	rc, ok := cat.Get("shell")
 	if !ok {
-		t.Fatal("user shadow for shell not found")
+		t.Fatal("user shadow for shell not found under bare FullName")
 	}
 	if rc.Image != "my/custom:latest" {
 		t.Errorf("shadow image = %q, want my/custom:latest", rc.Image)
@@ -40,48 +159,39 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	if rc.Path == "" {
 		t.Error("shadow RawProfile has empty Path (should point to user file)")
 	}
+	if rc, ok := cat.Get("core/shell"); !ok || rc.Namespace != "core" {
+		t.Errorf("built-in core/shell = {%q, %q}, want {core, shell}", rc.Namespace, rc.Name)
+	}
 }
 
 func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 	// A shadow extending the builtin of the same name must inherit all of its
-	// parents; resolveBuiltinChain used to follow only ExtendsList[0].
-	builtins := map[string]RawProfile{
-		"t3": {
-			Profile: Profile{Version: 1, Image: "img", Command: []string{"t3"}, ExtendsList: []string{"a", "gui", "b", "c"}},
-			Path:    "builtin:t3",
-		},
-		"a":     {Profile: Profile{Env: map[string]string{"XDG_RUNTIME_DIR": "{{ .Env.XDG_RUNTIME_DIR }}"}}, Path: "builtin:a"},
-		"b":     {Profile: Profile{Mounts: map[string]Mount{"/b": {Source: "~/.b"}}}, Path: "builtin:b"},
-		"c":     {Profile: Profile{Tools: map[string]Tool{"c": {Version: "latest"}}}, Path: "builtin:c"},
-		"extra": {Profile: Profile{Tools: map[string]Tool{"extra": {Version: "1"}}}, Path: "builtin:extra"},
-	}
-	gui := RawProfile{
-		Profile: Profile{Env: map[string]string{"WAYLAND_DISPLAY": "{{ .Env.WAYLAND_DISPLAY }}"}},
-		Path:    "builtin:fragment:gui",
-	}
+	// parents; the qualified core/ prefix reaches the built-in without a cycle.
+	cat := NewProfileCatalogForTest(map[string]RawProfile{
+		"t3":    {Profile: Profile{Version: 1, Image: "img", Command: []string{"t3"}, ExtendsList: ExtendsList{Raw: []string{"a", "gui", "b", "c"}}}},
+		"a":     {Profile: Profile{Env: map[string]string{"XDG_RUNTIME_DIR": "{{ .Env.XDG_RUNTIME_DIR }}"}}},
+		"b":     {Profile: Profile{Mounts: map[string]Mount{"/b": {Source: "~/.b"}}}},
+		"c":     {Profile: Profile{Tools: map[string]Tool{"c": {Version: "latest"}}}},
+		"extra": {Profile: Profile{Tools: map[string]Tool{"extra": {Version: "1"}}}},
+		"gui":   {Profile: Profile{Env: map[string]string{"WAYLAND_DISPLAY": "{{ .Env.WAYLAND_DISPLAY }}"}}},
+	})
+	cat.fragments["core/gui"] = true
+	// Overlay the user shadow under the bare "t3" key, extending core/t3 + extra.
 	shadow := RawProfile{
-		Profile: Profile{Version: 1, ExtendsList: []string{"t3", "extra"}},
-		Path:    "user:/home/u/t3.yaml",
+		Profile:     Profile{Version: 1, ExtendsList: ExtendsList{Raw: []string{"core/t3", "extra"}}},
+		Namespace: "", Name: "t3", Path: "user:/home/u/t3.yaml",
 	}
-	cat := Catalog{
-		entries: map[string]RawProfile{
-			"t3":    shadow,
-			"a":     builtins["a"],
-			"b":     builtins["b"],
-			"c":     builtins["c"],
-			"extra": builtins["extra"],
-			"gui":   gui,
-		},
-		builtins:  builtins,
-		fragments: map[string]bool{"gui": true},
+	if err := shadow.ExtendsList.Resolve(cat.namespaces); err != nil {
+		t.Fatal(err)
 	}
+	cat.entries["t3"] = shadow
 
 	merged, err := ResolveProfile(cat, "t3")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if merged.Env["XDG_RUNTIME_DIR"] == "" {
-		t.Error("missing env from builtin parent 'a' (dropped by resolveBuiltinChain)")
+		t.Error("missing env from builtin parent 'a'")
 	}
 	if merged.Env["WAYLAND_DISPLAY"] == "" {
 		t.Error("missing env from builtin fragment parent 'gui'")
@@ -347,7 +457,7 @@ func TestBuiltinFragmentsDeclarePackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
-	for _, name := range []string{"php", "gui"} {
+	for _, name := range []string{"core/php", "core/gui"} {
 		rc, ok := cat.Get(name)
 		if !ok {
 			t.Fatalf("fragment %q missing from catalog", name)
@@ -364,6 +474,177 @@ func TestBuiltinFragmentsDeclarePackages(t *testing.T) {
 func containsPkg(pkgs []string, want string) bool {
 	for _, p := range pkgs {
 		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDisplayNamesDedupsUserShadow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.DisplayNames()
+	if !contains(names, "shell") {
+		t.Errorf("DisplayNames missing shell; got %v", names)
+	}
+	// "shell" appears once (user shadows core), not twice.
+	count := 0
+	for _, n := range names {
+		if n == "shell" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("shell appears %d times in DisplayNames, want 1", count)
+	}
+}
+
+func TestDisplayNamesIncludesCoreOnly(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.DisplayNames()
+	if !contains(names, "mise") {
+		t.Errorf("DisplayNames missing core-only mise; got %v", names)
+	}
+	if contains(names, "core/mise") {
+		t.Errorf("DisplayNames should not contain qualified core/mise; got %v", names)
+	}
+}
+
+func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.ProfileDisplayNames()
+	if contains(names, "javascript") {
+		t.Errorf("ProfileDisplayNames should exclude fragment javascript; got %v", names)
+	}
+	if !contains(names, "mise") {
+		t.Errorf("ProfileDisplayNames missing profile mise; got %v", names)
+	}
+}
+
+func TestSourceUserShadow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: x\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.Source("shell"); got != "user shadow" {
+		t.Errorf("Source(shell) = %q, want \"user shadow\"", got)
+	}
+	if got := cat.Source("mise"); got != "core" {
+		t.Errorf("Source(mise) = %q, want \"core\"", got)
+	}
+}
+
+func TestSourceUserOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.Source("rustdev"); got != "user" {
+		t.Errorf("Source(rustdev) = %q, want \"user\"", got)
+	}
+}
+
+func TestFragmentByDisplayNameUserWins(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  node: \"user\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cat.FragmentByDisplayName("javascript")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if got != "javascript" {
+		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"javascript\" (user wins)", got)
+	}
+}
+
+func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cat.FragmentByDisplayName("javascript")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if got != "core/javascript" {
+		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"core/javascript\"", got)
+	}
+}
+
+func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("core/typescript")
+	if !ok {
+		t.Fatal("core/typescript missing")
+	}
+	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "javascript"}) {
+		t.Errorf("core/typescript extends = %+v, want [core/javascript]", rc.ExtendsList.Resolved)
+	}
+}
+
+func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
+	// A user *fragment* named javascript wins unqualified fallback, but
+	// core/typescript extends core/javascript (qualified), so the built-in
+	// fragment still provides its tools despite the display-name shadow.
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  userjs: \"user\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := ResolveFragment(cat, "typescript")
+	if err != nil {
+		t.Fatalf("ResolveFragment: %v", err)
+	}
+	if merged.Tools["node"].Version != "latest" {
+		t.Error("core/typescript should inherit node from the built-in core/javascript fragment, not the user fragment")
+	}
+	if _, ok := merged.Tools["userjs"]; ok {
+		t.Error("core/typescript must not inherit tools from the user javascript fragment")
+	}
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
 			return true
 		}
 	}

@@ -142,11 +142,27 @@ func runShow(name string, resolved bool) error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
+	key, ok := resolveCatalogName(cat, name)
+	if !ok {
+		return profile.ProfileError{Message: "profile not found: " + name}
+	}
 	if resolved {
-		if cat.IsFragment(name) {
-			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", name, name)
+		if cat.IsFragment(key) {
+			resolvedProfile, err := profile.ResolveFragment(cat, key)
+			if err != nil {
+				return err
+			}
+			out, err := yaml.Marshal(resolvedProfile)
+			if err != nil {
+				return err
+			}
+			fmt.Print(string(out))
+			if msg := catalog.Advisory(displayName(key)); msg != "" {
+				fmt.Fprintln(os.Stderr, "warning: "+msg)
+			}
+			return nil
 		}
-		resolvedProfile, err := profile.ResolveProfile(cat, name)
+		resolvedProfile, err := profile.ResolveProfile(cat, key)
 		if err != nil {
 			return err
 		}
@@ -155,21 +171,18 @@ func runShow(name string, resolved bool) error {
 			return err
 		}
 		fmt.Print(string(out))
-		if msg := catalog.Advisory(name); msg != "" {
+		if msg := catalog.Advisory(displayName(key)); msg != "" {
 			fmt.Fprintln(os.Stderr, "warning: "+msg)
 		}
 		return nil
 	}
-	rc, ok := cat.Get(name)
-	if !ok {
-		return profile.ProfileError{Message: "profile not found: " + name}
-	}
+	rc, _ := cat.Get(key)
 	out, err := yaml.Marshal(rc.Profile)
 	if err != nil {
 		return err
 	}
 	fmt.Print(string(out))
-	if msg := catalog.Advisory(name); msg != "" {
+	if msg := catalog.Advisory(displayName(key)); msg != "" {
 		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
 	return nil
@@ -196,15 +209,18 @@ func runEdit(name string) error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
-	if _, ok := cat.Get(name); !ok {
+	key, ok := resolveCatalogName(cat, name)
+	if !ok {
 		return profile.ProfileError{Message: "profile not found: " + name}
 	}
-	if msg := catalog.Advisory(name); msg != "" {
+	// The file/display name is the local segment (no namespace prefix).
+	display := displayName(key)
+	if msg := catalog.Advisory(display); msg != "" {
 		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
-	targetPath := filepath.Join(userDir, name+".yaml")
-	if cat.IsFragment(name) {
-		targetPath = filepath.Join(profile.DefaultFragmentDir(), name+".yaml")
+	targetPath := filepath.Join(userDir, display+".yaml")
+	if cat.IsFragment(key) {
+		targetPath = filepath.Join(profile.DefaultFragmentDir(), display+".yaml")
 	}
 	if _, err := os.Stat(targetPath); err == nil {
 		return openEditor(targetPath)
@@ -214,28 +230,28 @@ func runEdit(name string) error {
 	// remove the seed unless the user actually saved.
 	fsys, root := catalog.Profiles, "profiles"
 	kind := "profile"
-	if cat.IsFragment(name) {
+	if cat.IsFragment(key) {
 		fsys, root = catalog.Fragments, "fragments"
 		kind = "fragment"
 	}
-	if _, err := fsys.ReadFile(root + "/" + name + ".yaml"); err != nil {
-		return fmt.Errorf("reading built-in %s: %w", name, err)
+	if _, err := fsys.ReadFile(root + "/" + display + ".yaml"); err != nil {
+		return fmt.Errorf("reading built-in %s: %w", display, err)
 	}
 	var resolved profile.Profile
 	var resolveErr error
 	if kind == "fragment" {
-		resolved, resolveErr = profile.ResolveFragment(cat, name)
+		resolved, resolveErr = profile.ResolveFragment(cat, key)
 	} else {
-		resolved, resolveErr = profile.ResolveProfile(cat, name)
+		resolved, resolveErr = profile.ResolveProfile(cat, key)
 	}
 	if resolveErr != nil {
-		return fmt.Errorf("resolving %s: %w", name, resolveErr)
+		return fmt.Errorf("resolving %s: %w", display, resolveErr)
 	}
 	resolvedYAML, err := yaml.Marshal(resolved)
 	if err != nil {
-		return fmt.Errorf("marshaling resolved %s: %w", name, err)
+		return fmt.Errorf("marshaling resolved %s: %w", display, err)
 	}
-	data := builtinEditSeed(kind, name, resolvedYAML)
+	data := builtinEditSeed(kind, key, resolvedYAML)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
@@ -266,15 +282,15 @@ func runEdit(name string) error {
 // builtinEditSeed renders the file seeded when editing a built-in that has no
 // user file yet: a shadow extending the built-in, then the resolved (merged)
 // profile as a reference comment.
-func builtinEditSeed(kind, name string, resolved []byte) []byte {
+func builtinEditSeed(kind, canonicalKey string, resolved []byte) []byte {
 	const rule = "# ──────────────────────────────────────────────────────────────────\n"
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", name, kind)
+	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", canonicalKey, kind)
 	b.WriteString("# top of the built-in, so only change what you need.\n\n")
-	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", name)
+	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", canonicalKey)
 	b.WriteString(rule)
 	fmt.Fprintf(&b, "# Resolved %s (reference) — snapshot from when this file was created;\n", kind)
-	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", name)
+	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", canonicalKey)
 	fmt.Fprintf(&b, "# for the current resolved %s.\n", kind)
 	b.WriteString(rule)
 	b.WriteString("\n")
@@ -323,19 +339,14 @@ func runList() error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tKIND\tSOURCE")
-	for _, name := range cat.Names() {
-		rc, _ := cat.Get(name)
-		kind, source := "profile", "built-in"
-		if cat.IsFragment(name) {
+	for _, dn := range cat.DisplayNames() {
+		kind := "profile"
+		if _, ok := cat.Get("core/" + dn); ok && cat.IsFragment("core/"+dn) {
+			kind = "fragment"
+		} else if _, ok := cat.Get(dn); ok && cat.IsFragment(dn) {
 			kind = "fragment"
 		}
-		if !strings.HasPrefix(rc.Path, "built-in") {
-			source = "user"
-			if cat.IsUserShadow(name) {
-				source = "user shadow"
-			}
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", name, kind, source)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", dn, kind, cat.Source(dn))
 	}
 	w.Flush()
 	return nil
@@ -497,4 +508,23 @@ func main() {
 	if err := newRootCommand().Execute(); err != nil {
 		os.Exit(exitCodeFor(err))
 	}
+}
+
+// resolveCatalogName maps a user-supplied profile/fragment name to its
+// canonical catalog key (user entry first, then core fallback).
+func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return "", false
+	}
+	return cat.ResolveRef(ref)
+}
+
+// displayName is the local name segment of a canonical catalog key ("mise"
+// for both "mise" and "core/mise"), used for file paths and advisory lookups.
+func displayName(key string) string {
+	if i := strings.LastIndex(key, "/"); i >= 0 {
+		return key[i+1:]
+	}
+	return key
 }

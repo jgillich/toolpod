@@ -25,8 +25,8 @@ func TestNewProfileDefaultBaseMise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "- mise") {
-		t.Errorf("generated file should extend mise, got:\n%s", string(data))
+	if !strings.Contains(string(data), "- core/mise") {
+		t.Errorf("generated file should extend core/mise, got:\n%s", string(data))
 	}
 	// mise provides a command, so the generated profile inherits it and needs
 	// no explicit bash default.
@@ -75,7 +75,7 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "myagent.yaml"))
 	content := string(data)
-	for _, want := range []string{"- opencode", "- podman", "- ruby"} {
+	for _, want := range []string{"- core/opencode", "- core/podman", "- core/ruby"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
@@ -90,6 +90,26 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 	}
 	if len(cfg.Command) != 1 || cfg.Command[0] != "opencode" {
 		t.Errorf("Command = %v, want inherited [opencode]", cfg.Command)
+	}
+}
+
+func TestNewProfileExtendsDedupsAfterCanonicalization(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "myagent",
+		Extends:    []string{"mise", "core/mise"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "myagent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(data), "- core/mise"); count != 1 {
+		t.Errorf("generated file should list core/mise once after dedup, got %d occurrences:\n%s", count, string(data))
 	}
 }
 
@@ -203,7 +223,7 @@ func TestWizardNewProfileFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, want := range []string{"- mise", "- opencode", "- javascript", "- gitconfig"} {
+	for _, want := range []string{"- core/mise", "- core/opencode", "- core/javascript", "- core/gitconfig"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
@@ -222,7 +242,57 @@ func TestUnknownNameCreatesNewProfile(t *testing.T) {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "rustdev.yaml"))
-	if !strings.Contains(string(data), "- mise") {
+	if !strings.Contains(string(data), "- core/mise") {
 		t.Errorf("new profile should extend mise by default, got:\n%s", string(data))
+	}
+}
+
+func TestGenerateEmitsCoreQualifiedBuiltinBase(t *testing.T) {
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := generate("myagent", []string{"core/shell"}, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "- core/shell") {
+		t.Errorf("generated content should contain a core/-qualified base, got:\n%s", content)
+	}
+}
+
+func TestGenerateEmitsCoreQualifiedFragment(t *testing.T) {
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := generate("myagent", []string{"core/mise", "core/javascript"}, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "- core/mise") || !strings.Contains(content, "- core/javascript") {
+		t.Errorf("generated content missing core/-qualified extends, got:\n%s", content)
+	}
+}
+
+func TestGenerateEmitsUserFragmentUnqualified(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "myfrag.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := profile.LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := generate("myagent", []string{"myfrag"}, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "- myfrag") {
+		t.Errorf("user fragment should be emitted unqualified, got:\n%s", content)
 	}
 }
