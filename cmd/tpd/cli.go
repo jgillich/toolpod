@@ -11,7 +11,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/alecthomas/kong"
 	"github.com/jgillich/tpd/internal/catalog"
 	"github.com/jgillich/tpd/internal/doctor"
 	"github.com/jgillich/tpd/internal/profile"
@@ -19,84 +18,75 @@ import (
 	"github.com/jgillich/tpd/internal/scaffold"
 	"github.com/jgillich/tpd/internal/ui"
 	"github.com/jgillich/tpd/pkg/tpd"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
-type LaunchCmd struct {
-	// Tpd-owned flags. They appear before the profile name; kong
-	// parses them as part of the default command.
-	Command   string `short:"c" help:"Command to run in the profile (shell only)."`
-	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
-	DryRun    bool   `help:"Print the spec without launching."`
-	Verbose   bool   `help:"Print the spec before launching."`
-	Pull      bool   `help:"Pull the base image even if already present (refresh mutable tags)."`
-
-	// Profile-and-args holds the profile name followed by everything
-	// passed verbatim to the profile's command. passthrough:"" stops
-	// flag parsing at the first positional, so agent flags like
-	// "--model foo" survive unescaped.
-	ProfileAndArgs []string `arg:"" optional:"" name:"profile-and-args" passthrough:"partial" help:"Profile name followed by args passed verbatim to the profile."`
+// launchFlags holds the tpd-owned launch flags shared by the default launch
+// command and the explicit `tpd launch` command.
+type launchFlags struct {
+	Command   string
+	Workspace string
+	DryRun    bool
+	Verbose   bool
+	Pull      bool
 }
 
-type InitCmd struct {
-	Name    string   `arg:"" optional:"" help:"Profile name to create."`
-	Extends []string `sep:"," help:"Comma-separated bases to extend: profiles, fragments, or mise."`
-	Force   bool     `help:"Overwrite an existing user profile file."`
-	DryRun  bool     `help:"Print the generated file without writing it."`
+// addLaunchFlags registers the launch flags on cmd. Interspersed flag parsing
+// is disabled so flags parse only before the first positional: everything
+// from the profile name onward reaches the profile's command verbatim, the
+// same contract kong's passthrough:partial provided.
+func addLaunchFlags(cmd *cobra.Command, o *launchFlags) {
+	cmd.Flags().SetInterspersed(false)
+	cmd.Flags().StringVarP(&o.Command, "command", "c", "", "Command to run in the profile (shell only).")
+	cmd.Flags().StringVar(&o.Workspace, "workspace", "", "Workspace directory to mount (default: $PWD).")
+	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Print the spec without launching.")
+	cmd.Flags().BoolVar(&o.Verbose, "verbose", false, "Print the spec before launching.")
+	cmd.Flags().BoolVar(&o.Pull, "pull", false, "Pull the base image even if already present (refresh mutable tags).")
 }
 
-type DoctorCmd struct {
-	Workspace string `help:"Workspace to check."`
-}
-
-type PruneCmd struct {
-	All     bool `help:"Remove all tpd-managed resources, even ones the catalog still references."`
-	Volumes bool `help:"Scope to tpd-managed volumes only (default: both volumes and images)."`
-	Images  bool `help:"Scope to tpd/packages:* derived images only (default: both volumes and images)."`
-	Force   bool `help:"Skip confirmation prompt."`
-	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
-}
-
-type CLI struct {
-	Launch LaunchCmd      `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
-	Init   InitCmd        `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
-	Show   ProfileShowCmd `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
-	Edit   ProfileEditCmd `cmd:"" help:"Open the user profile file in $EDITOR."`
-	List   ProfileListCmd `cmd:"" help:"List all profiles and fragments."`
-	Doctor DoctorCmd      `cmd:"" help:"Run environment diagnostics."`
-	Prune  PruneCmd       `cmd:"" help:"Remove tpd-managed volumes and images."`
-}
-
-type ProfileShowCmd struct {
-	Name     string `arg:"" help:"Profile name to show."`
-	Resolved bool   `help:"Inline all extends and show the fully merged profile."`
-}
-
-type ProfileEditCmd struct {
-	Name string `arg:"" help:"Profile name to edit."`
-}
-
-type ProfileListCmd struct{}
-
-func main() {
-	var cli CLI
-	parser := kong.Must(&cli,
-		kong.Name("tpd"),
-		kong.Description("ephemeral dev environments"),
-	)
-	args := os.Args[1:]
-	if len(args) == 0 {
-		// Bare tpd would select the default launch command and print only its
-		// help; route it through --help to show the full command list.
-		args = []string{"--help"}
+// runLaunch launches profileName with passthrough args. It returns an
+// exitError carrying the container's exit code so main() can map it to the
+// process exit status.
+func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
+	workspace := o.Workspace
+	if workspace == "" {
+		wd, _ := os.Getwd()
+		workspace = wd
 	}
-	ctx, err := parser.Parse(args)
-	if err != nil {
-		parser.FatalIfErrorf(err)
+	result := tpd.Launch(context.Background(), tpd.LaunchOpts{
+		ProfileName: profileName,
+		Workspace:   workspace,
+		DryRun:      o.DryRun,
+		Verbose:     o.Verbose,
+		Pull:        o.Pull,
+		Command:     o.Command,
+		Args:        passthrough,
+	})
+	if result.Err != nil {
+		return &exitError{code: result.ExitCode, err: result.Err}
 	}
-	if err := ctx.Run(); err != nil {
-		os.Exit(exitCodeFor(err))
+	if result.ExitCode != 0 {
+		return &exitError{code: result.ExitCode}
 	}
+	return nil
+}
+
+func newLaunchCommand(o *launchFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "launch <profile> [args...]",
+		Short:             "Launch a profile (e.g. \"shell\").",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeProfileNames,
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return c.Help()
+			}
+			return runLaunch(o, args[0], args[1:])
+		},
+	}
+	addLaunchFlags(cmd, o)
+	return cmd
 }
 
 // exitCodeFor maps a Run error to the process exit code: exitError carries
@@ -132,149 +122,72 @@ func (e *exitError) Error() string {
 
 func (e *exitError) Unwrap() error { return e.err }
 
-func (l *LaunchCmd) Run(ctx *kong.Context) error {
-	if len(l.ProfileAndArgs) == 0 {
-		return ctx.PrintUsage(false)
+func newShowCommand() *cobra.Command {
+	var resolved bool
+	cmd := &cobra.Command{
+		Use:               "show <name>",
+		Short:             "Print a profile (use --resolved to inline extends).",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeNamesOnce,
+		RunE: func(c *cobra.Command, args []string) error {
+			return runShow(args[0], resolved)
+		},
 	}
-	profileName := l.ProfileAndArgs[0]
-	passthrough := l.ProfileAndArgs[1:]
-
-	workspace := l.Workspace
-	if workspace == "" {
-		wd, _ := os.Getwd()
-		workspace = wd
-	}
-
-	result := tpd.Launch(context.Background(), tpd.LaunchOpts{
-		ProfileName: profileName,
-		Workspace:   workspace,
-		DryRun:      l.DryRun,
-		Verbose:     l.Verbose,
-		Pull:        l.Pull,
-		Command:     l.Command,
-		Args:        passthrough,
-	})
-	if result.Err != nil {
-		return &exitError{code: result.ExitCode, err: result.Err}
-	}
-	if result.ExitCode != 0 {
-		return &exitError{code: result.ExitCode}
-	}
-	return nil
+	cmd.Flags().BoolVar(&resolved, "resolved", false, "Inline all extends and show the fully merged profile.")
+	return cmd
 }
 
-func (i *InitCmd) Run() error {
-	opts := scaffold.Options{
-		Name:        i.Name,
-		Extends:     i.Extends,
-		Force:       i.Force,
-		DryRun:      i.DryRun,
-		Interactive: scaffold.IsTTY(os.Stdin),
-	}
-	if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
-		return &exitError{code: 2, err: err}
-	}
-	return nil
-}
-
-func (d *DoctorCmd) Run() error {
-	workspace := d.Workspace
-	if workspace == "" {
-		wd, _ := os.Getwd()
-		workspace = wd
-	}
-	result := doctor.Run(context.Background(), doctor.Options{Workspace: workspace})
-	out := ui.NewOutput(ui.IsTTY(os.Stdout))
-	for _, c := range result.Checks {
-		color := "reset"
-		switch c.Status {
-		case doctor.Pass:
-			color = "green"
-		case doctor.Fail:
-			color = "red"
-		case doctor.Warn:
-			color = "yellow"
-		case doctor.Info, doctor.Skip:
-			color = "blue"
-		}
-		fmt.Println(out.Color(color, c.Format()))
-	}
-	fmt.Println()
-	fmt.Println(out.Color("reset", result.Summary()))
-	if result.HasFailure() {
-		return &exitError{code: 1}
-	}
-	return nil
-}
-
-func (p *PruneCmd) Run() error {
-	opts := prune.Options{
-		All:     p.All,
-		Volumes: p.Volumes,
-		Images:  p.Images,
-		Force:   p.Force || p.Yes,
-	}
-	result, err := prune.Run(context.Background(), opts)
-	if err != nil {
-		return &exitError{code: 3, err: err}
-	}
-	if len(result.VolumesRemoved) > 0 {
-		fmt.Printf("Removed %d volume(s):\n", len(result.VolumesRemoved))
-		for _, v := range result.VolumesRemoved {
-			fmt.Printf("  %s\n", v)
-		}
-	}
-	if len(result.ImagesRemoved) > 0 {
-		fmt.Printf("Removed %d image(s):\n", len(result.ImagesRemoved))
-		for _, r := range result.ImagesRemoved {
-			fmt.Printf("  %s\n", r)
-		}
-	}
-	if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
-		fmt.Println("Nothing to prune.")
-	}
-	return nil
-}
-
-func (c *ProfileShowCmd) Run() error {
+func runShow(name string, resolved bool) error {
 	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
-	if c.Resolved {
-		if cat.IsFragment(c.Name) {
-			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", c.Name, c.Name)
+	if resolved {
+		if cat.IsFragment(name) {
+			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", name, name)
 		}
-		resolved, err := profile.ResolveProfile(cat, c.Name)
+		resolvedProfile, err := profile.ResolveProfile(cat, name)
 		if err != nil {
 			return err
 		}
-		out, err := yaml.Marshal(resolved)
+		out, err := yaml.Marshal(resolvedProfile)
 		if err != nil {
 			return err
 		}
 		fmt.Print(string(out))
-		if msg := catalog.Advisory(c.Name); msg != "" {
+		if msg := catalog.Advisory(name); msg != "" {
 			fmt.Fprintln(os.Stderr, "warning: "+msg)
 		}
 		return nil
 	}
-	rc, ok := cat.Get(c.Name)
+	rc, ok := cat.Get(name)
 	if !ok {
-		return profile.ProfileError{Message: "profile not found: " + c.Name}
+		return profile.ProfileError{Message: "profile not found: " + name}
 	}
 	out, err := yaml.Marshal(rc.Profile)
 	if err != nil {
 		return err
 	}
 	fmt.Print(string(out))
-	if msg := catalog.Advisory(c.Name); msg != "" {
+	if msg := catalog.Advisory(name); msg != "" {
 		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
 	return nil
 }
 
-func (c *ProfileEditCmd) Run() error {
+func newEditCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:               "edit <name>",
+		Short:             "Open the user profile file in $EDITOR.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeNamesOnce,
+		RunE: func(c *cobra.Command, args []string) error {
+			return runEdit(args[0])
+		},
+	}
+}
+
+func runEdit(name string) error {
 	userDir := profile.DefaultProfileDir()
 	if userDir == "" {
 		return fmt.Errorf("cannot determine profile directory (set XDG_CONFIG_HOME)")
@@ -283,15 +196,15 @@ func (c *ProfileEditCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
-	if _, ok := cat.Get(c.Name); !ok {
-		return profile.ProfileError{Message: "profile not found: " + c.Name}
+	if _, ok := cat.Get(name); !ok {
+		return profile.ProfileError{Message: "profile not found: " + name}
 	}
-	if msg := catalog.Advisory(c.Name); msg != "" {
+	if msg := catalog.Advisory(name); msg != "" {
 		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
-	targetPath := filepath.Join(userDir, c.Name+".yaml")
-	if cat.IsFragment(c.Name) {
-		targetPath = filepath.Join(profile.DefaultFragmentDir(), c.Name+".yaml")
+	targetPath := filepath.Join(userDir, name+".yaml")
+	if cat.IsFragment(name) {
+		targetPath = filepath.Join(profile.DefaultFragmentDir(), name+".yaml")
 	}
 	if _, err := os.Stat(targetPath); err == nil {
 		return openEditor(targetPath)
@@ -301,28 +214,28 @@ func (c *ProfileEditCmd) Run() error {
 	// remove the seed unless the user actually saved.
 	fsys, root := catalog.Profiles, "profiles"
 	kind := "profile"
-	if cat.IsFragment(c.Name) {
+	if cat.IsFragment(name) {
 		fsys, root = catalog.Fragments, "fragments"
 		kind = "fragment"
 	}
-	if _, err := fsys.ReadFile(root + "/" + c.Name + ".yaml"); err != nil {
-		return fmt.Errorf("reading built-in %s: %w", c.Name, err)
+	if _, err := fsys.ReadFile(root + "/" + name + ".yaml"); err != nil {
+		return fmt.Errorf("reading built-in %s: %w", name, err)
 	}
 	var resolved profile.Profile
 	var resolveErr error
 	if kind == "fragment" {
-		resolved, resolveErr = profile.ResolveFragment(cat, c.Name)
+		resolved, resolveErr = profile.ResolveFragment(cat, name)
 	} else {
-		resolved, resolveErr = profile.ResolveProfile(cat, c.Name)
+		resolved, resolveErr = profile.ResolveProfile(cat, name)
 	}
 	if resolveErr != nil {
-		return fmt.Errorf("resolving %s: %w", c.Name, resolveErr)
+		return fmt.Errorf("resolving %s: %w", name, resolveErr)
 	}
 	resolvedYAML, err := yaml.Marshal(resolved)
 	if err != nil {
-		return fmt.Errorf("marshaling resolved %s: %w", c.Name, err)
+		return fmt.Errorf("marshaling resolved %s: %w", name, err)
 	}
-	data := builtinEditSeed(kind, c.Name, resolvedYAML)
+	data := builtinEditSeed(kind, name, resolvedYAML)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
@@ -392,7 +305,18 @@ func openEditor(path string) error {
 	return cmd.Run()
 }
 
-func (c *ProfileListCmd) Run() error {
+func newListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all profiles and fragments.",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			return runList()
+		},
+	}
+}
+
+func runList() error {
 	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
@@ -415,4 +339,162 @@ func (c *ProfileListCmd) Run() error {
 	}
 	w.Flush()
 	return nil
+}
+
+func newInitCommand() *cobra.Command {
+	var (
+		name    string
+		extends []string
+		force   bool
+		dryRun  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "init [name]",
+		Short: "Create a user profile (new or extending built-ins) with fragments.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				name = args[0]
+			}
+			opts := scaffold.Options{
+				Name:        name,
+				Extends:     extends,
+				Force:       force,
+				DryRun:      dryRun,
+				Interactive: scaffold.IsTTY(os.Stdin),
+			}
+			if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
+				return &exitError{code: 2, err: err}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&extends, "extends", nil, "Comma-separated bases to extend: profiles, fragments, or mise.")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing user profile file.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the generated file without writing it.")
+	cmd.RegisterFlagCompletionFunc("extends", completeNames)
+	return cmd
+}
+
+func newDoctorCommand() *cobra.Command {
+	var workspace string
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run environment diagnostics.",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			if workspace == "" {
+				wd, _ := os.Getwd()
+				workspace = wd
+			}
+			result := doctor.Run(context.Background(), doctor.Options{Workspace: workspace})
+			out := ui.NewOutput(ui.IsTTY(os.Stdout))
+			for _, chk := range result.Checks {
+				color := "reset"
+				switch chk.Status {
+				case doctor.Pass:
+					color = "green"
+				case doctor.Fail:
+					color = "red"
+				case doctor.Warn:
+					color = "yellow"
+				case doctor.Info, doctor.Skip:
+					color = "blue"
+				}
+				fmt.Println(out.Color(color, chk.Format()))
+			}
+			fmt.Println()
+			fmt.Println(out.Color("reset", result.Summary()))
+			if result.HasFailure() {
+				return &exitError{code: 1}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace to check.")
+	return cmd
+}
+
+func newPruneCommand() *cobra.Command {
+	var (
+		all     bool
+		volumes bool
+		images  bool
+		force   bool
+		yes     bool
+	)
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove tpd-managed volumes and images.",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			opts := prune.Options{
+				All:     all,
+				Volumes: volumes,
+				Images:  images,
+				Force:   force || yes,
+			}
+			result, err := prune.Run(context.Background(), opts)
+			if err != nil {
+				return &exitError{code: 3, err: err}
+			}
+			if len(result.VolumesRemoved) > 0 {
+				fmt.Printf("Removed %d volume(s):\n", len(result.VolumesRemoved))
+				for _, v := range result.VolumesRemoved {
+					fmt.Printf("  %s\n", v)
+				}
+			}
+			if len(result.ImagesRemoved) > 0 {
+				fmt.Printf("Removed %d image(s):\n", len(result.ImagesRemoved))
+				for _, r := range result.ImagesRemoved {
+					fmt.Printf("  %s\n", r)
+				}
+			}
+			if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
+				fmt.Println("Nothing to prune.")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "Remove all tpd-managed resources, even ones the catalog still references.")
+	cmd.Flags().BoolVar(&volumes, "volumes", false, "Scope to tpd-managed volumes only (default: both volumes and images).")
+	cmd.Flags().BoolVar(&images, "images", false, "Scope to tpd/packages:* derived images only (default: both volumes and images).")
+	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt.")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation prompt (short).")
+	return cmd
+}
+
+func newRootCommand() *cobra.Command {
+	o := &launchFlags{}
+	root := &cobra.Command{
+		Use:               "tpd",
+		Short:             "ephemeral dev environments",
+		Args:              cobra.ArbitraryArgs,
+		ValidArgsFunction: completeProfileNames,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				// Bare tpd shows the full command list; otherwise the only
+				// way to see it is the help flag.
+				return c.Help()
+			}
+			return runLaunch(o, args[0], args[1:])
+		},
+	}
+	addLaunchFlags(root, o)
+	root.AddCommand(newLaunchCommand(o))
+	root.AddCommand(newShowCommand())
+	root.AddCommand(newEditCommand())
+	root.AddCommand(newListCommand())
+	root.AddCommand(newInitCommand())
+	root.AddCommand(newDoctorCommand())
+	root.AddCommand(newPruneCommand())
+	return root
+}
+
+func main() {
+	if err := newRootCommand().Execute(); err != nil {
+		os.Exit(exitCodeFor(err))
+	}
 }
