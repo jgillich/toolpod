@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/workspace"
@@ -16,20 +17,20 @@ import (
 var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
-	cli     *client.Client
-	podman  bool  // rootless Podman: containers need --userns=keep-id
-	selinux bool  // SELinux enforcing: containers need --security-opt label=disable
-	subpath *bool // cached VolumeOptions.Subpath support probe
+	cli         *client.Client
+	podman      bool      // rootless Podman: containers need --userns=keep-id
+	selinux     bool      // SELinux enforcing: containers need --security-opt label=disable
+	subpathOnce sync.Once
+	subpath     bool // cached VolumeOptions.Subpath support probe
 }
 
 // subpathSupported reports whether this engine's Docker-compatible API honors
 // volume subpaths, detected once and cached for the runtime's lifetime.
 func (d *DockerRuntime) subpathSupported(ctx context.Context) bool {
-	if d.subpath == nil {
-		v := supportsVolumeSubpath(ctx, d.cli)
-		d.subpath = &v
-	}
-	return *d.subpath
+	d.subpathOnce.Do(func() {
+		d.subpath = supportsVolumeSubpath(ctx, d.cli)
+	})
+	return d.subpath
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {

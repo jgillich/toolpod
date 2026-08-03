@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/workspace"
 	"golang.org/x/sys/unix"
 )
@@ -34,6 +38,39 @@ func TestIsLikelyRootlessSocket(t *testing.T) {
 			t.Errorf("isLikelyRootlessSocket(%q) = %v, want %v", tt.host, got, tt.want)
 		}
 	}
+}
+
+func TestSubpathSupportedConcurrent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/version") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"Version":"27.1.0"}`)
+	}))
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &DockerRuntime{cli: cli}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got := rt.subpathSupported(context.Background()); !got {
+				t.Error("subpathSupported = false, want true (docker 27.1.0 supports subpaths)")
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestBuildEnvDropsEmptyEnvValues(t *testing.T) {
