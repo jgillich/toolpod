@@ -1,0 +1,24 @@
+version: 1
+extends:
+  - mise
+  - gui
+command: ["opencode", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"]
+tools:
+  "appimage:anomalyco/opencode": latest
+mounts:
+  ~/.config/opencode:
+    source: ~/.config/opencode
+    create: true
+    read_only: false
+  ~/.cache/opencode:
+    source: ~/.cache/opencode
+    create: true
+    read_only: false
+  ~/.local/share/opencode:
+    source: ~/.local/share/opencode
+    create: true
+    read_only: false
+  ~/.config/ai.opencode.desktop:
+    source: ~/.config/ai.opencode.desktop
+    create: true
+    read_only: false
