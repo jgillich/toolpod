@@ -118,6 +118,8 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		Resources: container.Resources{
 			Devices:           devices,
 			DeviceCgroupRules: cgroupRules,
+			Memory:            spec.Resources.MemoryBytes,
+			NanoCPUs:          spec.Resources.NanoCPUs,
 		},
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {

@@ -135,5 +135,23 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			return err
 		}
 	}
+	if spec.Resources.MemoryBytes > 0 || spec.Resources.NanoCPUs > 0 {
+		_, err = fmt.Fprintln(w, "resources:")
+		if err != nil {
+			return err
+		}
+		if spec.Resources.MemoryBytes > 0 {
+			_, err = fmt.Fprintf(w, "  memory: %d\n", spec.Resources.MemoryBytes)
+			if err != nil {
+				return err
+			}
+		}
+		if spec.Resources.NanoCPUs > 0 {
+			_, err = fmt.Fprintf(w, "  cpus: %d (nano)\n", spec.Resources.NanoCPUs)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

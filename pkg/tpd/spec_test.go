@@ -334,6 +334,26 @@ func TestBuildSpecMapsFiles(t *testing.T) {
 	}
 }
 
+func TestBuildSpecResources(t *testing.T) {
+	cfg := profile.Profile{
+		Version:   1,
+		Image:     "img",
+		Command:   []string{"x"},
+		Resources: &profile.Resources{Memory: "512m", CPUs: "2"},
+	}
+	opts := LaunchOpts{ProfileName: "x", Workspace: "/p"}
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Resources.MemoryBytes != 512<<20 {
+		t.Errorf("MemoryBytes = %d, want %d", spec.Resources.MemoryBytes, 512<<20)
+	}
+	if spec.Resources.NanoCPUs != 2e9 {
+		t.Errorf("NanoCPUs = %d, want %d", spec.Resources.NanoCPUs, int64(2e9))
+	}
+}
+
 func TestBuildSpecFilesDefaultMode(t *testing.T) {
 	cfg := profile.Profile{
 		Version: 1,

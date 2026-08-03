@@ -4,8 +4,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/workspace"
 )
+
+func TestRenderSpecResources(t *testing.T) {
+	spec := Spec{
+		ProfileName: "res",
+		Image:       "img",
+		Command:     []string{"x"},
+		Workspace:   WorkspaceSpec{HostPath: "/p", Target: "/workspace", Mode: workspace.ModeRootful},
+		Resources:   runtime.ResourceSpec{MemoryBytes: 512 << 20, NanoCPUs: 2e9},
+	}
+	var out strings.Builder
+	if err := RenderSpec(&out, spec); err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"resources:",
+		"  memory: 536870912",
+		"  cpus: 2000000000 (nano)",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("dry-run output missing %q; got:\n%s", want, output)
+		}
+	}
+}
 
 func TestRenderSpecPortsAndDevices(t *testing.T) {
 	spec := Spec{

@@ -255,6 +255,7 @@ func checkProfileValidity(userDir string) Check {
 		return Check{Name: "profiles", Status: Fail, Message: err.Error()}
 	}
 	var errs []string
+	var resources []string
 	launchable := 0
 	// Fragments are composition-only and not directly launchable; they are
 	// validated at load (identity fields) and when resolved via a profile.
@@ -267,7 +268,7 @@ func checkProfileValidity(userDir string) Check {
 		// A profile with no command is a base — valid as an extends target,
 		// just not directly launchable. ResolveProfile enforces command, so
 		// tolerate that one error for base profiles and count them as valid.
-		_, err := profile.ResolveProfile(cat, name)
+		cfg, err := profile.ResolveProfile(cat, name)
 		if err != nil {
 			if len(rc.Command) == 0 && len(rc.ExtendsList) == 0 {
 				// Base profile: missing command is expected, not an error.
@@ -275,12 +276,19 @@ func checkProfileValidity(userDir string) Check {
 			}
 			errs = append(errs, name+": "+err.Error())
 		}
+		if cfg.Resources != nil {
+			resources = append(resources, fmt.Sprintf("%s(%s,%s)", name, cfg.Resources.Memory, cfg.Resources.CPUs))
+		}
 		launchable++
 	}
 	if len(errs) > 0 {
 		return Check{Name: "profiles", Status: Fail, Message: strings.Join(errs, "; ")}
 	}
-	return Check{Name: "profiles", Status: Pass, Message: fmt.Sprintf("%d profiles, all valid", launchable)}
+	msg := fmt.Sprintf("%d profiles, all valid", launchable)
+	if len(resources) > 0 {
+		msg += ", resources: " + strings.Join(resources, ", ")
+	}
+	return Check{Name: "profiles", Status: Pass, Message: msg}
 }
 
 func checkUserOverrides(userDir string) []Check {

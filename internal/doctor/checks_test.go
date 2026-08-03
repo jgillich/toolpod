@@ -355,6 +355,20 @@ func TestCheckProfileValidityIgnoresFragments(t *testing.T) {
 	}
 }
 
+func TestCheckProfileValidityReportsResources(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "reslimit.yaml"), []byte(
+		"version: 1\nimage: debian:13-slim\ncommand: [sh]\nresources:\n  memory: 512m\n  cpus: \"2\"\n"), 0o644)
+
+	c := checkProfileValidity(dir)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "resources: reslimit(512m,2)") {
+		t.Errorf("message should report reslimit resources; got %q", c.Message)
+	}
+}
+
 func TestCheckUserOverridesNoGitconfig(t *testing.T) {
 	dir := t.TempDir()
 	// Create a user override for opencode that mounts no gitconfig.

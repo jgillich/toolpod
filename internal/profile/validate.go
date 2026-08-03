@@ -1,13 +1,16 @@
 package profile
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/distribution/reference"
+	units "github.com/docker/go-units"
 )
 
 var busNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\.[*])?$`)
@@ -74,6 +77,9 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateNetwork(rc); err != nil {
+		return err
+	}
+	if err := validateResources(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -235,6 +241,53 @@ func validateNetwork(rc RawProfile) error {
 		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid network name %q", rc.Network)}
 	}
 	return nil
+}
+
+func validateResources(rc RawProfile) error {
+	if rc.Resources == nil {
+		return nil
+	}
+	if rc.Resources.Memory != "" {
+		if _, err := ParseMemoryBytes(rc.Resources.Memory); err != nil {
+			return ProfileError{Path: rc.Path, Message: "resources: memory: " + err.Error()}
+		}
+	}
+	if rc.Resources.CPUs != "" {
+		if _, err := ParseNanoCPUs(rc.Resources.CPUs); err != nil {
+			return ProfileError{Path: rc.Path, Message: "resources: cpus: " + err.Error()}
+		}
+	}
+	return nil
+}
+
+// ParseMemoryBytes converts a Docker-style memory string to bytes using
+// docker/go-units, the same parser Docker's --memory uses. Rejects empty and
+// unparseable values.
+func ParseMemoryBytes(s string) (int64, error) {
+	if strings.TrimSpace(s) == "" {
+		return 0, errors.New("empty memory value")
+	}
+	b, err := units.RAMInBytes(s)
+	if err != nil || b <= 0 {
+		return 0, fmt.Errorf("invalid memory value %q", s)
+	}
+	return b, nil
+}
+
+// ParseNanoCPUs converts a CPU-count string ("2", "1.5") to nanos, matching
+// Docker's --cpus semantics. Rejects NaN, infinities, values <= 0, and values
+// that would overflow int64 after scaling (a fractional count above ~9.2e9).
+func ParseNanoCPUs(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
+		return 0, fmt.Errorf("invalid cpu count %q", s)
+	}
+	n := f * 1e9
+	if n > math.MaxInt64 {
+		return 0, fmt.Errorf("cpu count %q out of range", s)
+	}
+	return int64(n), nil
 }
 
 func containsControl(s string) bool {

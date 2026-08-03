@@ -112,6 +112,18 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		cmd = append(cmd, opts.Args...)
 	}
 
+	// Validation guarantees the strings parse; parse errors here are ignored
+	// rather than propagated back to a profile that already passed validate().
+	resources := runtime.ResourceSpec{}
+	if cfg.Resources != nil {
+		if cfg.Resources.Memory != "" {
+			resources.MemoryBytes, _ = profile.ParseMemoryBytes(cfg.Resources.Memory)
+		}
+		if cfg.Resources.CPUs != "" {
+			resources.NanoCPUs, _ = profile.ParseNanoCPUs(cfg.Resources.CPUs)
+		}
+	}
+
 	return Spec{
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
@@ -130,6 +142,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		Workspace:   WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},
 		TTY:         cfg.TTY,
 		RuntimeHome: runtimeHome,
+		Resources:   resources,
 	}, nil
 }
 

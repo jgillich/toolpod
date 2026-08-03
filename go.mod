@@ -9,6 +9,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/docker/docker v27.1.0+incompatible
 	github.com/docker/go-connections v0.6.0
+	github.com/docker/go-units v0.5.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -31,7 +32,6 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect

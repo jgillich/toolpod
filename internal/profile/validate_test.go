@@ -359,6 +359,43 @@ func TestValidateEnv(t *testing.T) {
 	}
 }
 
+func TestValidateResources(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := []struct {
+		name string
+		res  Resources
+	}{
+		{"memory 512m", Resources{Memory: "512m"}},
+		{"memory 512mb", Resources{Memory: "512mb"}},
+		{"cpus 2", Resources{CPUs: "2"}},
+		{"cpus 1.5", Resources{CPUs: "1.5"}},
+	}
+	for _, tt := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Resources = &tt.res
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(resources=%+v) = %v, want nil", tt.res, err)
+		}
+	}
+	invalid := []struct {
+		name string
+		res  Resources
+	}{
+		{"memory bogus", Resources{Memory: "bogus"}},
+		{"cpus -1", Resources{CPUs: "-1"}},
+		{"cpus NaN", Resources{CPUs: "NaN"}},
+		{"cpus Inf", Resources{CPUs: "Inf"}},
+		{"cpus 1e10", Resources{CPUs: "1e10"}},
+	}
+	for _, tt := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Resources = &tt.res
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(resources=%+v) = nil, want error", tt.res)
+		}
+	}
+}
+
 func TestValidateNetwork(t *testing.T) {
 	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	for _, nw := range []string{"", "host", "bridge", "none", "slirp4netns", "my.net_1"} {

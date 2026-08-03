@@ -35,6 +35,12 @@ type Spec struct {
 	Workspace   WorkspaceSpec
 	TTY         string
 	RuntimeHome string
+	Resources   ResourceSpec
+}
+
+type ResourceSpec struct {
+	MemoryBytes int64
+	NanoCPUs    int64
 }
 
 // Repo mirrors profile.Repo: a single extra apt source, either an extrepo
