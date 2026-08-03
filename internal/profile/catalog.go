@@ -51,6 +51,86 @@ func (c Catalog) ProfileNames() []string {
 	return names
 }
 
+// DisplayNames returns the set of unqualified display names, deduplicated
+// across namespaces. A user entry shadows a core entry of the same display
+// name (user wins, shown once). Core-only entries show as the bare name.
+func (c Catalog) DisplayNames() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.entries))
+	// User namespace first so it shadows core.
+	for _, name := range c.entries {
+		if name.Namespace == "" {
+			seen[name.DisplayName()] = true
+			out = append(out, name.DisplayName())
+		}
+	}
+	for _, name := range c.entries {
+		if name.Namespace != "" {
+			dn := name.DisplayName()
+			if !seen[dn] {
+				seen[dn] = true
+				out = append(out, dn)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ProfileDisplayNames is DisplayNames filtered to non-fragments.
+func (c Catalog) ProfileDisplayNames() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.entries))
+	for _, name := range c.entries {
+		if name.Namespace == "" && !c.fragments[name.FullName()] {
+			seen[name.DisplayName()] = true
+			out = append(out, name.DisplayName())
+		}
+	}
+	for _, name := range c.entries {
+		if name.Namespace != "" && !c.fragments[name.FullName()] {
+			dn := name.DisplayName()
+			if !seen[dn] {
+				seen[dn] = true
+				out = append(out, dn)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Source reports the provenance of a display name: "user" (user-only),
+// "core" (core-only), or "user shadow" (user entry shadowing a core entry).
+func (c Catalog) Source(displayName string) string {
+	_, hasUser := c.entries[displayName]
+	coreKey := "core/" + displayName
+	_, hasCore := c.entries[coreKey]
+	switch {
+	case hasUser && hasCore:
+		return "user shadow"
+	case hasUser:
+		return "user"
+	case hasCore:
+		return "core"
+	default:
+		return "core"
+	}
+}
+
+// FragmentByDisplayName resolves a fragment display name to its canonical
+// FullName. A user fragment wins over a core fragment of the same name.
+func (c Catalog) FragmentByDisplayName(name string) (string, bool) {
+	if _, ok := c.entries[name]; ok && c.fragments[name] {
+		return name, true
+	}
+	coreKey := "core/" + name
+	if _, ok := c.entries[coreKey]; ok && c.fragments[coreKey] {
+		return coreKey, true
+	}
+	return "", false
+}
+
 // AddRaw inserts a raw profile into the catalog, shadowing any existing entry
 // of the same name. Used by init to overlay generated content for validation.
 func (c *Catalog) AddRaw(name string, rc RawProfile) {

@@ -438,3 +438,132 @@ func containsPkg(pkgs []string, want string) bool {
 	}
 	return false
 }
+
+func TestDisplayNamesDedupsUserShadow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.DisplayNames()
+	if !contains(names, "shell") {
+		t.Errorf("DisplayNames missing shell; got %v", names)
+	}
+	// "shell" appears once (user shadows core), not twice.
+	count := 0
+	for _, n := range names {
+		if n == "shell" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("shell appears %d times in DisplayNames, want 1", count)
+	}
+}
+
+func TestDisplayNamesIncludesCoreOnly(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.DisplayNames()
+	if !contains(names, "mise") {
+		t.Errorf("DisplayNames missing core-only mise; got %v", names)
+	}
+	if contains(names, "core/mise") {
+		t.Errorf("DisplayNames should not contain qualified core/mise; got %v", names)
+	}
+}
+
+func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.ProfileDisplayNames()
+	if contains(names, "javascript") {
+		t.Errorf("ProfileDisplayNames should exclude fragment javascript; got %v", names)
+	}
+	if !contains(names, "mise") {
+		t.Errorf("ProfileDisplayNames missing profile mise; got %v", names)
+	}
+}
+
+func TestSourceUserShadow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: x\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.Source("shell"); got != "user shadow" {
+		t.Errorf("Source(shell) = %q, want \"user shadow\"", got)
+	}
+	if got := cat.Source("mise"); got != "core" {
+		t.Errorf("Source(mise) = %q, want \"core\"", got)
+	}
+}
+
+func TestSourceUserOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.Source("rustdev"); got != "user" {
+		t.Errorf("Source(rustdev) = %q, want \"user\"", got)
+	}
+}
+
+func TestFragmentByDisplayNameUserWins(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  node: \"user\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cat.FragmentByDisplayName("javascript")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if got != "javascript" {
+		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"javascript\" (user wins)", got)
+	}
+}
+
+func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cat.FragmentByDisplayName("javascript")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if got != "core/javascript" {
+		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"core/javascript\"", got)
+	}
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
