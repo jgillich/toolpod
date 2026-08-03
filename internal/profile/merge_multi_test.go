@@ -165,3 +165,22 @@ func TestOldInlinedProfileStillResolves(t *testing.T) {
 		t.Errorf("Mount source = %q, want ~/.ssh", m.Source)
 	}
 }
+
+func TestResolveFragmentNoValidate(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\ntools:\n  node: \"20\"\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\ntools:\n  biome: latest\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveFragment(cat, "child")
+	if err != nil {
+		t.Fatalf("ResolveFragment: %v", err)
+	}
+	// Fragments carry no image/command, so ResolveProfile (which validates
+	// those) must be unusable here; the chain merge must still apply.
+	if resolved.Tools["node"] != "20" || resolved.Tools["biome"] != "latest" {
+		t.Errorf("resolved fragment tools = %v, want inherited node + biome", resolved.Tools)
+	}
+}

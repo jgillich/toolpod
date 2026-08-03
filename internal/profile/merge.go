@@ -20,6 +20,23 @@ func ResolveProfile(cat Catalog, name string) (Profile, error) {
 	return merged.Profile, nil
 }
 
+// ResolveFragment resolves a fragment's extends chain into a merged Profile
+// without the profile-only validation. Fragments are composition-only and
+// carry no image/command, which ResolveProfile requires; resolving them is
+// still useful for showing the effective merged view (e.g. edit seeds).
+func ResolveFragment(cat Catalog, name string) (Profile, error) {
+	rc, ok := cat.Get(name)
+	if !ok {
+		return Profile{}, ProfileError{Message: "fragment not found: " + name}
+	}
+	merged, err := resolveChain(cat, name, map[string]bool{})
+	if err != nil {
+		return Profile{}, err
+	}
+	merged.Path = rc.Path
+	return merged.Profile, nil
+}
+
 func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, error) {
 	rc, ok := cat.Get(name)
 	if !ok {

@@ -117,11 +117,24 @@ func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected user override to be created on save: %v", err)
 	}
-	if !strings.Contains(string(data), "extends: mise") {
-		t.Errorf("expected override to carry the built-in content, got:\n%s", data)
+	s := string(data)
+	if !strings.Contains(s, "extends: shell") {
+		t.Errorf("seed must extend the built-in itself, got:\n%s", s)
 	}
-	if !strings.Contains(string(data), "# saved by test") {
-		t.Errorf("expected override to carry the editor's write, got:\n%s", data)
+	if !strings.Contains(s, `shadows the built-in "shell"`) {
+		t.Errorf("seed must explain the shadow/merge, got:\n%s", s)
+	}
+	if !strings.Contains(s, "Resolved profile (reference)") {
+		t.Errorf("seed must carry a resolved-reference banner, got:\n%s", s)
+	}
+	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpod show --resolved shell`) {
+		t.Errorf("seed must note the resolved block is a stale snapshot and how to refresh it, got:\n%s", s)
+	}
+	if !strings.Contains(s, "# image: debian:13-slim") {
+		t.Errorf("seed must carry the resolved profile commented out, got:\n%s", s)
+	}
+	if !strings.Contains(s, "# saved by test") {
+		t.Errorf("expected override to carry the editor's write, got:\n%s", s)
 	}
 }
 
@@ -155,8 +168,15 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
 	}
-	if !strings.Contains(string(data), "# saved by test") {
-		t.Errorf("expected fragment override to carry the editor's write, got:\n%s", data)
+	s := string(data)
+	if !strings.Contains(s, "extends: docker") {
+		t.Errorf("fragment seed must extend the built-in fragment, got:\n%s", s)
+	}
+	if !strings.Contains(s, "Resolved fragment (reference)") {
+		t.Errorf("fragment seed must include the resolved-reference banner, got:\n%s", s)
+	}
+	if !strings.Contains(s, "# saved by test") {
+		t.Errorf("expected fragment override to carry the editor's write, got:\n%s", s)
 	}
 }
 

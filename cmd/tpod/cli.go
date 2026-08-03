@@ -56,13 +56,13 @@ type PruneCmd struct {
 }
 
 type CLI struct {
-	Launch LaunchCmd       `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
-	Init   InitCmd         `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
-	Show   ProfileShowCmd  `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
-	Edit   ProfileEditCmd  `cmd:"" help:"Open the user profile file in $EDITOR."`
-	List   ProfileListCmd  `cmd:"" help:"List all profiles and fragments."`
-	Doctor DoctorCmd       `cmd:"" help:"Run environment diagnostics."`
-	Prune  PruneCmd        `cmd:"" help:"Remove tpod-managed volumes and images."`
+	Launch LaunchCmd      `cmd:"" default:"withargs" help:"Launch a profile (e.g. \"shell\")."`
+	Init   InitCmd        `cmd:"" help:"Create a user profile (new or extending built-ins) with fragments."`
+	Show   ProfileShowCmd `cmd:"" help:"Print a profile (use --resolved to inline extends)."`
+	Edit   ProfileEditCmd `cmd:"" help:"Open the user profile file in $EDITOR."`
+	List   ProfileListCmd `cmd:"" help:"List all profiles and fragments."`
+	Doctor DoctorCmd      `cmd:"" help:"Run environment diagnostics."`
+	Prune  PruneCmd       `cmd:"" help:"Remove tpod-managed volumes and images."`
 }
 
 type ProfileShowCmd struct {
@@ -253,16 +253,33 @@ func (c *ProfileEditCmd) Run() error {
 	if _, err := os.Stat(targetPath); err == nil {
 		return openEditor(targetPath)
 	}
-	// No user file yet: seed the target with the built-in's content so the
-	// editor loads it, then remove the seed unless the user actually saved.
+	// No user file yet: seed the target with a shadow that extends the
+	// built-in and shows the resolved profile as a reference comment, then
+	// remove the seed unless the user actually saved.
 	fsys, root := catalog.Profiles, "profiles"
+	kind := "profile"
 	if cat.IsFragment(c.Name) {
 		fsys, root = catalog.Fragments, "fragments"
+		kind = "fragment"
 	}
-	data, err := fsys.ReadFile(root + "/" + c.Name + ".yaml")
-	if err != nil {
+	if _, err := fsys.ReadFile(root + "/" + c.Name + ".yaml"); err != nil {
 		return fmt.Errorf("reading built-in %s: %w", c.Name, err)
 	}
+	var resolved profile.Profile
+	var resolveErr error
+	if kind == "fragment" {
+		resolved, resolveErr = profile.ResolveFragment(cat, c.Name)
+	} else {
+		resolved, resolveErr = profile.ResolveProfile(cat, c.Name)
+	}
+	if resolveErr != nil {
+		return fmt.Errorf("resolving %s: %w", c.Name, resolveErr)
+	}
+	resolvedYAML, err := yaml.Marshal(resolved)
+	if err != nil {
+		return fmt.Errorf("marshaling resolved %s: %w", c.Name, err)
+	}
+	data := builtinEditSeed(kind, c.Name, resolvedYAML)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
@@ -288,6 +305,29 @@ func (c *ProfileEditCmd) Run() error {
 		os.Remove(targetPath)
 	}
 	return nil
+}
+
+// builtinEditSeed renders the file seeded when editing a built-in that has no
+// user file yet: a shadow extending the built-in, then the resolved (merged)
+// profile as a reference comment.
+func builtinEditSeed(kind, name string, resolved []byte) []byte {
+	const rule = "# ──────────────────────────────────────────────────────────────────\n"
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", name, kind)
+	b.WriteString("# top of the built-in, so only change what you need.\n\n")
+	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", name)
+	b.WriteString(rule)
+	fmt.Fprintf(&b, "# Resolved %s (reference) — snapshot from when this file was created;\n", kind)
+	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpod show --resolved %s`\n", name)
+	fmt.Fprintf(&b, "# for the current resolved %s.\n", kind)
+	b.WriteString(rule)
+	b.WriteString("\n")
+	for _, line := range strings.Split(strings.TrimRight(string(resolved), "\n"), "\n") {
+		b.WriteString("# ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.Bytes()
 }
 
 // savedEdit reports whether the editor actually wrote the target: the mtime
