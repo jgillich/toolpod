@@ -13,8 +13,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/tpd/internal/mise"
 )
 
 func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
@@ -40,7 +40,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		}
 	}
 	for name := range volumes {
-		if err := mise.EnsureVolume(ctx, d.cli, name); err != nil {
+		if err := EnsureVolume(ctx, d.cli, name); err != nil {
 			return "", fmt.Errorf("cache volume %s: %w", name, err)
 		}
 	}
@@ -188,4 +188,14 @@ func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, err
 		return false, err
 	}
 	return true, nil
+}
+
+// EnsureVolume creates name if it does not already exist, tagging it with the
+// ownership label so prune only ever removes volumes tpd created.
+func EnsureVolume(ctx context.Context, cli *client.Client, name string) error {
+	_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name:   name,
+		Labels: OwnershipLabels(),
+	})
+	return err
 }

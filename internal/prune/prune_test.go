@@ -2,9 +2,11 @@ package prune
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -109,12 +111,12 @@ func setupFake(t *testing.T) (*fakeClient, string) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		volumes: []*volume.Volume{
-			{Name: "tpd-cache-usedcache"},
-			{Name: "tpd-cache-orphan"},
+			{Name: "tpd-cache-usedcache", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
 		},
 		images: []image.Summary{
-			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}},
+			{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
 		},
 	}
 	return fc, usedTag
@@ -150,9 +152,9 @@ func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		images: []image.Summary{
-			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"localhost/tpd/packages:deadbeefdeadbeef"}},
-			{RepoTags: []string{"quay.io/tpd/packages:cafebabe"}},
+			{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"localhost/tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"quay.io/tpd/packages:cafebabe"}, Labels: runtime.OwnershipLabels()},
 		},
 	}
 	res, err := run(context.Background(), fc, Options{Force: true})
@@ -168,6 +170,57 @@ func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
 	}
 	if sliceContains(res.ImagesRemoved, usedTag) {
 		t.Errorf("used derived image %q must not be pruned", usedTag)
+	}
+}
+
+func TestPruneSkipsUnlabeledTpdResources(t *testing.T) {
+	// Pre-labeling cruft: volumes/images matching the tpd name pattern but
+	// missing the ownership label must survive prune (with a stderr warning)
+	// so an unrelated user resource that merely starts with "tpd-" is never
+	// removed.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": "sha256:baseid"},
+		volumes: []*volume.Volume{
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-important-data"},
+		},
+		images: []image.Summary{
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:cafebabe"}},
+		},
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	res, err := run(context.Background(), fc, Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	warned, _ := io.ReadAll(r)
+
+	if !equalSlice(res.VolumesRemoved, []string{"tpd-cache-orphan"}) {
+		t.Errorf("volumes removed = %v, want only labeled [tpd-cache-orphan]", res.VolumesRemoved)
+	}
+	if sliceContains(res.VolumesRemoved, "tpd-important-data") {
+		t.Error("unlabeled volume tpd-important-data must not be removed")
+	}
+	if !equalSlice(res.ImagesRemoved, []string{"tpd/packages:deadbeefdeadbeef"}) {
+		t.Errorf("images removed = %v, want only labeled [tpd/packages:deadbeefdeadbeef]", res.ImagesRemoved)
+	}
+	if sliceContains(res.ImagesRemoved, "tpd/packages:cafebabe") {
+		t.Error("unlabeled image tpd/packages:cafebabe must not be removed")
+	}
+	for _, want := range []string{"tpd-important-data", "tpd/packages:cafebabe", "not tpd-owned"} {
+		if !strings.Contains(string(warned), want) {
+			t.Errorf("stderr should warn about skipped unlabeled resource %q; got %q", want, string(warned))
+		}
 	}
 }
 

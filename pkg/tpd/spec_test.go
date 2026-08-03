@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/workspace"
 )
 
@@ -170,6 +171,11 @@ func TestBuildSpecBasic(t *testing.T) {
 	// Profile label is set dynamically from opts.ProfileName, not from YAML
 	if spec.Labels["profile"] != "opencode" {
 		t.Errorf("Labels[profile] = %q, want \"opencode\" (set dynamically from ProfileName)", spec.Labels["profile"])
+	}
+	// Every launched container carries the ownership label so prune and leak
+	// detection can filter by label instead of the name prefix.
+	if spec.Labels[runtime.OwnershipLabel] != "true" {
+		t.Errorf("Labels[%s] = %q, want \"true\"", runtime.OwnershipLabel, spec.Labels[runtime.OwnershipLabel])
 	}
 }
 

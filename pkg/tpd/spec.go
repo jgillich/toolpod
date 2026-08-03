@@ -86,6 +86,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	// overriding any value inherited from a parent profile (e.g. a user
 	// profile extending "opencode" should show its own name, not "opencode").
 	labels["profile"] = opts.ProfileName
+	labels[runtime.OwnershipLabel] = "true"
 
 	// Workspace mount (CLI, not profile) per spec §4.2
 	wsTarget := opts.Workspace

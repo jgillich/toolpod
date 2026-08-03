@@ -128,6 +128,7 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 	resp, err := cli.ImageBuild(ctx, buildContext, types.ImageBuildOptions{
 		Tags:       []string{derivedRef},
 		Dockerfile: "Dockerfile",
+		Labels:     OwnershipLabels(),
 		Remove:     true,
 	})
 	if err != nil {

@@ -194,9 +194,14 @@ func listTpdVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, er
 	}
 	var found []*volume.Volume
 	for _, v := range resp.Volumes {
-		if isTpdVolume(v.Name) {
-			found = append(found, v)
+		if !isTpdVolume(v.Name) {
+			continue
 		}
+		if v.Labels[runtime.OwnershipLabel] != "true" {
+			fmt.Fprintf(os.Stderr, "warning: skipping unlabeled tpd-* resource %s (not tpd-owned)\n", v.Name)
+			continue
+		}
+		found = append(found, v)
 	}
 	return found, nil
 }
@@ -210,6 +215,14 @@ func listTpdImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	}
 	var refs []string
 	for _, img := range images {
+		if img.Labels[runtime.OwnershipLabel] != "true" {
+			name := img.ID
+			if len(img.RepoTags) > 0 {
+				name = img.RepoTags[0]
+			}
+			fmt.Fprintf(os.Stderr, "warning: skipping unlabeled tpd-* resource %s (not tpd-owned)\n", name)
+			continue
+		}
 		for _, tags := range img.RepoTags {
 			if ref := runtime.DerivedRef(tags); ref != "" {
 				refs = append(refs, ref)
