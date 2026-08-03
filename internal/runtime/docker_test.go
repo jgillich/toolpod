@@ -440,7 +440,7 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	code, err := rt.Run(context.Background(), spec)
@@ -481,7 +481,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 		RuntimeHome: "/root",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -672,7 +672,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		t.Errorf("derived image %q not inspectable after Prepare: %v", imageRef, err)
 	}
 	// Second Prepare must reuse the cached image (idempotent).
-	imageRef2, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef2, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("second Prepare: %v", err)
 	}
@@ -719,7 +719,7 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	code, err := rt.Run(context.Background(), spec)

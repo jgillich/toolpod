@@ -154,3 +154,23 @@ func TestLaunchOverridesBusAddressWhenDisabled(t *testing.T) {
 		t.Errorf("DBUS_SESSION_BUS_ADDRESS = %q, want empty (disabled)", got)
 	}
 }
+
+func TestLaunchForwardsPullToPrepare(t *testing.T) {
+	dir := writeBuiltinShell(t)
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		ProfileDir:  dir,
+		Runtime:     fr,
+		Pull:        true,
+	}, &strings.Builder{})
+	if res.Err != nil {
+		t.Fatalf("Launch: %v", res.Err)
+	}
+	if fr.PreparedSpec == nil {
+		t.Fatal("Prepare was not called")
+	}
+	if !fr.PreparePull {
+		t.Error("Prepare received pull=false, want true (LaunchOpts.Pull must thread through)")
+	}
+}

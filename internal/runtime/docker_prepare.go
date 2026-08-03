@@ -17,9 +17,9 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
+func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (string, error) {
 	baseRef := spec.Image
-	if err := ensureImagePulled(ctx, d.cli, baseRef, w); err != nil {
+	if err := ensureImagePulled(ctx, d.cli, baseRef, w, pull); err != nil {
 		return "", fmt.Errorf("ensure base image: %w", err)
 	}
 	baseID, err := ResolveImageID(ctx, d.cli, baseRef)
@@ -159,13 +159,15 @@ func checkExtrepoOnly(repos map[string]Repo) error {
 	return nil
 }
 
-func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) error {
-	exists, err := imageExists(ctx, cli, ref)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
+func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter, force bool) error {
+	if !force {
+		exists, err := imageExists(ctx, cli, ref)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 	}
 	w.WriteProgress("pull: " + ref)
 	reader, err := cli.ImagePull(ctx, ref, image.PullOptions{})

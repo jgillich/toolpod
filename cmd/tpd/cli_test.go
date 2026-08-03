@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
 func buildTpd(t *testing.T) string {
@@ -43,6 +45,18 @@ func TestBareHelpShowsAllCommands(t *testing.T) {
 		if !strings.Contains(string(out), c) {
 			t.Errorf("expected bare tpd help to mention %q, got:\n%s", c, out)
 		}
+	}
+}
+
+func TestLaunchPullFlagBinds(t *testing.T) {
+	// --pull must bind to LaunchCmd.Pull so Run can pass it to LaunchOpts.
+	var cli CLI
+	parser := kong.Must(&cli, kong.Name("tpd"))
+	if _, err := parser.Parse([]string{"launch", "--pull", "shell"}); err != nil {
+		t.Fatalf("parse launch --pull: %v", err)
+	}
+	if !cli.Launch.Pull {
+		t.Error("launch --pull did not set LaunchCmd.Pull")
 	}
 }
 

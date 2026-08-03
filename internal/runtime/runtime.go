@@ -105,6 +105,6 @@ type NoopProgressWriter struct{}
 func (NoopProgressWriter) WriteProgress(string) {}
 
 type Runtime interface {
-	Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error)
+	Prepare(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (string, error)
 	Run(ctx context.Context, spec Spec) (int, error)
 }

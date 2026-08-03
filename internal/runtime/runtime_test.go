@@ -8,7 +8,7 @@ import (
 func TestFakeRuntimeImplementsInterface(t *testing.T) {
 	var _ Runtime = (*FakeRuntime)(nil)
 	rt := &FakeRuntime{ExitCode: 0}
-	if _, err := rt.Prepare(context.Background(), Spec{}, NoopProgressWriter{}); err != nil {
+	if _, err := rt.Prepare(context.Background(), Spec{}, NoopProgressWriter{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if rt.PreparedSpec == nil {

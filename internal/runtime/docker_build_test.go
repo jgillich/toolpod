@@ -230,8 +230,9 @@ func TestOwnershipLabels(t *testing.T) {
 }
 
 func TestBuildDerivedImageLabelsImage(t *testing.T) {
-	// The ownership label must ride on every derived image so prune (and the
-	// future container-leak checks) can filter by label instead of name.
+	// The ownership + provenance labels must ride on every derived image so
+	// prune (and the future container-leak checks) can filter by label
+	// instead of name.
 	var gotLabels string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/build") {
@@ -255,12 +256,14 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", nil, []string{"git"}, &recordingWriter{}); err != nil {
 		t.Fatalf("buildDerivedImage: %v", err)
 	}
-	want, err := json.Marshal(OwnershipLabels())
+	want := OwnershipLabels()
+	want["tpd.build"] = "1"
+	wantJSON, err := json.Marshal(want)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotLabels != string(want) {
-		t.Errorf("build labels = %s, want %s (ownership label must ride on derived images)", gotLabels, want)
+	if gotLabels != string(wantJSON) {
+		t.Errorf("build labels = %s, want %s (ownership + provenance labels must ride on derived images)", gotLabels, wantJSON)
 	}
 }
 

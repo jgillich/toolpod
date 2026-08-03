@@ -116,7 +116,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		}
 
 		progress := progress
-		imageRef, err := rt.Prepare(ctx, spec, progress)
+		imageRef, err := rt.Prepare(ctx, spec, progress, opts.Pull)
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
 		}

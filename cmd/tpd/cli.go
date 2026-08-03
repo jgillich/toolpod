@@ -28,6 +28,7 @@ type LaunchCmd struct {
 	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
 	DryRun    bool   `help:"Print the spec without launching."`
 	Verbose   bool   `help:"Print the spec before launching."`
+	Pull      bool   `help:"Pull the base image even if already present (refresh mutable tags)."`
 
 	// Profile-and-args holds the profile name followed by everything
 	// passed verbatim to the profile's command. passthrough:"" stops
@@ -117,6 +118,7 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 		Workspace:   workspace,
 		DryRun:      l.DryRun,
 		Verbose:     l.Verbose,
+		Pull:        l.Pull,
 		Command:     l.Command,
 		Args:        passthrough,
 	})
