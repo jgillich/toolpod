@@ -32,6 +32,9 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 			t.Errorf("expected bare tpd help to mention %q, got:\n%s", c, out)
 		}
 	}
+	if !strings.Contains(string(out), "tpd <profile>") {
+		t.Errorf("expected bare tpd help to show the tpd <profile> launch form, got:\n%s", out)
+	}
 }
 
 func TestBareHelpShowsAllCommands(t *testing.T) {

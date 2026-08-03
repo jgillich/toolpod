@@ -478,7 +478,7 @@ func newPruneCommand() *cobra.Command {
 func newRootCommand() *cobra.Command {
 	o := &launchFlags{}
 	root := &cobra.Command{
-		Use:               "tpd",
+		Use:               "tpd <profile> [args...]",
 		Short:             "ephemeral dev environments",
 		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeProfileNames,
