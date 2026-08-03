@@ -74,9 +74,10 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 
 func newLaunchCommand(o *launchFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "launch <profile> [args...]",
-		Short: "Launch a profile (e.g. \"shell\").",
-		Args:  cobra.ArbitraryArgs,
+		Use:                "launch <profile> [args...]",
+		Short:              "Launch a profile (e.g. \"shell\").",
+		Args:               cobra.ArbitraryArgs,
+		ValidArgsFunction:  completeProfileNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return c.Help()
@@ -127,6 +128,7 @@ func newShowCommand() *cobra.Command {
 		Use:   "show <name>",
 		Short: "Print a profile (use --resolved to inline extends).",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: completeNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runShow(args[0], resolved)
 		},
@@ -178,6 +180,7 @@ func newEditCommand() *cobra.Command {
 		Use:   "edit <name>",
 		Short: "Open the user profile file in $EDITOR.",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: completeNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runEdit(args[0])
 		},
@@ -366,6 +369,7 @@ func newInitCommand() *cobra.Command {
 	cmd.Flags().StringSliceVar(&extends, "extends", nil, "Comma-separated bases to extend: profiles, fragments, or mise.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing user profile file.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the generated file without writing it.")
+	cmd.RegisterFlagCompletionFunc("extends", completeNames)
 	return cmd
 }
 
@@ -463,6 +467,7 @@ func newRootCommand() *cobra.Command {
 		Use:           "tpd",
 		Short:         "ephemeral dev environments",
 		Args:          cobra.ArbitraryArgs,
+		ValidArgsFunction: completeProfileNames,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(c *cobra.Command, args []string) error {
