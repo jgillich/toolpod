@@ -112,6 +112,9 @@ func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	var tags []string
 	var total int64
 	for _, img := range images {
+		if img.Labels[runtime.OwnershipLabel] != "true" {
+			continue
+		}
 		hasTpdTag := false
 		for _, t := range img.RepoTags {
 			if ref := runtime.DerivedRef(t); ref != "" {
@@ -150,7 +153,7 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 	}
 	var found []string
 	for _, v := range volumes.Volumes {
-		if strings.HasPrefix(v.Name, "tpd-") {
+		if strings.HasPrefix(v.Name, "tpd-") && v.Labels[runtime.OwnershipLabel] == "true" {
 			found = append(found, v.Name)
 		}
 	}
@@ -161,7 +164,11 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 }
 
 func checkPermissions(ctx context.Context, rt *dockerRT) Check {
-	probe := "tpd-diag-" + randomSuffix(8)
+	suffix, err := randomSuffix(8)
+	if err != nil {
+		return Check{Name: "permissions", Status: Fail, Message: "cannot generate a safe probe name: " + err.Error()}
+	}
+	probe := "tpd-diag-" + suffix
 	if _, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: probe}); err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create volumes: " + err.Error()}
 	}
@@ -198,12 +205,12 @@ func firstRunableImage(images []image.Summary) string {
 	return ""
 }
 
-func randomSuffix(n int) string {
+func randomSuffix(n int) (string, error) {
 	buf := make([]byte, n)
 	if _, err := rand.Read(buf); err != nil {
-		panic(err)
+		return "", err
 	}
-	return hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
 }
 
 func checkUnlabeledLegacyResources(ctx context.Context, rt *dockerRT) Check {
@@ -385,13 +392,22 @@ func checkProjectTools(ctx context.Context, workspace string) Check {
 }
 
 func checkWorkspaceWritable(ctx context.Context, workspace string) Check {
-	probe := filepath.Join(workspace, ".tpd-write-test-"+randomSuffix(4))
+	suffix, err := randomSuffix(4)
+	if err != nil {
+		return Check{Name: "workspace", Status: Fail, Message: "cannot generate a safe workspace probe name: " + err.Error()}
+	}
+	probe := filepath.Join(workspace, ".tpd-write-test-"+suffix)
 	f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW|os.O_WRONLY, 0o644)
 	if err != nil {
 		return Check{Name: "workspace", Status: Fail, Message: workspace + " is not writable: " + err.Error()}
 	}
-	f.Close()
-	os.Remove(probe)
+	if err := f.Close(); err != nil {
+		_ = os.Remove(probe)
+		return Check{Name: "workspace", Status: Fail, Message: workspace + " write probe close failed: " + err.Error()}
+	}
+	if err := os.Remove(probe); err != nil {
+		return Check{Name: "workspace", Status: Warn, Message: workspace + " is writable but probe cleanup failed: " + err.Error()}
+	}
 	return Check{Name: "workspace", Status: Pass, Message: workspace + " is writable"}
 }
 

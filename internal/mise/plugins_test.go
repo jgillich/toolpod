@@ -54,3 +54,22 @@ func TestPluginInstallCommandEmbedsFileContents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAppImageBackendGuardsChecksumsAndLauncherPaths(t *testing.T) {
+	data, err := fs.ReadFile(pluginsFS, "plugins/appimage/hooks/backend_install.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		"local sha256 = options.sha256",
+		"expected = sha256[\"aarch64\"]",
+		"a.name:match(\"%.AppImage$\") and a.name:match(options.asset_pattern)",
+		"safe_relative_path(exe, true)",
+		"safe_relative_path(name, false)",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("backend_install.lua missing %q", want)
+		}
+	}
+}

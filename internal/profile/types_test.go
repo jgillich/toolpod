@@ -235,6 +235,16 @@ func TestToolDecodeMapScalarDigest(t *testing.T) {
 	}
 }
 
+func TestToolDecodeMapWithoutChecksum(t *testing.T) {
+	var tool Tool
+	if err := yaml.Unmarshal([]byte("{version: v1}"), &tool); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if tool.Version != "v1" || tool.SHA256 != "" || len(tool.SHA256ByArch) != 0 {
+		t.Errorf("Tool = %+v, want version=v1 without checksum metadata", tool)
+	}
+}
+
 func TestToolDecodeMapPerArchDigests(t *testing.T) {
 	amd64 := strings.Repeat("ab", 32)
 	aarch64 := strings.Repeat("cd", 32)

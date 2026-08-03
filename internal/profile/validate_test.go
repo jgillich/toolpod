@@ -304,6 +304,14 @@ func TestValidateToolsRejectsControlInVersion(t *testing.T) {
 	}
 }
 
+func TestValidateToolsRejectsEmptyVersion(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Tools = map[string]Tool{"node": {}}
+	if err := validate(rc); err == nil {
+		t.Fatal("expected error for empty tool version")
+	}
+}
+
 func TestValidateAppimageChecksums(t *testing.T) {
 	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	valid := strings.Repeat("ab", 32)

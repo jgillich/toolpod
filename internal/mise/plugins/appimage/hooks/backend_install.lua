@@ -12,6 +12,27 @@ local function has_control(s)
   return false
 end
 
+local function safe_relative_path(s, allow_nested)
+  if type(s) ~= "string" or s == "" or has_control(s) then
+    return false
+  end
+  if s:sub(1, 1) == "/" or s:sub(-1) == "/" or s:find("\\", 1, true) then
+    return false
+  end
+  if not allow_nested and s:find("/", 1, true) then
+    return false
+  end
+  if not s:match("^[A-Za-z0-9._+%-/]+$") then
+    return false
+  end
+  for part in s:gmatch("[^/]+") do
+    if part == "." or part == ".." then
+      return false
+    end
+  end
+  return true
+end
+
 function PLUGIN:BackendInstall(ctx)
   local cmd = require("cmd")
   local json = require("json")
@@ -78,7 +99,7 @@ function PLUGIN:BackendInstall(ctx)
   local asset
   if options.asset_pattern then
     for _, a in ipairs(release.assets) do
-      if a.name:match(options.asset_pattern) then
+      if a.name:match("%.AppImage$") and a.name:match(options.asset_pattern) then
         asset = a
         break
       end
@@ -135,13 +156,14 @@ function PLUGIN:BackendInstall(ctx)
     return nil
   end
 
-  local expected = options.sha256
-  if type(expected) == "table" then
-    expected = expected[RUNTIME.archType]
+  local sha256 = options.sha256
+  local expected = sha256
+  if type(sha256) == "table" then
+    expected = sha256[RUNTIME.archType]
     -- mise reports aarch64 hosts as "arm64", so also honor the schema's
     -- "aarch64" key (schema validation forbids "arm64" as an arch key).
     if not expected and RUNTIME.archType == "arm64" then
-      expected = expected["aarch64"]
+      expected = sha256["aarch64"]
     end
   end
   if not expected or expected == "" then
@@ -184,7 +206,7 @@ function PLUGIN:BackendInstall(ctx)
 
   local exe = options.exe or "AppRun"
   local name = options.name or repo:match("([^/]+)$")
-  if has_control(exe) or has_control(name) then
+  if not safe_relative_path(exe, true) or not safe_relative_path(name, false) then
     error("appimage: invalid exe/name option for " .. repo)
   end
   local launcher = '#!/usr/bin/env bash\nexec "$(dirname "$0")/../app/' .. exe .. '" "$@"\n'

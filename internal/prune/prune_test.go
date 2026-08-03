@@ -48,6 +48,9 @@ type fakeClient struct {
 	containerInspects map[string]types.ContainerJSON // ID -> inspect
 	removedV          []string
 	removedI          []string
+	containerCalls    int
+	activateVolume    string
+	activateImage     string
 }
 
 func (f *fakeClient) VolumeList(ctx context.Context, _ volume.ListOptions) (volume.ListResponse, error) {
@@ -68,9 +71,27 @@ func (f *fakeClient) ImageInspectWithRaw(ctx context.Context, ref string) (types
 	if id, ok := f.inspects[ref]; ok {
 		return types.ImageInspect{ID: id}, nil, nil
 	}
+	for _, img := range f.images {
+		for _, tag := range img.RepoTags {
+			if tag == ref || runtime.DerivedRef(tag) == ref {
+				if img.ID == "" {
+					return types.ImageInspect{ID: "sha256:" + strings.TrimPrefix(strings.ReplaceAll(ref, "/", "_"), "sha256:")}, nil, nil
+				}
+				return types.ImageInspect{ID: img.ID}, nil, nil
+			}
+		}
+	}
 	return types.ImageInspect{}, nil, errNotFound{}
 }
 func (f *fakeClient) ContainerList(ctx context.Context, _ container.ListOptions) ([]types.Container, error) {
+	f.containerCalls++
+	if f.activateVolume != "" && f.containerCalls > 1 {
+		f.containers = []types.Container{{ID: "late", Labels: runtime.OwnershipLabels()}}
+		f.containerInspects = map[string]types.ContainerJSON{"late": {
+			ContainerJSONBase: &types.ContainerJSONBase{Image: f.activateImage},
+			Mounts:            []types.MountPoint{{Type: mount.TypeVolume, Name: f.activateVolume}},
+		}}
+	}
 	return f.containers, nil
 }
 func (f *fakeClient) ContainerInspectWithRaw(ctx context.Context, id string, _ bool) (types.ContainerJSON, []byte, error) {
@@ -298,6 +319,21 @@ func TestRunSkipsVolumesInUseByRunningContainer(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "skipping tpd-cache-orphan: in use by a running container") {
 		t.Errorf("stderr should report the skip; got %q", string(out))
+	}
+}
+
+func TestRunRechecksVolumeUseBeforeRemoval(t *testing.T) {
+	fc := &fakeClient{
+		volumes:        []*volume.Volume{{Name: "tpd-cache-race", Labels: runtime.OwnershipLabels()}},
+		activateVolume: "tpd-cache-race",
+	}
+
+	res, err := run(context.Background(), fc, Options{All: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.VolumesRemoved) != 0 || len(fc.removedV) != 0 {
+		t.Fatalf("late-mounted volume was removed: result=%v calls=%v", res.VolumesRemoved, fc.removedV)
 	}
 }
 

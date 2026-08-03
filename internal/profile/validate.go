@@ -207,7 +207,7 @@ func validateFiles(rc RawProfile) error {
 
 func validateTools(rc RawProfile) error {
 	for name, tool := range rc.Tools {
-		if !toolNameRe.MatchString(name) || containsControl(name) || containsControl(tool.Version) {
+		if !toolNameRe.MatchString(name) || containsControl(name) || tool.Version == "" || containsControl(tool.Version) {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: invalid tool name/version %q", name)}
 		}
 		if strings.HasPrefix(name, "appimage:") {

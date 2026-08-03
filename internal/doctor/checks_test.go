@@ -303,8 +303,41 @@ func TestCheckUnlabeledLegacyResourcesNone(t *testing.T) {
 	}
 }
 
+func TestCheckDerivedImagesIgnoresUnlabeledImages(t *testing.T) {
+	f := newFakeDocker(t, []image.Summary{
+		{ID: "sha256:legacy", RepoTags: []string{"tpd/packages:legacy"}},
+		{ID: "sha256:owned", Labels: map[string]string{runtime.OwnershipLabel: "true"}, RepoTags: []string{"tpd/packages:owned"}},
+	}, nil)
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkDerivedImages(context.Background(), rt)
+	if c.Status != Pass || !strings.Contains(c.Message, "tpd/packages:owned") || strings.Contains(c.Message, "legacy") {
+		t.Fatalf("derived image check = %+v, want only labeled image", c)
+	}
+}
+
+func TestCheckVolumesIgnoresUnlabeledVolumes(t *testing.T) {
+	f := newFakeDocker(t, nil, []*volume.Volume{
+		{Name: "tpd-cache-legacy"},
+		{Name: "tpd-cache-owned", Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+	})
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkVolumes(context.Background(), rt)
+	if c.Status != Pass || !strings.Contains(c.Message, "tpd-cache-owned") || strings.Contains(c.Message, "legacy") {
+		t.Fatalf("volume check = %+v, want only labeled volume", c)
+	}
+}
+
 func TestRandomSuffix(t *testing.T) {
-	a, b := randomSuffix(8), randomSuffix(8)
+	a, err := randomSuffix(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := randomSuffix(8)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(a) != 16 {
 		t.Errorf("randomSuffix(8) length = %d, want 16 hex chars", len(a))
 	}

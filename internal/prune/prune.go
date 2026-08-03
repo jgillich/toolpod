@@ -116,7 +116,11 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 		}
 		removeVolumes = keptV
 		for _, ref := range removeImages {
-			if imageInUse(ctx, cli, ref, imagesInUse) {
+			inUse, err := imageInUse(ctx, cli, ref, imagesInUse)
+			if err != nil {
+				return Result{}, fmt.Errorf("re-check image %s: %w", ref, err)
+			}
+			if inUse {
 				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", ref)
 				continue
 			}
@@ -130,6 +134,14 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	if scopeVolumes && len(removeVolumes) > 0 {
 		if opts.Force || confirm("volumes", removeVolumes, os.Stdin) {
 			for _, name := range removeVolumes {
+				inUse, err := volumeInUse(ctx, cli, name)
+				if err != nil {
+					return result, fmt.Errorf("re-check volume %s: %w", name, err)
+				}
+				if inUse {
+					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", name)
+					continue
+				}
 				if err := cli.VolumeRemove(ctx, name, true); err != nil {
 					fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", name, err)
 				} else {
@@ -142,6 +154,14 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	if scopeImages && len(removeImages) > 0 {
 		if opts.Force || confirm("images", removeImages, os.Stdin) {
 			for _, ref := range removeImages {
+				inUse, err := imageInUseNow(ctx, cli, ref)
+				if err != nil {
+					return result, fmt.Errorf("re-check image %s: %w", ref, err)
+				}
+				if inUse {
+					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", ref)
+					continue
+				}
 				if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
 					fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", ref, err)
 				} else {
@@ -160,7 +180,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[string]bool, images map[string]bool, err error) {
 	f := filters.NewArgs()
 	f.Add("label", runtime.OwnershipLabel+"=true")
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	containers, err := cli.ContainerList(ctx, container.ListOptions{Filters: f})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -168,7 +188,7 @@ func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[st
 	for _, c := range containers {
 		insp, _, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
 		if err != nil {
-			continue
+			return nil, nil, fmt.Errorf("inspect container %s: %w", c.ID, err)
 		}
 		for _, m := range insp.Mounts {
 			if m.Type == mount.TypeVolume {
@@ -182,13 +202,27 @@ func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[st
 
 // imageInUse reports whether the derived image ref is referenced by a running
 // container, resolved by comparing the ref's image ID against the used set.
-// An un-resolvable ref is treated as not in use.
-func imageInUse(ctx context.Context, cli dockerClient, ref string, usedImages map[string]bool) bool {
+// Inspection failures are returned so prune fails closed instead of treating an
+// unresolvable image as unused.
+func imageInUse(ctx context.Context, cli dockerClient, ref string, usedImages map[string]bool) (bool, error) {
 	inspect, _, err := cli.ImageInspectWithRaw(ctx, ref)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("inspect image %s: %w", ref, err)
 	}
-	return usedImages[inspect.ID]
+	return usedImages[inspect.ID], nil
+}
+
+func volumeInUse(ctx context.Context, cli dockerClient, name string) (bool, error) {
+	volumes, _, err := runningContainerRefs(ctx, cli)
+	return volumes[name], err
+}
+
+func imageInUseNow(ctx context.Context, cli dockerClient, ref string) (bool, error) {
+	_, images, err := runningContainerRefs(ctx, cli)
+	if err != nil {
+		return false, err
+	}
+	return imageInUse(ctx, cli, ref, images)
 }
 
 // computeUsed walks every resolvable profile (built-in + user) and returns

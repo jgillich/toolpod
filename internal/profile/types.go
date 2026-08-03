@@ -77,6 +77,8 @@ func (t *Tool) UnmarshalYAML(node *yaml.Node) error {
 		}
 		t.Version = raw.Version
 		switch raw.SHA256.Kind {
+		case 0:
+			return nil
 		case yaml.ScalarNode:
 			return raw.SHA256.Decode(&t.SHA256)
 		case yaml.MappingNode:
