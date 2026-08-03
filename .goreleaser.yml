@@ -23,6 +23,14 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+# Release hardening: an SBOM per archive; checksums are already enabled above.
+sboms:
+  - artifacts: archive
+    documents:
+      - "${artifact}.sbom"
+    cmd: syft
+    args: ["$artifact", "--file", "$document"]
+
 changelog:
   use: git
 
