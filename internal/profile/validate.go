@@ -194,6 +194,19 @@ func validateTools(rc RawProfile) error {
 		if !toolNameRe.MatchString(name) || containsControl(name) || containsControl(tool.Version) {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: invalid tool name/version %q", name)}
 		}
+		if strings.HasPrefix(name, "appimage:") {
+			if tool.SHA256 != "" && !hexSHA256Re.MatchString(tool.SHA256) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: invalid universal sha256", name)}
+			}
+			for arch, sum := range tool.SHA256ByArch {
+				if arch != "amd64" && arch != "aarch64" {
+					return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: unknown arch %q (want amd64 or aarch64)", name, arch)}
+				}
+				if !hexSHA256Re.MatchString(sum) {
+					return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: invalid sha256 for arch %q", name, arch)}
+				}
+			}
+		}
 	}
 	return nil
 }

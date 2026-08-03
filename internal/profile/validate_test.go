@@ -1,6 +1,9 @@
 package profile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateMissingVersion(t *testing.T) {
 	rc := RawProfile{Profile: Profile{Image: "x", Command: []string{"sh"}}}
@@ -278,6 +281,38 @@ func TestValidateToolsRejectsControlInVersion(t *testing.T) {
 	rc.Tools = map[string]Tool{"node": {Version: "20\n"}}
 	if err := validate(rc); err == nil {
 		t.Fatal("expected error for newline in tool version")
+	}
+}
+
+func TestValidateAppimageChecksums(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := strings.Repeat("ab", 32)
+	appimage := "appimage:owner/repo"
+	cases := []struct {
+		name    string
+		tool    Tool
+		wantErr bool
+	}{
+		{"latest without checksum", Tool{Version: "latest"}, false},
+		{"malformed scalar sha256", Tool{Version: "v1", SHA256: "zz"}, true},
+		{"short scalar sha256", Tool{Version: "v1", SHA256: strings.Repeat("a", 63)}, true},
+		{"unknown per-arch key", Tool{Version: "v1", SHA256ByArch: map[string]string{"riscv64": valid}}, true},
+		{"malformed per-arch sha256", Tool{Version: "v1", SHA256ByArch: map[string]string{"amd64": "xyz"}}, true},
+		{"valid scalar sha256", Tool{Version: "v1", SHA256: valid}, false},
+		{"valid per-arch sha256", Tool{Version: "v1", SHA256ByArch: map[string]string{"amd64": valid, "aarch64": valid}}, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := RawProfile{Profile: base}
+			rc.Tools = map[string]Tool{appimage: tt.tool}
+			err := validate(rc)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
