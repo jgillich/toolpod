@@ -99,6 +99,37 @@ func TestExitCodeFor(t *testing.T) {
 	}
 }
 
+func TestShowDockerPrintsSensitiveAdvisory(t *testing.T) {
+	out, err := runTpd(t, "show", "docker")
+	if err != nil {
+		t.Fatalf("show docker: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning:") {
+		t.Errorf("expected advisory warning on stderr, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Docker socket") {
+		t.Errorf("expected Docker socket advisory, got:\n%s", out)
+	}
+}
+
+func TestEditDockerPrintsSensitiveAdvisory(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "docker")
+	if err != nil {
+		t.Fatalf("edit docker: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "warning:") {
+		t.Errorf("expected advisory warning on stderr, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Docker socket") {
+		t.Errorf("expected Docker socket advisory, got:\n%s", out)
+	}
+}
+
 func TestProfileShowNonexistentExitCode(t *testing.T) {
 	out, err := runTpd(t, "show", "nope")
 	exitErr, ok := err.(*exec.ExitError)

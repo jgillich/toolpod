@@ -254,6 +254,9 @@ func (c *ProfileShowCmd) Run() error {
 			return err
 		}
 		fmt.Print(string(out))
+		if msg := catalog.Advisory(c.Name); msg != "" {
+			fmt.Fprintln(os.Stderr, "warning: "+msg)
+		}
 		return nil
 	}
 	rc, ok := cat.Get(c.Name)
@@ -265,6 +268,9 @@ func (c *ProfileShowCmd) Run() error {
 		return err
 	}
 	fmt.Print(string(out))
+	if msg := catalog.Advisory(c.Name); msg != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
+	}
 	return nil
 }
 
@@ -279,6 +285,9 @@ func (c *ProfileEditCmd) Run() error {
 	}
 	if _, ok := cat.Get(c.Name); !ok {
 		return profile.ProfileError{Message: "profile not found: " + c.Name}
+	}
+	if msg := catalog.Advisory(c.Name); msg != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
 	targetPath := filepath.Join(userDir, c.Name+".yaml")
 	if cat.IsFragment(c.Name) {

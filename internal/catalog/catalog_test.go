@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"testing"
 
+	"github.com/jgillich/tpd/internal/catalog"
 	"github.com/jgillich/tpd/internal/profile"
 )
 
@@ -10,6 +11,19 @@ import (
 // appimage backend resolves `latest` at install time instead of the catalog
 // pinning versions, so the built-in profiles must still load and validate
 // with a bare `latest` (no checksum).
+func TestAdvisory(t *testing.T) {
+	for _, name := range []string{"docker", "podman", "gui", "gui-runtime", "ssh", "netrc", "aws", "azure", "gcloud", "github", "gitlab", "vault"} {
+		if got := catalog.Advisory(name); got == "" {
+			t.Errorf("Advisory(%q) should be non-empty", name)
+		}
+	}
+	for _, name := range []string{"javascript", "go", "gitconfig", "shell", "mise", ""} {
+		if got := catalog.Advisory(name); got != "" {
+			t.Errorf("Advisory(%q) = %q, want empty", name, got)
+		}
+	}
+}
+
 func TestBuiltinAppimageToolsStayLatest(t *testing.T) {
 	cat, err := profile.LoadProfiles("")
 	if err != nil {

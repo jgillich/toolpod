@@ -551,6 +551,36 @@ func TestBrokenSiblingBlocksInit(t *testing.T) {
 	}
 }
 
+func TestScaffoldPrintsAdvisoryForSensitiveFragments(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"docker"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "note: docker grants:") {
+		t.Errorf("expected advisory note on stderr, got: %q", stderr.String())
+	}
+
+	quietDir := t.TempDir()
+	var quietOut, quietErr bytes.Buffer
+	err = Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
+		ProfileDir: quietDir,
+	}, strings.NewReader(""), &quietOut, &quietErr)
+	if err != nil {
+		t.Fatalf("Run (javascript): %v", err)
+	}
+	if strings.Contains(quietErr.String(), "grants:") {
+		t.Errorf("non-sensitive fragments should not print an advisory, got: %q", quietErr.String())
+	}
+}
+
 func TestFragmentFileExistenceWarning(t *testing.T) {
 	// Point HOME at an empty temp dir so mount fragment sources don't exist.
 	home := t.TempDir()
