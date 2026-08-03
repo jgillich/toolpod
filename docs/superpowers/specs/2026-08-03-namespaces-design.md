@@ -81,22 +81,43 @@ Two distinct APIs replace the old single-name API:
 
 Resolution converts a reference (from `extends:` or the CLI) into a **canonical identity** `(Namespace, Name)` and then looks it up in `entries`. There are two cases:
 
-- **Qualified** (`core/foo`, future `github.com/user/project/foo`): split at the *registered* namespace prefix (longest match), remainder is the local name. Canonical identity is `(ns, name)`. Direct lookup: `entries[ns+"/"+name]`. No fallback.
-- **Unqualified** (`foo`): canonical identity depends on what exists — `("", "foo")` if a user entry exists, else `("core", "foo")`. Resolution picks one canonical identity and uses it for all downstream work (lookup, cycle detection, fragment checks). If neither exists, resolution fails.
+- **Qualified** (`core/foo`, future `github.com/user/project/foo`): split at the *registered* namespace prefix (longest match, see Splitting), remainder is the local name. Canonical identity is `(ns, name)`, key is `FullName` (`ns + "/" + name`). Direct lookup. No fallback.
+- **Unqualified** (`foo`): canonical key is `foo` (the bare name — `FullName` for the empty namespace) if a user entry exists, else `core/foo` if a built-in exists. Resolution picks one canonical key and uses it for all downstream work (lookup, cycle detection, fragment checks). If neither exists, resolution fails.
+
+`entries` is always keyed by `FullName`, which for the empty namespace is the bare name (`mise`, not `/mise`). There is no `""+"/"+name` form anywhere; the empty namespace is represented as the bare local name.
 
 The `Catalog` exposes a `ResolveRef(ref Ref) (string, bool)` helper that returns the canonical `FullName` for a reference:
 
 ```go
-// ResolveRef resolves a reference to a canonical catalog FullName.
-// For unqualified names, returns the user key if present, else the core key.
-// For qualified names, returns the qualified key directly (no fallback).
-// Returns ok=false if no entry matches.
+// Ref is a parsed-but-not-yet-resolved reference. Namespace == "" means
+// unqualified (resolve via fallback); any other value means qualified
+// (direct lookup, no fallback).
+type Ref struct {
+	Namespace string // "" for unqualified; "core" or a future remote ns otherwise
+	Name      string  // local name; for unqualified this is the bare string
+}
+
+// ResolveRef resolves a reference to a canonical catalog FullName (an entries key).
+// For unqualified names (ref.Namespace == ""), returns the user key (bare name)
+// if present, else the core key ("core/"+name). For qualified names, returns
+// the qualified key directly (no fallback). Returns ok=false if no entry matches.
 func (c Catalog) ResolveRef(ref Ref) (string, bool)
 ```
 
-All callers of `Get` in resolution, cycle detection, and fragment checks go through `ResolveRef` first. This is the only place fallback happens. Cycle detection (`seen` map), fragment checks (`IsFragment`), and type checks all operate on the resolved canonical `FullName`, never on the raw reference. So `extends: mise` from the user `mise.yaml` resolves to `mise` (user), and `seen["mise"]` catches the self-cycle; `extends: core/mise` from the core `mise.yaml` resolves to `core/mise`, and `seen["core/mise"]` catches it.
+All callers of `Get` in resolution, cycle detection, and fragment checks go through `ResolveRef` first. The public resolution entry points (`ResolveProfile`, `ResolveFragment`) and the CLI launch path all accept a user-supplied string, parse it into a `Ref` via `ParseRef` (see Splitting), call `ResolveRef` to get the canonical key, and then operate on that key. They never pass a raw user string to `Get` directly. This is the only place fallback happens. Cycle detection (`seen` map), fragment checks (`IsFragment`), and type checks all operate on the resolved canonical `FullName`, never on the raw reference. So `extends: mise` from the user `mise.yaml` resolves to `mise` (user), and `seen["mise"]` catches the self-cycle; `extends: core/mise` from the core `mise.yaml` resolves to `core/mise`, and `seen["core/mise"]` catches it.
 
 The namespace registry is populated at catalog load: `core` and `""` are always registered. Remote imports (future) register their own. Unqualified fallback applies everywhere: at the CLI (`tpd mise`), in `extends:` (`extends: mise`), and in `tpd init`'s default base. Only an explicit `core/` (or remote) prefix escapes fallback.
+
+### Splitting (qualified vs unqualified, segment boundaries)
+
+A string is split into a `Ref` by `ParseRef(s, namespaces) (Ref, error)`:
+
+1. If `s` contains no `/`, it is unqualified: `Ref{Namespace: "", Name: s}`. `s` must be non-empty.
+2. Otherwise, find the longest registered namespace `ns` such that `s` starts with `ns + "/"` (segment boundary — the `/` is required, so `core` does not match `corexy/foo`). The remainder after `ns+"/"` is the local name. If `ns == ""`... but `""` has no prefix, so an unqualified string never reaches this branch. So a qualified split always has `ns != ""`.
+3. If no registered namespace matches, the string is unqualified after all (the `/` belongs to a future or unknown namespace): this is a parse error, "unknown namespace in extends: X". We do not fall back to treating `corefoo/bar` as unqualified `corefoo/bar`.
+4. The local name (remainder) must be non-empty; `core/` is rejected with "empty local name in extends: core/".
+
+`ParseRef` is used by `ResolveRef`, by the `extends:` parse phase (see Reference parsing), and by the CLI to interpret a profile argument.
 
 ### Fragment type-awareness
 
@@ -118,32 +139,34 @@ No new code path. The `IsUserShadow` branch in `merge.go` and the entire `resolv
 
 ## Reference parsing
 
-`ExtendsList` becomes structured. `internal/profile/types.go`:
+`internal/profile/types.go` — a reference as it appears in YAML is a string. The structured form is `Ref` (defined above under Resolution). The list is a struct, not a bare slice, so it can carry both the raw strings (phase 1) and the parsed refs (phase 2):
 
 ```go
-type ExtendsList []ExtendsRef
-
-type ExtendsRef struct {
-	Namespace string // "core", "", future "github.com/user/project"; "" means unqualified
-	Name      string  // "mise"; single segment for local, may be multi-segment only for future remote local names
+// ExtendsList is the yaml-decoded extends field. It carries the raw strings
+// until ExtendsList.Resolve splits them against the namespace registry.
+type ExtendsList struct {
+	Raw    []string  `yaml:"-"`
+	Resolved []Ref   `yaml:"-"`
 }
 
-func (e ExtendsRef) String() string {
-	if e.Namespace == "" {
-		return e.Name
-	}
-	return e.Namespace + "/" + e.Name
-}
+// UnmarshalYAML decodes a scalar or list of strings into Raw. No namespace
+// splitting happens here (yaml.v3 gives no context). Resolved stays nil.
+func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error
+
+// MarshalYAML emits Resolved (if non-empty) as canonical strings, else Raw.
+func (e ExtendsList) MarshalYAML() (interface{}, error)
+
+// Resolve splits each Raw string against the registered namespaces into
+// Resolved. Called by parseRaw with the namespace set. Idempotent.
+func (e *ExtendsList) Resolve(namespaces map[string]bool) error
 ```
 
-### Two-phase parse (no YAML context)
+`ExtendsRef` from the original draft is gone; the structured element is `Ref` (one type for extends entries, CLI args, and internal resolution). `Profile.ExtendsList` is the struct above. Code that iterates extends uses `list.Resolved` after `Resolve`.
 
-`yaml.v3` calls `UnmarshalYAML(*yaml.Node)` with no context, so the namespace registry can't be consulted during YAML decode. Parsing is two phases:
+Phase 1 (YAML decode): `UnmarshalYAML` fills `Raw`, leaves `Resolved` nil.
+Phase 2 (contextual split): `parseRaw` calls `list.Resolve(namespaces)`, which fills `Resolved` with `Ref` values via `ParseRef` (longest-prefix match). An unregistered prefix is a parse error: "unknown namespace in extends: X". Empty local name (`core/`) is rejected.
 
-1. **YAML decode** (`ExtendsList.UnmarshalYAML`): decode each entry as a **raw string**. No namespace splitting. Store the raw strings on the list (`Raw []string`) or, equivalently, keep `ExtendsList` as `[]string` at decode time and convert in phase 2.
-2. **Contextual split** (`ExtendsList.Resolve(namespaces) ([]ExtendsRef, error)`): called by `parseRaw` with the registered namespace set. For each raw string, longest-prefix match against registered namespaces to split into `(Namespace, Name)`. `core/mise` → `("core", "mise")`; `mise` → `("", "mise")`; `github.com/user/project/foo` → `("github.com/user/project", "foo")`. An unregistered prefix is a parse error: "unknown namespace in extends: X".
-
-`parseRaw` takes the namespace set as a parameter, threaded from `LoadProfiles`. `MarshalYAML` emits the canonical string form (`core/mise`, `mise`). This is what `tpd init` and `tpd edit` seeds write.
+`MarshalYAML` emits the canonical string form (`core/mise`, `mise`) from `Resolved` (or `Raw` if `Resolved` is nil, for round-tripping un-resolved lists). This is what `tpd init` and `tpd edit` seeds write.
 
 ## CLI behavior for qualified names
 
@@ -161,6 +184,7 @@ Name validation (`ValidateName`) applies to the **file/display name**, which mus
 `tpd init` and `tpd edit` emit `extends: core/<name>` when seeding a shadow of a built-in, instead of the current `extends: <name>`.
 
 - `internal/scaffold/scaffold.go`: the default base for a new profile shadowing a built-in becomes `core/<name>`. The "fall back to built-in of the same name" path (`if _, ok := cat.GetBuiltin(profileName); ok { bases = append([]string{profileName}, ...) }`) becomes `bases = append([]string{"core/"+profileName}, ...)`. The `bases` list written into the generated YAML uses `core/`-qualified refs for built-ins. When the user picks a fragment in the wizard, the fragment ref is also `core/`-qualified if it's a built-in fragment.
+- `internal/scaffold/fragments.go`: `FragmentNames()` returns **display names** (`DisplayName`, unqualified) for the picker UI. The wizard selection result is a list of display names. To emit qualified refs in the generated YAML, the scaffold resolves each picked display name to its canonical `FullName` via a new `Catalog.FragmentByDisplayName(name) (string, bool)` helper (returns `"core/javascript"` for `javascript` when only the built-in fragment exists, or `"javascript"` when a user fragment of that name exists; if both exist, the user fragment wins by the same fallback rule). The generated `extends:` entries use the returned `FullName`. `FragmentNames()` itself is unchanged (still returns bare names for the picker); the change is that the scaffold maps the picked names through `FragmentByDisplayName` before emitting them.
 - `cmd/tpd/cli.go` `builtinEditSeed`: the seed shadow line becomes `extends: core/<name>`.
 
 The wizard pickers and `tpd list` display `DisplayName` for user-facing ergonomics (`mise`, not `core/mise`); the `core/` prefix appears only in generated `extends:` lines and when a user explicitly passes a qualified name to the CLI.
@@ -194,7 +218,7 @@ Built-in fragment files that extend other built-in fragments (`core/typescript.y
 
 - `merge_test.go`: the `extends: opencode` self-shadow test switches to `extends: core/opencode` and expects the same merge; the `extends: foo` self-cycle test now also covers `extends: core/foo` from `core/foo.yaml`.
 - `catalog_test.go`: `DisplayNames`/`ProfileDisplayNames` return unqualified names; `Names` (canonical) returns `FullName`s; built-in entries are `core/...`.
-- New tests: `ResolveRef` unqualified fallback (user `mise` shadows `core/mise`); `ResolveRef` qualified `core/mise` bypasses user; self-reference rejected for `extends: mise` from user `mise.yaml` and `extends: core/mise` from `core/mise.yaml`; longest-prefix split with a synthetic multi-segment namespace; built-in fragment `core/typescript` extends `core/javascript` and is unaffected by a user profile named `javascript`.
+- New tests: `ResolveRef` unqualified fallback (user `mise` shadows `core/mise`); `ResolveRef` qualified `core/mise` bypasses user; self-reference rejected for `extends: mise` from user `mise.yaml` and `extends: core/mise` from `core/mise.yaml`; longest-prefix split with a synthetic multi-segment namespace; `ParseRef` rejects `core/` (empty local name) and rejects `corexy/foo` when `core` is registered but `corexy` is not (segment-boundary check); built-in fragment `core/typescript` extends `core/javascript` and is unaffected by a user profile named `javascript`.
 - `scaffold_test.go` / `new_profile_test.go`: generated YAML contains `extends: core/...`.
 - `profile_test.go` (cli): `tpd edit core/mise` seeds `mise.yaml` with `extends: core/mise`; edit seed contains `extends: core/...`.
 
