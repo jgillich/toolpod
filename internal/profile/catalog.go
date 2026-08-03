@@ -136,11 +136,14 @@ func (c Catalog) FragmentByDisplayName(name string) (string, bool) {
 	return "", false
 }
 
-// AddRaw inserts a raw profile into the catalog, shadowing any existing entry
-// of the same name. Used by init to overlay generated content for validation.
-func (c *Catalog) AddRaw(name string, rc RawProfile) {
-	c.entries[name] = rc
-	delete(c.fragments, name)
+// AddRaw inserts a raw profile into the catalog under its FullName, shadowing
+// any existing entry of the same name. Used by init to overlay generated
+// content for validation.
+func (c *Catalog) AddRaw(ns, name string, rc RawProfile) {
+	rc.Namespace = ns
+	rc.Name = name
+	c.entries[rc.FullName()] = rc
+	delete(c.fragments, rc.FullName())
 }
 
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),

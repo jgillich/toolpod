@@ -71,14 +71,15 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	if err != nil {
 		return fmt.Errorf("loading built-in profiles: %w", err)
 	}
-	builtinProfiles := builtinCat.ProfileNames()
+	builtinProfiles := builtinCat.ProfileDisplayNames()
 	if len(builtinProfiles) == 0 {
 		return fmt.Errorf("no built-in profiles available")
 	}
 
-	// All extendable names for the wizard base picker: profiles (built-in +
-	// user) and fragments. "mise" is listed first so it reads as the default.
-	baseNames := dedup(append([]string{"mise"}, cat.ProfileNames()...))
+	// All extendable display names for the wizard base picker: profiles
+	// (built-in + user) and fragments. "mise" is listed first so it reads as
+	// the default.
+	baseNames := dedup(append([]string{"mise"}, cat.ProfileDisplayNames()...))
 
 	bases := opts.Extends
 	profileName := opts.Name
@@ -115,6 +116,20 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		if profileName == "" {
 			return fmt.Errorf("profile name is required")
 		}
+		// Bases from the wizard are display names; resolve to canonical.
+		canonicalBases := make([]string, 0, len(bases))
+		for _, dn := range bases {
+			ref, err := profile.ParseRef(dn, cat.Namespaces())
+			if err != nil {
+				return err
+			}
+			key, ok := cat.ResolveRef(ref)
+			if !ok {
+				return fmt.Errorf("unknown base: %s", dn)
+			}
+			canonicalBases = append(canonicalBases, key)
+		}
+		bases = canonicalBases
 	}
 
 	if err := profile.ValidateName(profileName); err != nil {
@@ -130,39 +145,60 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// so fragments stay additions to a base, not replacements.
 	hasProfile := false
 	for _, b := range bases {
-		if key, ok := resolveCatalogName(cat, b); ok && !cat.IsFragment(key) {
+		ref, err := profile.ParseRef(b, cat.Namespaces())
+		if err != nil {
+			// Defer the error to the validation loop below.
+			continue
+		}
+		key, ok := cat.ResolveRef(ref)
+		if ok && !cat.IsFragment(key) {
 			hasProfile = true
 			break
 		}
 	}
 	if !hasProfile {
 		if _, ok := cat.Get("core/" + profileName); ok {
-			bases = append([]string{profileName}, bases...)
+			bases = append([]string{"core/" + profileName}, bases...)
 		} else {
-			bases = append([]string{"mise"}, bases...)
+			bases = append([]string{"core/mise"}, bases...)
 		}
 	}
 
 	// Interactively pick extra fragments when the user gave no --extends.
-	// Picked fragments are appended to the same extends list as bases.
+	// Picked fragments are appended to the same extends list as bases, mapped
+	// from their display names to canonical FullNames.
 	if interactive && len(opts.Extends) == 0 {
+		var picked []string
 		if tty {
-			picked, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
+			p, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
 			if err != nil {
 				return err
 			}
-			bases = append(bases, picked...)
+			picked = p
 		} else {
-			bases = append(bases, promptFragments(FragmentNames(), reader, stderr)...)
+			picked = promptFragments(FragmentNames(), reader, stderr)
+		}
+		for _, dn := range picked {
+			full, ok := cat.FragmentByDisplayName(dn)
+			if !ok {
+				return fmt.Errorf("unknown fragment: %s", dn)
+			}
+			bases = append(bases, full)
 		}
 		wizardUsed = true
 	}
 
 	bases = dedup(bases)
-	for _, b := range bases {
-		if _, ok := resolveCatalogName(cat, b); !ok {
+	for i, b := range bases {
+		ref, err := profile.ParseRef(b, cat.Namespaces())
+		if err != nil {
+			return fmt.Errorf("invalid extends target %q: %w", b, err)
+		}
+		key, ok := cat.ResolveRef(ref)
+		if !ok {
 			return fmt.Errorf("unknown extends target: %s", b)
 		}
+		bases[i] = key
 	}
 
 	content, err := generate(profileName, bases, cat)
@@ -248,29 +284,21 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 }
 
 func generate(name string, extends []string, cat profile.Catalog) (string, error) {
-	// A same-named extends target is the built-in being shadowed; qualify it
-	// with core/ so unqualified resolution (user-first) does not self-cycle.
-	qualified := make([]string, len(extends))
-	for i, e := range extends {
-		if e == name {
-			qualified[i] = "core/" + e
-		} else {
-			qualified[i] = e
-		}
+	el := profile.ExtendsList{Raw: extends}
+	if err := el.Resolve(cat.Namespaces()); err != nil {
+		return "", err
 	}
 	p := profile.Profile{
 		Version:     1,
-		ExtendsList: profile.ExtendsList{Raw: qualified},
+		ExtendsList: el,
 	}
 	if !basesProvideCommand(cat, extends) {
 		p.Command = []string{"bash"}
 	}
-
 	data, err := yaml.Marshal(p)
 	if err != nil {
 		return "", err
 	}
-
 	return string(data), nil
 }
 
@@ -505,7 +533,7 @@ func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	cat.AddRaw(profileName, rc)
+	cat.AddRaw("", profileName, rc)
 	return profile.ResolveProfile(cat, profileName)
 }
 
