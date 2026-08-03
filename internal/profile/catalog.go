@@ -309,6 +309,11 @@ func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[st
 	})
 }
 
+// builtinNamespaces is the namespace registry available at parse time (before
+// the Catalog is assembled). "core" and "" are always registered; remote
+// namespaces (future) will be added by their loader.
+var builtinNamespaces = map[string]bool{"": true, "core": true}
+
 // parseRaw parses YAML bytes into a RawProfile with the given source path.
 // It also captures explicit-null keys (for null-to-delete in merge) via
 // a parallel yaml.Node parse of the map fields.
@@ -331,6 +336,9 @@ func parseRaw(data []byte, path string) (RawProfile, error) {
 		}
 	}
 	rc.NullKeys = collectNullKeys(&root)
+	if err := rc.ExtendsList.Resolve(builtinNamespaces); err != nil {
+		return RawProfile{}, ProfileError{Path: path, Message: err.Error()}
+	}
 	return rc, nil
 }
 
@@ -424,6 +432,9 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 	for k, v := range entries {
 		v.Namespace = "core"
 		v.Name = k
+		if err := v.ExtendsList.Resolve(map[string]bool{"": true, "core": true}); err != nil {
+			panic("NewProfileCatalogForTest: bad extends in " + k + ": " + err.Error())
+		}
 		out[v.FullName()] = v
 	}
 	return Catalog{entries: out, namespaces: map[string]bool{"": true, "core": true}, fragments: map[string]bool{}}

@@ -55,20 +55,16 @@ func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, er
 	if seen[key] {
 		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + key}
 	}
-	if len(rc.ExtendsList) == 0 {
+	if len(rc.ExtendsList.Resolved) == 0 {
 		return rc, nil
 	}
 	// Fragments are composition-only: they may extend other fragments, but
 	// must not pull in profile identity (image/command/version).
 	if cat.IsFragment(key) {
-		for _, parentName := range rc.ExtendsList {
-			pref, perr := cat.ParseRefForCatalog(parentName)
-			if perr != nil {
-				return RawProfile{}, withParentPath(ProfileError{Message: perr.Error()}, rc)
-			}
-			pkey, ok := cat.ResolveRef(pref)
+		for _, ref := range rc.ExtendsList.Resolved {
+			pkey, ok := cat.ResolveRef(ref)
 			if !ok {
-				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment not found: " + parentName}
+				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment not found: " + ref.FullName()}
 			}
 			if !cat.IsFragment(pkey) {
 				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment " + key + " may only extend fragments, not profile " + pkey}
@@ -82,14 +78,10 @@ func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, er
 	// Duplicates are ignored after first resolution.
 	merged := RawProfile{}
 	resolved := map[string]bool{}
-	for _, parentName := range rc.ExtendsList {
-		pref, perr := cat.ParseRefForCatalog(parentName)
-		if perr != nil {
-			return RawProfile{}, withParentPath(ProfileError{Message: perr.Error()}, rc)
-		}
-		pkey, ok := cat.ResolveRef(pref)
+	for _, ref := range rc.ExtendsList.Resolved {
+		pkey, ok := cat.ResolveRef(ref)
 		if !ok {
-			return RawProfile{}, withParentPath(ProfileError{Message: "profile not found: " + parentName}, rc)
+			return RawProfile{}, withParentPath(ProfileError{Message: "profile not found: " + ref.FullName()}, rc)
 		}
 		if resolved[pkey] {
 			continue
@@ -127,7 +119,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	if child.Version != 0 {
 		out.Version = child.Version
 	}
-	if len(child.ExtendsList) > 0 {
+	if len(child.ExtendsList.Raw) > 0 {
 		out.ExtendsList = child.ExtendsList
 	}
 	if child.Network != "" {
@@ -164,7 +156,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 		out.Resources = child.Resources
 	}
 
-	out.ExtendsList = nil
+	out.ExtendsList = ExtendsList{}
 	out.NullKeys = nil
 	return out
 }

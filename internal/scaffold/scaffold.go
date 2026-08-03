@@ -260,7 +260,7 @@ func generate(name string, extends []string, cat profile.Catalog) (string, error
 	}
 	p := profile.Profile{
 		Version:     1,
-		ExtendsList: profile.ExtendsList(qualified),
+		ExtendsList: profile.ExtendsList{Raw: qualified},
 	}
 	if !basesProvideCommand(cat, extends) {
 		p.Command = []string{"bash"}

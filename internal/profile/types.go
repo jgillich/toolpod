@@ -20,26 +20,65 @@ func (r Ref) FullName() string {
 	return r.Namespace + "/" + r.Name
 }
 
-// ExtendsList is a list of profile/fragment names to extend.
-// It unmarshals from both a string ("extends: foo") and a list
-// ("extends: [foo, bar]"). A single string is normalized to a
-// one-element slice.
-type ExtendsList []string
+// ExtendsList is the yaml-decoded extends field. Raw holds the strings as
+// written; Resolved is filled by Resolve splitting each Raw string against the
+// registered namespaces. MarshalYAML emits Resolved (canonical strings) when
+// available, else Raw (for round-tripping un-resolved lists).
+type ExtendsList struct {
+	Raw      []string `yaml:"-"`
+	Resolved []Ref    `yaml:"-"`
+}
 
+// UnmarshalYAML decodes a scalar or list of strings into Raw. No namespace
+// splitting happens here (yaml.v3 gives no context). Resolved stays nil.
 func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		var s string
 		if err := value.Decode(&s); err != nil {
 			return err
 		}
-		*e = ExtendsList{s}
+		e.Raw = []string{s}
 		return nil
 	}
 	var list []string
 	if err := value.Decode(&list); err != nil {
 		return err
 	}
-	*e = ExtendsList(list)
+	e.Raw = list
+	return nil
+}
+
+// MarshalYAML emits Resolved (if non-empty) as canonical strings, else Raw.
+func (e ExtendsList) MarshalYAML() (interface{}, error) {
+	if len(e.Resolved) > 0 {
+		out := make([]string, len(e.Resolved))
+		for i, r := range e.Resolved {
+			out[i] = r.FullName()
+		}
+		return out, nil
+	}
+	if len(e.Raw) > 0 {
+		return e.Raw, nil
+	}
+	return nil, nil
+}
+
+// Resolve splits each Raw string against the registered namespaces into
+// Resolved. Idempotent. An unregistered prefix or empty local name is an error.
+func (e *ExtendsList) Resolve(namespaces map[string]bool) error {
+	if len(e.Raw) == 0 {
+		e.Resolved = nil
+		return nil
+	}
+	resolved := make([]Ref, len(e.Raw))
+	for i, s := range e.Raw {
+		r, err := ParseRef(s, namespaces)
+		if err != nil {
+			return err
+		}
+		resolved[i] = r
+	}
+	e.Resolved = resolved
 	return nil
 }
 

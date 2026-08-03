@@ -142,7 +142,7 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 	// A shadow extending the builtin of the same name must inherit all of its
 	// parents; the qualified core/ prefix reaches the built-in without a cycle.
 	cat := NewProfileCatalogForTest(map[string]RawProfile{
-		"t3":    {Profile: Profile{Version: 1, Image: "img", Command: []string{"t3"}, ExtendsList: []string{"a", "gui", "b", "c"}}},
+		"t3":    {Profile: Profile{Version: 1, Image: "img", Command: []string{"t3"}, ExtendsList: ExtendsList{Raw: []string{"a", "gui", "b", "c"}}}},
 		"a":     {Profile: Profile{Env: map[string]string{"XDG_RUNTIME_DIR": "{{ .Env.XDG_RUNTIME_DIR }}"}}},
 		"b":     {Profile: Profile{Mounts: map[string]Mount{"/b": {Source: "~/.b"}}}},
 		"c":     {Profile: Profile{Tools: map[string]string{"c": "latest"}}},
@@ -152,8 +152,11 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 	cat.fragments["core/gui"] = true
 	// Overlay the user shadow under the bare "t3" key, extending core/t3 + extra.
 	shadow := RawProfile{
-		Profile:     Profile{Version: 1, ExtendsList: []string{"core/t3", "extra"}},
+		Profile:     Profile{Version: 1, ExtendsList: ExtendsList{Raw: []string{"core/t3", "extra"}}},
 		Namespace: "", Name: "t3", Path: "user:/home/u/t3.yaml",
+	}
+	if err := shadow.ExtendsList.Resolve(cat.namespaces); err != nil {
+		t.Fatal(err)
 	}
 	cat.entries["t3"] = shadow
 

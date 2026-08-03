@@ -11,7 +11,7 @@ func TestMultiExtendsLeftToRight(t *testing.T) {
 		"javascript": {Profile: Profile{Caches: map[string]CachePaths{"npm": {"~/.npm"}}, Tools: map[string]string{"node": "latest"}}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"base", "ssh", "javascript"},
+			ExtendsList: ExtendsList{Raw: []string{"base", "ssh", "javascript"}},
 		}},
 	})
 	resolved, err := ResolveProfile(cat, "myprofile")
@@ -38,7 +38,7 @@ func TestMultiExtendsLaterOverridesEarlier(t *testing.T) {
 		"b": {Profile: Profile{Image: "b:latest"}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"a", "b"},
+			ExtendsList: ExtendsList{Raw: []string{"a", "b"}},
 			Command:     []string{"sh"},
 		}},
 	})
@@ -59,7 +59,7 @@ func TestMultiExtendsBodyWinsLast(t *testing.T) {
 		"a": {Profile: Profile{Image: "a:latest"}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"a"},
+			ExtendsList: ExtendsList{Raw: []string{"a"}},
 			Image:       "myimage:latest",
 			Command:     []string{"sh"},
 		}},
@@ -76,11 +76,11 @@ func TestMultiExtendsBodyWinsLast(t *testing.T) {
 func TestMultiExtendsWithNestedDepthFirst(t *testing.T) {
 	cat := NewProfileCatalogForTest(map[string]RawProfile{
 		"c": {Profile: Profile{Image: "c:latest", Network: "none"}},
-		"a": {Profile: Profile{ExtendsList: ExtendsList{"c"}, Network: "bridge"}},
+		"a": {Profile: Profile{ExtendsList: ExtendsList{Raw: []string{"c"}}, Network: "bridge"}},
 		"b": {Profile: Profile{Image: "b:latest"}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"a", "b"},
+			ExtendsList: ExtendsList{Raw: []string{"a", "b"}},
 			Command:     []string{"sh"},
 		}},
 	})
@@ -101,7 +101,7 @@ func TestMultiExtendsDuplicateIgnored(t *testing.T) {
 		"ssh": {Profile: Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "~/.ssh"}}}},
 		"myprofile": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"ssh", "ssh"},
+			ExtendsList: ExtendsList{Raw: []string{"ssh", "ssh"}},
 			Command:     []string{"sh"},
 			Image:       "base:latest",
 		}},
@@ -117,8 +117,8 @@ func TestMultiExtendsDuplicateIgnored(t *testing.T) {
 
 func TestMultiExtendsCycleRejected(t *testing.T) {
 	cat := NewProfileCatalogForTest(map[string]RawProfile{
-		"a": {Profile: Profile{ExtendsList: ExtendsList{"b"}, Image: "a:latest", Command: []string{"sh"}}},
-		"b": {Profile: Profile{ExtendsList: ExtendsList{"a"}}},
+		"a": {Profile: Profile{ExtendsList: ExtendsList{Raw: []string{"b"}}, Image: "a:latest", Command: []string{"sh"}}},
+		"b": {Profile: Profile{ExtendsList: ExtendsList{Raw: []string{"a"}}}},
 	})
 	_, err := ResolveProfile(cat, "a")
 	if err == nil {
@@ -131,7 +131,7 @@ func TestSingleStringExtendsStillWorks(t *testing.T) {
 		"base": {Profile: Profile{Version: 1, Image: "base:latest", Command: []string{"sh"}}},
 		"child": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"base"}, // normalized from string
+			ExtendsList: ExtendsList{Raw: []string{"base"}}, // normalized from string
 		}},
 	})
 	resolved, err := ResolveProfile(cat, "child")
@@ -148,7 +148,7 @@ func TestOldInlinedProfileStillResolves(t *testing.T) {
 		"base": {Profile: Profile{Version: 1, Image: "base:latest", Command: []string{"sh"}}},
 		"child": {Profile: Profile{
 			Version:     1,
-			ExtendsList: ExtendsList{"base"},
+			ExtendsList: ExtendsList{Raw: []string{"base"}},
 			Mounts:      map[string]Mount{"~/.ssh": {Source: "~/.ssh", ReadOnly: true}},
 		}},
 	})
