@@ -40,6 +40,58 @@ func TestIsLikelyRootlessSocket(t *testing.T) {
 	}
 }
 
+func newQueryRootlessClient(t *testing.T, handler http.Handler) *client.Client {
+	t.Helper()
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: handler}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+
+	cli, err := client.NewClientWithOpts(client.WithHost("unix://"+sock), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cli
+}
+
+func TestQueryRootlessServerError(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		// Valid JSON so only the status check can catch this.
+		w.Write([]byte(`{"rootless":false}`))
+	}))
+	if _, err := QueryRootless(context.Background(), cli); err == nil {
+		t.Error("QueryRootless must fail when /info returns 500")
+	}
+}
+
+func TestQueryRootlessRejectsLargeBody(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Valid JSON padded past 64 KiB so only the size cap can catch this.
+		w.Write([]byte(strings.Repeat("x", 64<<10) + `{"rootless":false}`))
+	}))
+	if _, err := QueryRootless(context.Background(), cli); err == nil {
+		t.Error("QueryRootless must reject an /info body over 64 KiB")
+	}
+}
+
+func TestQueryRootlessOK(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"rootless":true}`))
+	}))
+	rootless, err := QueryRootless(context.Background(), cli)
+	if err != nil {
+		t.Fatalf("QueryRootless: %v", err)
+	}
+	if !rootless {
+		t.Error("QueryRootless = false, want true (rootless field in /info)")
+	}
+}
+
 func TestSubpathSupportedConcurrent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/version") {

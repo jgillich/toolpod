@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	urlparse "net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,6 +24,11 @@ import (
 // (e.g. .../debian/trixie/index.yaml), so the fetch matches the user's
 // image setting instead of a hardcoded distro.
 var extrepoCatalogBase = "https://extrepo-team.pages.debian.net/extrepo-data/debian"
+
+const (
+	maxExtrepoIndexSize = 8 << 20
+	maxExtrepoKeySize   = 256 << 10
+)
 
 // extrepoEnabledPolicies mirrors the default /etc/extrepo/config.yaml of the
 // extrepo package: only "main" is enabled (contrib/non-free are commented
@@ -139,7 +146,7 @@ func (e extrepoEntry) renderSources(name, components, keyPath string) string {
 }
 
 func fetchExtrepoIndex(ctx context.Context, codename string) (map[string]extrepoEntry, error) {
-	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/index.yaml")
+	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/index.yaml", maxExtrepoIndexSize)
 	if err != nil {
 		return nil, fmt.Errorf("fetch extrepo catalog for %s: %w", codename, err)
 	}
@@ -151,19 +158,37 @@ func fetchExtrepoIndex(ctx context.Context, codename string) (map[string]extrepo
 }
 
 func fetchExtrepoKey(ctx context.Context, codename, keyFile string) ([]byte, error) {
-	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/"+keyFile)
+	data, err := httpGet(ctx, extrepoCatalogBase+"/"+codename+"/"+keyFile, maxExtrepoKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("fetch gpg key %s: %w", keyFile, err)
 	}
 	return data, nil
 }
 
-func httpGet(ctx context.Context, url string) ([]byte, error) {
+// httpGet fetches url with a size cap and same-origin, HTTPS-only redirects.
+// A redirect to any other host (e.g. an attacker-controlled CDN) is rejected
+// rather than followed.
+func httpGet(ctx context.Context, url string, max int64) ([]byte, error) {
+	u, err := urlparse.Parse(url)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if req.URL.Scheme != "https" || req.URL.Host != u.Host {
+				return fmt.Errorf("refusing redirect to %s (want https://%s)", req.URL, u.Host)
+			}
+			return nil
+		},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +196,14 @@ func httpGet(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > max {
+		return nil, fmt.Errorf("GET %s: response exceeds %d bytes", url, max)
+	}
+	return body, nil
 }
 
 func sha256Hex(b []byte) string {
@@ -267,7 +299,10 @@ func readImageFileEntry(ctx context.Context, cli *client.Client, containerID, im
 	if hdr.Typeflag == tar.TypeSymlink {
 		return nil, resolveLinkTarget(path, hdr.Linkname), nil
 	}
-	content, err := io.ReadAll(tr)
+	if hdr.Size > 1<<20 {
+		return nil, "", fmt.Errorf("read %s from %s: file exceeds 1 MiB", path, imageRef)
+	}
+	content, err := io.ReadAll(io.LimitReader(tr, 1<<20))
 	if err != nil {
 		return nil, "", fmt.Errorf("read %s from %s: %w", path, imageRef, err)
 	}

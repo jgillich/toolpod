@@ -93,6 +93,73 @@ func TestFetchExtrepoIndexMissingVersion(t *testing.T) {
 	}
 }
 
+func TestFetchExtrepoIndexOversized(t *testing.T) {
+	// Valid YAML that exceeds the 8 MiB catalog cap; without a bound it would
+	// parse cleanly, so only the size limit makes this fail.
+	body := "mise:\n  policy: main\n  gpg-key-file: " + strings.Repeat("a", 8<<20) + "\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/trixie/index.yaml" {
+			w.Write([]byte(body))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	old := extrepoCatalogBase
+	extrepoCatalogBase = srv.URL
+	defer func() { extrepoCatalogBase = old }()
+
+	if _, err := fetchExtrepoIndex(context.Background(), "trixie"); err == nil {
+		t.Error("fetchExtrepoIndex must fail when the catalog exceeds the size cap")
+	}
+}
+
+func TestFetchExtrepoIndexRedirectWithoutLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+	old := extrepoCatalogBase
+	extrepoCatalogBase = srv.URL
+	defer func() { extrepoCatalogBase = old }()
+
+	if _, err := fetchExtrepoIndex(context.Background(), "trixie"); err == nil {
+		t.Error("fetchExtrepoIndex must fail on a 3xx response without a Location header")
+	}
+}
+
+func TestFetchExtrepoIndexServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	old := extrepoCatalogBase
+	extrepoCatalogBase = srv.URL
+	defer func() { extrepoCatalogBase = old }()
+
+	if _, err := fetchExtrepoIndex(context.Background(), "trixie"); err == nil {
+		t.Error("fetchExtrepoIndex must surface a 5xx error from the catalog server")
+	}
+}
+
+func TestFetchExtrepoIndexRejectsForeignRedirect(t *testing.T) {
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testExtrepoIndex))
+	}))
+	defer foreign.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, foreign.URL+"/index.yaml", http.StatusFound)
+	}))
+	defer srv.Close()
+	old := extrepoCatalogBase
+	extrepoCatalogBase = srv.URL
+	defer func() { extrepoCatalogBase = old }()
+
+	if _, err := fetchExtrepoIndex(context.Background(), "trixie"); err == nil {
+		t.Error("fetchExtrepoIndex must refuse a redirect to a foreign host")
+	}
+}
+
 func TestExtrepoEntryComponentsPolicy(t *testing.T) {
 	index, err := parseTestIndex(t)
 	if err != nil {
