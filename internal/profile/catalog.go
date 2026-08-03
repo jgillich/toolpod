@@ -13,12 +13,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Catalog is the merged set of built-in + user raw profiles and fragments, keyed by name.
+// Catalog is the merged set of built-in + user raw profiles and fragments,
+// keyed by FullName (canonical "ns/name").
 type Catalog struct {
-	entries    map[string]RawProfile // merged view: user shadows built-in
-	builtins   map[string]RawProfile // built-in profiles only, for extends-self
+	entries    map[string]RawProfile // keyed by FullName
 	namespaces map[string]bool       // registered prefixes: "core", "", future remotes
-	fragments  map[string]bool       // names that are fragments (not profiles)
+	fragments  map[string]bool       // FullNames that are fragments (not profiles)
 }
 
 func (c Catalog) IsFragment(name string) bool {
@@ -28,28 +28,6 @@ func (c Catalog) IsFragment(name string) bool {
 func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok
-}
-
-// GetBuiltin returns the built-in definition of a name: the built-in profile
-// for profiles, or the fragment of that name (fragments are never shadowed,
-// so the merged entry is always the built-in fragment). It is used to resolve
-// extends-self in user shadows and built-in chains without pulling in user
-// overrides.
-func (c Catalog) GetBuiltin(name string) (RawProfile, bool) {
-	rc, ok := c.builtins[name]
-	if !ok && c.fragments[name] {
-		rc, ok = c.entries[name]
-	}
-	return rc, ok
-}
-
-func (c Catalog) IsUserShadow(name string) bool {
-	_, hasBuiltin := c.builtins[name]
-	_, hasEntry := c.entries[name]
-	if !hasBuiltin || !hasEntry {
-		return false
-	}
-	return c.entries[name].Path != c.builtins[name].Path
 }
 
 func (c Catalog) Names() []string {
@@ -83,30 +61,15 @@ func (c *Catalog) AddRaw(name string, rc RawProfile) {
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
 func LoadProfiles(userDir string) (Catalog, error) {
-	builtins := map[string]RawProfile{}
-
-	if err := loadBuiltins(builtins); err != nil {
-		return Catalog{}, err
-	}
-
-	entries := make(map[string]RawProfile, len(builtins))
-	for k, v := range builtins {
-		entries[k] = v
-	}
-
+	entries := map[string]RawProfile{}
 	fragmentNames := map[string]bool{}
 
-	// Load built-in fragments into the same namespace.
-	builtinFragments := map[string]RawProfile{}
-	if err := loadBuiltinFragments(builtinFragments); err != nil {
+	if err := loadBuiltins(entries); err != nil {
 		return Catalog{}, err
 	}
-	for name, frag := range builtinFragments {
-		if _, exists := entries[name]; exists {
-			return Catalog{}, ProfileError{Path: frag.Path, Message: "name collision: fragment and profile share name " + name}
-		}
-		entries[name] = frag
-		fragmentNames[name] = true
+
+	if err := loadBuiltinFragments(entries, fragmentNames); err != nil {
+		return Catalog{}, err
 	}
 
 	if userDir != "" {
@@ -121,7 +84,16 @@ func LoadProfiles(userDir string) (Catalog, error) {
 		}
 	}
 
-	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
+	// A display name may not be both a fragment (in any namespace) and a
+	// profile (in any namespace); unqualified resolution and the display APIs
+	// can't disambiguate that. The intra-namespace collision checks above
+	// already reject fragment/profile clashes within the same FullName.
+	if collisions := crossTypeDisplayNameCollisions(entries, fragmentNames); len(collisions) > 0 {
+		return Catalog{}, fmt.Errorf("display name %q is both a fragment and a profile across namespaces", collisions[0])
+	}
+
+	namespaces := map[string]bool{"": true, "core": true}
+	return Catalog{entries: entries, namespaces: namespaces, fragments: fragmentNames}, nil
 }
 
 // LoadProfilesTolerant is like LoadProfiles but skips a malformed user
@@ -131,32 +103,59 @@ func LoadProfiles(userDir string) (Catalog, error) {
 // strict abort there is a regression from the old prune (which never read
 // profiles) and risks pruning live resources.
 func LoadProfilesTolerant(userDir string, warn func(string)) (Catalog, error) {
-	builtins := map[string]RawProfile{}
-	if err := loadBuiltins(builtins); err != nil {
-		return Catalog{}, err
-	}
-	entries := make(map[string]RawProfile, len(builtins))
-	for k, v := range builtins {
-		entries[k] = v
-	}
+	entries := map[string]RawProfile{}
 	fragmentNames := map[string]bool{}
-	builtinFragments := map[string]RawProfile{}
-	if err := loadBuiltinFragments(builtinFragments); err != nil {
+
+	if err := loadBuiltins(entries); err != nil {
 		return Catalog{}, err
 	}
-	for name, frag := range builtinFragments {
-		if _, exists := entries[name]; exists {
-			return Catalog{}, ProfileError{Path: frag.Path, Message: "name collision: fragment and profile share name " + name}
-		}
-		entries[name] = frag
-		fragmentNames[name] = true
+	if err := loadBuiltinFragments(entries, fragmentNames); err != nil {
+		return Catalog{}, err
 	}
+
 	if userDir != "" {
 		loadUserDirTolerant(userDir, entries, fragmentNames, warn)
 		userFragDir := filepath.Join(filepath.Dir(userDir), "fragments")
 		loadUserFragmentsTolerant(userFragDir, entries, fragmentNames, warn)
 	}
-	return Catalog{entries: entries, builtins: builtins, fragments: fragmentNames}, nil
+
+	// Cross-type display-name collisions drop the fragment (kept profiles
+	// stay launchable) instead of aborting, mirroring the tolerant pattern.
+	for _, dn := range crossTypeDisplayNameCollisions(entries, fragmentNames) {
+		warn(fmt.Sprintf("display name %q is both a fragment and a profile across namespaces; dropping the fragment", dn))
+		for key := range fragmentNames {
+			if entries[key].DisplayName() == dn {
+				delete(entries, key)
+				delete(fragmentNames, key)
+			}
+		}
+	}
+
+	namespaces := map[string]bool{"": true, "core": true}
+	return Catalog{entries: entries, namespaces: namespaces, fragments: fragmentNames}, nil
+}
+
+// crossTypeDisplayNameCollisions returns the display names that appear as both
+// a fragment (in any namespace) and a profile (in any namespace).
+func crossTypeDisplayNameCollisions(entries map[string]RawProfile, fragmentNames map[string]bool) []string {
+	dnIsFragment := map[string]bool{}
+	dnIsProfile := map[string]bool{}
+	for key, rc := range entries {
+		dn := rc.DisplayName()
+		if fragmentNames[key] {
+			dnIsFragment[dn] = true
+		} else {
+			dnIsProfile[dn] = true
+		}
+	}
+	var out []string
+	for dn := range dnIsFragment {
+		if dnIsProfile[dn] {
+			out = append(out, dn)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func loadUserDirTolerant(dir string, entries map[string]RawProfile, fragmentNames map[string]bool, warn func(string)) {
@@ -192,11 +191,13 @@ func loadUserDirTolerant(dir string, entries map[string]RawProfile, fragmentName
 			warn(path + ": " + err.Error())
 			return nil
 		}
-		if fragmentNames[name] {
-			warn(path + ": name collision: profile and fragment share name " + name)
+		rc.Namespace = ""
+		rc.Name = name
+		if fragmentNames[rc.FullName()] {
+			warn(path + ": name collision: profile and fragment share name " + rc.FullName())
 			return nil
 		}
-		entries[name] = rc
+		entries[rc.FullName()] = rc
 		return nil
 	})
 }
@@ -228,12 +229,14 @@ func loadUserFragmentsTolerant(dir string, entries map[string]RawProfile, fragme
 			warn(path + ": " + err.Error())
 			return nil
 		}
-		if _, exists := entries[name]; exists {
-			warn(path + ": name collision: fragment and profile share name " + name)
+		rc.Namespace = ""
+		rc.Name = name
+		if _, exists := entries[rc.FullName()]; exists {
+			warn(path + ": name collision: fragment and profile share name " + rc.FullName())
 			return nil
 		}
-		entries[name] = rc
-		fragmentNames[name] = true
+		entries[rc.FullName()] = rc
+		fragmentNames[rc.FullName()] = true
 		return nil
 	})
 }
@@ -259,7 +262,9 @@ func loadBuiltins(entries map[string]RawProfile) error {
 		if err := validateReservedName(rc, name); err != nil {
 			return err
 		}
-		entries[name] = rc
+		rc.Namespace = "core"
+		rc.Name = name
+		entries[rc.FullName()] = rc
 		return nil
 	})
 }
@@ -294,10 +299,12 @@ func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[st
 		if err := validateReservedName(rc, name); err != nil {
 			return err
 		}
-		if fragmentNames[name] {
-			return ProfileError{Path: rc.Path, Message: "name collision: profile and fragment share name " + name}
+		rc.Namespace = ""
+		rc.Name = name
+		if fragmentNames[rc.FullName()] {
+			return ProfileError{Path: rc.Path, Message: "name collision: profile and fragment share name " + rc.FullName()}
 		}
-		entries[name] = rc
+		entries[rc.FullName()] = rc
 		return nil
 	})
 }
@@ -409,14 +416,17 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 	return nulls
 }
 
-// NewCatalogForTest creates a Catalog from a raw map. For test use only;
-// production code uses LoadCatalog.
+// NewProfileCatalogForTest creates a Catalog from a raw map, stamping every
+// entry as a core-namespace built-in. For test use only; production code uses
+// LoadProfiles.
 func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
-	builtins := make(map[string]RawProfile, len(entries))
+	out := make(map[string]RawProfile, len(entries))
 	for k, v := range entries {
-		builtins[k] = v
+		v.Namespace = "core"
+		v.Name = k
+		out[v.FullName()] = v
 	}
-	return Catalog{entries: entries, builtins: builtins}
+	return Catalog{entries: out, namespaces: map[string]bool{"": true, "core": true}, fragments: map[string]bool{}}
 }
 
 // LoadFragments loads YAML fragment files from an embedded filesystem (e.g.
@@ -451,7 +461,7 @@ func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, erro
 	return fragments, nil
 }
 
-func loadBuiltinFragments(entries map[string]RawProfile) error {
+func loadBuiltinFragments(entries map[string]RawProfile, fragmentNames map[string]bool) error {
 	root := "fragments"
 	return fs.WalkDir(catalog.Fragments, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -472,10 +482,13 @@ func loadBuiltinFragments(entries map[string]RawProfile) error {
 		if err := validateFragmentName(name, rc); err != nil {
 			return err
 		}
-		if _, exists := entries[name]; exists {
-			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + name}
+		rc.Namespace = "core"
+		rc.Name = name
+		if _, exists := entries[rc.FullName()]; exists {
+			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + rc.FullName()}
 		}
-		entries[name] = rc
+		entries[rc.FullName()] = rc
+		fragmentNames[rc.FullName()] = true
 		return nil
 	})
 }
@@ -503,11 +516,13 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 		if err := validateFragmentName(name, rc); err != nil {
 			return err
 		}
-		if _, exists := entries[name]; exists {
-			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + name}
+		rc.Namespace = ""
+		rc.Name = name
+		if _, exists := entries[rc.FullName()]; exists {
+			return ProfileError{Path: rc.Path, Message: "name collision: fragment and profile share name " + rc.FullName()}
 		}
-		entries[name] = rc
-		fragmentNames[name] = true
+		entries[rc.FullName()] = rc
+		fragmentNames[rc.FullName()] = true
 		return nil
 	})
 }

@@ -62,6 +62,10 @@ func TestProfileList(t *testing.T) {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
 	s := string(out)
+	// Task 5 restores bare display names; these expectations are temporary.
+	if !strings.Contains(s, "core/shell") {
+		t.Errorf("expected profile list to contain 'core/shell', got:\n%s", s)
+	}
 	if !strings.Contains(s, "shell") {
 		t.Errorf("expected profile list to contain 'shell', got:\n%s", s)
 	}

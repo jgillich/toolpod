@@ -207,11 +207,15 @@ func (c *ProfileShowCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
+	key, ok := resolveCatalogName(cat, c.Name)
+	if !ok {
+		return fmt.Errorf("profile not found: %s", c.Name)
+	}
 	if c.Resolved {
-		if cat.IsFragment(c.Name) {
+		if cat.IsFragment(key) {
 			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", c.Name, c.Name)
 		}
-		resolved, err := profile.ResolveProfile(cat, c.Name)
+		resolved, err := profile.ResolveProfile(cat, key)
 		if err != nil {
 			return err
 		}
@@ -222,10 +226,7 @@ func (c *ProfileShowCmd) Run() error {
 		fmt.Print(string(out))
 		return nil
 	}
-	rc, ok := cat.Get(c.Name)
-	if !ok {
-		return fmt.Errorf("profile not found: %s", c.Name)
-	}
+	rc, _ := cat.Get(key)
 	out, err := yaml.Marshal(rc.Profile)
 	if err != nil {
 		return err
@@ -243,11 +244,12 @@ func (c *ProfileEditCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
-	if _, ok := cat.Get(c.Name); !ok {
+	key, ok := resolveCatalogName(cat, c.Name)
+	if !ok {
 		return fmt.Errorf("profile not found: %s", c.Name)
 	}
 	targetPath := filepath.Join(userDir, c.Name+".yaml")
-	if cat.IsFragment(c.Name) {
+	if cat.IsFragment(key) {
 		targetPath = filepath.Join(profile.DefaultFragmentDir(), c.Name+".yaml")
 	}
 	if _, err := os.Stat(targetPath); err == nil {
@@ -258,7 +260,7 @@ func (c *ProfileEditCmd) Run() error {
 	// remove the seed unless the user actually saved.
 	fsys, root := catalog.Profiles, "profiles"
 	kind := "profile"
-	if cat.IsFragment(c.Name) {
+	if cat.IsFragment(key) {
 		fsys, root = catalog.Fragments, "fragments"
 		kind = "fragment"
 	}
@@ -362,9 +364,9 @@ func (c *ProfileListCmd) Run() error {
 		if cat.IsFragment(name) {
 			kind = "fragment"
 		}
-		if !strings.HasPrefix(rc.Path, "built-in") {
+		if rc.Namespace == "" {
 			source = "user"
-			if cat.IsUserShadow(name) {
+			if _, ok := cat.Get("core/" + name); ok {
 				source = "user shadow"
 			}
 		}
@@ -372,4 +374,14 @@ func (c *ProfileListCmd) Run() error {
 	}
 	w.Flush()
 	return nil
+}
+
+// resolveCatalogName maps a user-supplied profile/fragment name to its
+// canonical catalog key (user entry first, then core fallback).
+func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return "", false
+	}
+	return cat.ResolveRef(ref)
 }

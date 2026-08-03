@@ -120,7 +120,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	if err := profile.ValidateName(profileName); err != nil {
 		return err
 	}
-	if cat.IsFragment(profileName) {
+	if key, ok := resolveCatalogName(cat, profileName); ok && cat.IsFragment(key) {
 		return fmt.Errorf("profile name %q collides with an existing fragment", profileName)
 	}
 
@@ -130,13 +130,13 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// so fragments stay additions to a base, not replacements.
 	hasProfile := false
 	for _, b := range bases {
-		if _, ok := cat.Get(b); ok && !cat.IsFragment(b) {
+		if key, ok := resolveCatalogName(cat, b); ok && !cat.IsFragment(key) {
 			hasProfile = true
 			break
 		}
 	}
 	if !hasProfile {
-		if _, ok := cat.GetBuiltin(profileName); ok {
+		if _, ok := cat.Get("core/" + profileName); ok {
 			bases = append([]string{profileName}, bases...)
 		} else {
 			bases = append([]string{"mise"}, bases...)
@@ -160,7 +160,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	bases = dedup(bases)
 	for _, b := range bases {
-		if _, ok := cat.Get(b); !ok {
+		if _, ok := resolveCatalogName(cat, b); !ok {
 			return fmt.Errorf("unknown extends target: %s", b)
 		}
 	}
@@ -248,9 +248,19 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 }
 
 func generate(name string, extends []string, cat profile.Catalog) (string, error) {
+	// A same-named extends target is the built-in being shadowed; qualify it
+	// with core/ so unqualified resolution (user-first) does not self-cycle.
+	qualified := make([]string, len(extends))
+	for i, e := range extends {
+		if e == name {
+			qualified[i] = "core/" + e
+		} else {
+			qualified[i] = e
+		}
+	}
 	p := profile.Profile{
 		Version:     1,
-		ExtendsList: profile.ExtendsList(extends),
+		ExtendsList: profile.ExtendsList(qualified),
 	}
 	if !basesProvideCommand(cat, extends) {
 		p.Command = []string{"bash"}
@@ -302,6 +312,16 @@ func dedup(items []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+// resolveCatalogName maps a user-supplied extends target to its canonical
+// catalog key (user entry first, then core fallback).
+func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return "", false
+	}
+	return cat.ResolveRef(ref)
 }
 
 // IsTTY reports whether r is an interactive terminal.

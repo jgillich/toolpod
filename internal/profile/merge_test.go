@@ -73,8 +73,9 @@ func TestResolveListReplaced(t *testing.T) {
 
 func TestResolveExtendsSelfViaBuiltin(t *testing.T) {
 	dir := t.TempDir()
-	// User file shadows built-in "opencode" and extends "opencode" (the built-in).
-	mustWriteProfile(t, dir, "opencode.yaml", "version: 1\nextends: opencode\ncaches:\n  npm: ~/.npm\n")
+	// User file shadows built-in "opencode" and extends it via the qualified
+	// core/ prefix to avoid a self-cycle.
+	mustWriteProfile(t, dir, "opencode.yaml", "version: 1\nextends: core/opencode\ncaches:\n  npm: ~/.npm\n")
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)

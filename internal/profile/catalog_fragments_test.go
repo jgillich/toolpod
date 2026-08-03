@@ -12,8 +12,8 @@ func TestLoadProfilesIncludesFragments(t *testing.T) {
 		t.Fatal(err)
 	}
 	// "ssh" is a built-in fragment, not a profile.
-	// It should be resolvable via Get.
-	rc, ok := cat.Get("ssh")
+	// It should be resolvable via Get under its core/ FullName.
+	rc, ok := cat.Get("core/ssh")
 	if !ok {
 		t.Fatal("fragment 'ssh' not found in catalog")
 	}

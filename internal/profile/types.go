@@ -195,12 +195,29 @@ type Resources struct {
 	CPUs   string `yaml:"cpus,omitempty"`
 }
 
-// RawProfile is a profile as loaded from disk, before extends-merge.
-// It carries the source file path for error reporting.
+// RawProfile is a profile as loaded from disk, before extends-merge. It
+// carries its source identity (Namespace + Name) and file path. Namespace is
+// "core" for embedded built-ins, "" for user files, or a future remote
+// namespace ("github.com/user/project"). Name is the local single-segment name
+// (file basename). FullName is the canonical catalog key; DisplayName is the
+// unqualified name used in user-facing output.
 type RawProfile struct {
 	Profile
-	Namespace string                     `yaml:"-"` // source identity: "core" for built-ins, "" for user files (stamped by loaders)
-	Name      string                     `yaml:"-"`
-	Path      string                     `yaml:"-"` // file path for error reporting
+	Namespace string                    `yaml:"-"` // source identity, stamped by loaders
+	Name      string                    `yaml:"-"` // local single-segment name (file basename)
+	Path      string                    `yaml:"-"` // file path for error reporting
 	NullKeys  map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+}
+
+// FullName is the canonical catalog key and the qualified YAML/string form.
+func (rc RawProfile) FullName() string {
+	if rc.Namespace == "" {
+		return rc.Name
+	}
+	return rc.Namespace + "/" + rc.Name
+}
+
+// DisplayName is the unqualified name used in user-facing output (list, wizard).
+func (rc RawProfile) DisplayName() string {
+	return rc.Name
 }

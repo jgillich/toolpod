@@ -5,11 +5,16 @@ import "errors"
 // Resolve walks the extends chain for name and produces a fully merged Profile.
 // Cycles are detected and rejected. Validation runs on the result.
 func ResolveProfile(cat Catalog, name string) (Profile, error) {
-	rc, ok := cat.Get(name)
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return Profile{}, ProfileError{Message: err.Error()}
+	}
+	key, ok := cat.ResolveRef(ref)
 	if !ok {
 		return Profile{}, ProfileError{Message: "profile not found: " + name}
 	}
-	merged, err := resolveChain(cat, name, map[string]bool{})
+	rc, _ := cat.Get(key)
+	merged, err := resolveChain(cat, key, map[string]bool{})
 	if err != nil {
 		return Profile{}, err
 	}
@@ -25,11 +30,16 @@ func ResolveProfile(cat Catalog, name string) (Profile, error) {
 // carry no image/command, which ResolveProfile requires; resolving them is
 // still useful for showing the effective merged view (e.g. edit seeds).
 func ResolveFragment(cat Catalog, name string) (Profile, error) {
-	rc, ok := cat.Get(name)
+	ref, err := cat.ParseRefForCatalog(name)
+	if err != nil {
+		return Profile{}, ProfileError{Message: err.Error()}
+	}
+	key, ok := cat.ResolveRef(ref)
 	if !ok {
 		return Profile{}, ProfileError{Message: "fragment not found: " + name}
 	}
-	merged, err := resolveChain(cat, name, map[string]bool{})
+	rc, _ := cat.Get(key)
+	merged, err := resolveChain(cat, key, map[string]bool{})
 	if err != nil {
 		return Profile{}, err
 	}
@@ -37,69 +47,55 @@ func ResolveFragment(cat Catalog, name string) (Profile, error) {
 	return merged.Profile, nil
 }
 
-func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, error) {
-	rc, ok := cat.Get(name)
+func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, error) {
+	rc, ok := cat.Get(key)
 	if !ok {
-		return RawProfile{}, ProfileError{Message: "profile not found: " + name}
+		return RawProfile{}, ProfileError{Message: "profile not found: " + key}
 	}
-	if seen[name] {
-		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
+	if seen[key] {
+		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + key}
 	}
 	if len(rc.ExtendsList) == 0 {
 		return rc, nil
 	}
 	// Fragments are composition-only: they may extend other fragments, but
 	// must not pull in profile identity (image/command/version).
-	if cat.IsFragment(name) {
+	if cat.IsFragment(key) {
 		for _, parentName := range rc.ExtendsList {
-			if !cat.IsFragment(parentName) {
-				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment " + name + " may only extend fragments, not profile " + parentName}
+			pref, perr := cat.ParseRefForCatalog(parentName)
+			if perr != nil {
+				return RawProfile{}, withParentPath(ProfileError{Message: perr.Error()}, rc)
+			}
+			pkey, ok := cat.ResolveRef(pref)
+			if !ok {
+				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment not found: " + parentName}
+			}
+			if !cat.IsFragment(pkey) {
+				return RawProfile{}, ProfileError{Path: rc.Path, Message: "fragment " + key + " may only extend fragments, not profile " + pkey}
 			}
 		}
 	}
-	// Special case: a user shadow that extends the built-in of the same name.
-	// The first entry may be a self-reference (profileName) that must be
-	// resolved as the built-in to avoid a cycle. IsUserShadow implies a
-	// built-in exists, so GetBuiltin should always succeed here.
-	if cat.IsUserShadow(name) && len(rc.ExtendsList) > 0 && rc.ExtendsList[0] == name {
-		builtin, ok := cat.GetBuiltin(name)
-		if !ok {
-			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
-		}
-		parent, err := resolveBuiltinChain(cat, builtin, seen)
-		if err != nil {
-			return RawProfile{}, err
-		}
-		merged := parent
-		resolved := map[string]bool{name: true}
-		for _, parentName := range rc.ExtendsList[1:] {
-			if resolved[parentName] {
-				continue
-			}
-			resolved[parentName] = true
-			p, err := resolveChain(cat, parentName, seen)
-			if err != nil {
-				return RawProfile{}, withParentPath(err, rc)
-			}
-			merged = MergeProfiles(merged, p)
-		}
-		merged = MergeProfiles(merged, rc)
-		merged.Path = rc.Path
-		return merged, nil
-	}
-	seen[name] = true
-	defer delete(seen, name)
+	seen[key] = true
+	defer delete(seen, key)
 
 	// Resolve each extends entry depth-first, merge left-to-right.
 	// Duplicates are ignored after first resolution.
 	merged := RawProfile{}
 	resolved := map[string]bool{}
 	for _, parentName := range rc.ExtendsList {
-		if resolved[parentName] {
+		pref, perr := cat.ParseRefForCatalog(parentName)
+		if perr != nil {
+			return RawProfile{}, withParentPath(ProfileError{Message: perr.Error()}, rc)
+		}
+		pkey, ok := cat.ResolveRef(pref)
+		if !ok {
+			return RawProfile{}, withParentPath(ProfileError{Message: "profile not found: " + parentName}, rc)
+		}
+		if resolved[pkey] {
 			continue
 		}
-		resolved[parentName] = true
-		parent, err := resolveChain(cat, parentName, seen)
+		resolved[pkey] = true
+		parent, err := resolveChain(cat, pkey, seen)
 		if err != nil {
 			return RawProfile{}, withParentPath(err, rc)
 		}
@@ -107,46 +103,6 @@ func resolveChain(cat Catalog, name string, seen map[string]bool) (RawProfile, e
 	}
 
 	// Merge the profile's own body last (wins over all extends).
-	merged = MergeProfiles(merged, rc)
-	merged.Path = rc.Path
-	return merged, nil
-}
-
-// resolveBuiltinChain resolves the extends chain of a built-in profile using
-// GetBuiltin at each step (so user shadows don't interfere). inheritedSeen
-// carries names already visited in the outer resolution to detect cycles
-// that span the shadow boundary.
-func resolveBuiltinChain(cat Catalog, rc RawProfile, inheritedSeen map[string]bool) (RawProfile, error) {
-	if len(rc.ExtendsList) == 0 {
-		return rc, nil
-	}
-	merged := RawProfile{}
-	resolved := map[string]bool{}
-	for _, name := range rc.ExtendsList {
-		if resolved[name] {
-			continue
-		}
-		resolved[name] = true
-		if inheritedSeen[name] {
-			return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + name}
-		}
-		parent, ok := cat.GetBuiltin(name)
-		if !ok {
-			return RawProfile{}, ProfileError{Path: rc.Path, Message: "built-in profile not found: " + name}
-		}
-		// Copy seen so each sibling branch has its own scope but still
-		// detects cycles back to the original shadow name.
-		seen := make(map[string]bool, len(inheritedSeen)+1)
-		for k := range inheritedSeen {
-			seen[k] = true
-		}
-		seen[name] = true
-		resolvedParent, err := resolveBuiltinChain(cat, parent, seen)
-		if err != nil {
-			return RawProfile{}, err
-		}
-		merged = MergeProfiles(merged, resolvedParent)
-	}
 	merged = MergeProfiles(merged, rc)
 	merged.Path = rc.Path
 	return merged, nil

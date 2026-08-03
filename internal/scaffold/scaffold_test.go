@@ -52,8 +52,8 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	output := string(data)
 
 	// extends list references profile + fragments
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
-		t.Errorf("missing extends list with opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/opencode") {
+		t.Errorf("missing extends list with core/opencode, got:\n%s", output)
 	}
 	if !strings.Contains(output, "- javascript") {
 		t.Errorf("missing javascript in extends list, got:\n%s", output)
@@ -328,7 +328,7 @@ func TestDryRunInteractivePrompts(t *testing.T) {
 		t.Errorf("should prompt for fragments on stderr")
 	}
 	// YAML goes to stdout
-	if !strings.Contains(stdout.String(), "- opencode") {
+	if !strings.Contains(stdout.String(), "- core/opencode") {
 		t.Error("stdout should contain generated YAML")
 	}
 	// No file written
@@ -386,8 +386,8 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- shell") {
-		t.Errorf("should contain extends list with shell, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/shell") {
+		t.Errorf("should contain extends list with core/shell, got:\n%s", output)
 	}
 	if strings.Contains(output, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
@@ -494,8 +494,8 @@ func TestInteractiveWizard(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- opencode") {
-		t.Errorf("missing extends list with opencode, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/opencode") {
+		t.Errorf("missing extends list with core/opencode, got:\n%s", output)
 	}
 	if !strings.Contains(output, "- javascript") {
 		t.Errorf("missing javascript in extends list, got:\n%s", output)

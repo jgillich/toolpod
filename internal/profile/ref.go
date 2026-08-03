@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// ParseRefForCatalog parses s against the catalog's registered namespaces.
+func (c Catalog) ParseRefForCatalog(s string) (Ref, error) {
+	return ParseRef(s, c.namespaces)
+}
+
 // ParseRef splits a reference string against the registered namespaces into a
 // Ref. A string with no "/" is unqualified (Ref{Namespace: "", Name: s}). A
 // string with "/" is matched against the longest registered namespace prefix
