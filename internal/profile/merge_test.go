@@ -54,6 +54,53 @@ func TestResolveMapMergeAndNullDelete(t *testing.T) {
 	}
 }
 
+func TestMergeResourcesPerField(t *testing.T) {
+	cases := []struct {
+		name   string
+		parent *Resources
+		child  *Resources
+		want   *Resources
+	}{
+		{
+			name:   "child CPUs fill in inherited memory",
+			parent: &Resources{Memory: "1g"},
+			child:  &Resources{CPUs: "2"},
+			want:   &Resources{Memory: "1g", CPUs: "2"},
+		},
+		{
+			name:   "child memory only, no inherited CPUs",
+			parent: &Resources{},
+			child:  &Resources{Memory: "2g"},
+			want:   &Resources{Memory: "2g"},
+		},
+		{
+			name:   "child CPUs keep inherited memory",
+			parent: &Resources{Memory: "1g", CPUs: "1"},
+			child:  &Resources{CPUs: "2"},
+			want:   &Resources{Memory: "1g", CPUs: "2"},
+		},
+		{
+			name:   "child memory overrides inherited",
+			parent: &Resources{Memory: "1g", CPUs: "2"},
+			child:  &Resources{Memory: "2g"},
+			want:   &Resources{Memory: "2g", CPUs: "2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := RawProfile{Profile: Profile{Resources: tc.parent}}
+			child := RawProfile{Profile: Profile{Resources: tc.child}}
+			merged := MergeProfiles(parent, child)
+			if merged.Resources == nil {
+				t.Fatalf("Resources = nil, want %+v", tc.want)
+			}
+			if merged.Resources.Memory != tc.want.Memory || merged.Resources.CPUs != tc.want.CPUs {
+				t.Errorf("Resources = %+v, want %+v", merged.Resources, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergeToolsChildWinsAndNullDelete(t *testing.T) {
 	parent := RawProfile{Profile: Profile{Tools: map[string]Tool{
 		"node": {Version: "20"},
