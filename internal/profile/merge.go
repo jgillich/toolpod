@@ -205,8 +205,10 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
 
 	if child.Resources != nil {
-		if out.Resources == nil {
-			out.Resources = &Resources{}
+		out.Resources = &Resources{}
+		if parent.Resources != nil {
+			out.Resources.Memory = parent.Resources.Memory
+			out.Resources.CPUs = parent.Resources.CPUs
 		}
 		if child.Resources.Memory != "" {
 			out.Resources.Memory = child.Resources.Memory

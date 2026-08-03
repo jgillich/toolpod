@@ -101,6 +101,18 @@ func TestMergeResourcesPerField(t *testing.T) {
 	}
 }
 
+func TestMergeResourcesDoesNotMutateParent(t *testing.T) {
+	parent := RawProfile{Profile: Profile{Resources: &Resources{Memory: "1g"}}}
+	child := RawProfile{Profile: Profile{Resources: &Resources{CPUs: "2"}}}
+	merged := MergeProfiles(parent, child)
+	if merged.Resources == nil || merged.Resources.Memory != "1g" || merged.Resources.CPUs != "2" {
+		t.Fatalf("merged.Resources = %+v, want {Memory: \"1g\" CPUs: \"2\"}", merged.Resources)
+	}
+	if parent.Resources.Memory != "1g" || parent.Resources.CPUs != "" {
+		t.Errorf("parent.Resources mutated to %+v, want {Memory: \"1g\" CPUs: \"\"}", parent.Resources)
+	}
+}
+
 func TestMergeToolsChildWinsAndNullDelete(t *testing.T) {
 	parent := RawProfile{Profile: Profile{Tools: map[string]Tool{
 		"node": {Version: "20"},
