@@ -37,8 +37,8 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"javascript", "go", "gitconfig", "ssh"},
+		Name:       "opencode",
+		Extends:    []string{"javascript", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -89,8 +89,8 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"javascript", "go", "gitconfig", "ssh"},
+		Name:       "opencode",
+		Extends:    []string{"javascript", "go", "gitconfig", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -105,11 +105,11 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProfile: %v", err)
 	}
-	if cfg.Caches["npm"] != "~/.npm" {
-		t.Errorf("Caches[npm] = %q, want ~/.npm", cfg.Caches["npm"])
+	if got := cfg.Caches["npm"]; len(got) != 1 || got[0] != "~/.npm" {
+		t.Errorf("Caches[npm] = %v, want [~/.npm]", got)
 	}
-	if cfg.Caches["go"] != "~/go" {
-		t.Errorf("Caches[go] = %q, want ~/go", cfg.Caches["go"])
+	if got := cfg.Caches["go"]; len(got) != 1 || got[0] != "~/go" {
+		t.Errorf("Caches[go] = %v, want [~/go]", got)
 	}
 	if cfg.Mounts["~/.gitconfig"].Source != "~/.gitconfig" {
 		t.Errorf("gitconfig source = %q", cfg.Mounts["~/.gitconfig"].Source)
@@ -148,8 +148,8 @@ func TestSkipExistingWithoutForce(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -166,8 +166,8 @@ func TestForceOverwritesExisting(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		Force:      true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -184,8 +184,8 @@ func TestDryRunDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		DryRun:     true,
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -210,8 +210,8 @@ func TestDryRunWithForceDoesNotPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		DryRun:     true,
 		Force:      true,
 		ProfileDir: dir,
@@ -229,7 +229,7 @@ func TestForceInteractiveNoPrompt(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\n"), 0o644)
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:     "opencode",
+		Name:        "opencode",
 		Extends:     []string{"javascript"},
 		Force:       true,
 		Interactive: true,
@@ -295,7 +295,7 @@ func TestExplicitArgsNoOverwritePrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// All args provided explicitly in a TTY-like test → no wizard → no prompt
 	err := Run(context.Background(), Options{
-		Name:     "opencode",
+		Name:        "opencode",
 		Extends:     []string{"javascript"},
 		Interactive: true,
 		ProfileDir:  dir,
@@ -341,7 +341,7 @@ func TestUnknownExtendsTargetRejected(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
+		Name:       "opencode",
 		Extends:    []string{"javascript", "yarn"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -375,7 +375,7 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "shell",
+		Name:       "shell",
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -401,8 +401,8 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"javascript", "ssh"},
+		Name:       "opencode",
+		Extends:    []string{"javascript", "ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -411,8 +411,8 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 
 	cat, _ := profile.LoadProfiles(dir)
 	cfg, _ := profile.ResolveProfile(cat, "opencode")
-	if cfg.Caches["npm"] != "~/.npm" {
-		t.Errorf("Caches[npm] = %q", cfg.Caches["npm"])
+	if got := cfg.Caches["npm"]; len(got) != 1 || got[0] != "~/.npm" {
+		t.Errorf("Caches[npm] = %v", got)
 	}
 	if _, ok := cfg.Mounts["~/.ssh"]; !ok {
 		t.Error("missing ~/.ssh mount")
@@ -426,8 +426,8 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"javascript", "go"},
+		Name:       "opencode",
+		Extends:    []string{"javascript", "go"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -465,8 +465,8 @@ func TestPromptsGoToStderr(t *testing.T) {
 	// no stderr output either.
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -513,8 +513,8 @@ func TestDirectoryCreatedIfAbsent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "profiles")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-	Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -539,8 +539,8 @@ func TestBrokenSiblingBlocksInit(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"javascript"},
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err == nil {
@@ -558,7 +558,7 @@ func TestFragmentFileExistenceWarning(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
+		Name:       "opencode",
 		Extends:    []string{"gitconfig", "ssh", "netrc"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)

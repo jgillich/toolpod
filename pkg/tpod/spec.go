@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpod/internal/runtime"
 	"github.com/jgillich/tpod/internal/workspace"
 )
 
@@ -40,12 +41,15 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		})
 	}
 
-	caches := make([]CacheSpec, 0, len(cfg.Caches))
-	for name, target := range cfg.Caches {
-		caches = append(caches, CacheSpec{
-			Name:   "tpod-cache-" + name,
-			Target: target,
-		})
+	caches := make([]CacheSpec, 0)
+	for name, paths := range cfg.Caches {
+		for _, target := range paths {
+			caches = append(caches, CacheSpec{
+				Name:    "tpod-cache-" + name,
+				Target:  target,
+				Subpath: runtime.CacheSubpath(target),
+			})
+		}
 	}
 
 	repos := make(map[string]Repo, len(cfg.Repos))

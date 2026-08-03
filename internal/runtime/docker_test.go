@@ -125,28 +125,35 @@ func TestBuildEnvPersistsAubeStore(t *testing.T) {
 }
 
 func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
-	// The mise data dir is now a plain cache (tpod-cache-mise) declared by the
-	// mise profile; the hardcoded tpod-mise mount must be gone so there is
-	// exactly one.
+	// The mise data dir is a plain cache. With volume-subpath support the
+	// shared volume mounts at each target via Subpath; without it, a dedicated
+	// hashed volume backs each target so paths stay separate.
 	spec := Spec{
 		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
-		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/root/.local/share/mise"}},
+		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/root/.local/share/mise", Subpath: "deadbeef"}},
 	}
-	m, err := buildMounts(spec, "/root")
-	if err != nil {
-		t.Fatalf("buildMounts: %v", err)
-	}
-	var miseMounts []mount.Mount
-	for _, mt := range m {
-		if mt.Target == "/root/.local/share/mise" {
-			miseMounts = append(miseMounts, mt)
+	for _, subpath := range []bool{true, false} {
+		m, err := buildMounts(spec, "/root", subpath)
+		if err != nil {
+			t.Fatalf("buildMounts(subpath=%v): %v", subpath, err)
 		}
-	}
-	if len(miseMounts) != 1 {
-		t.Fatalf("expected exactly one mise mount, got %d: %+v", len(miseMounts), miseMounts)
-	}
-	if miseMounts[0].Source != "tpod-cache-mise" || miseMounts[0].Type != mount.TypeVolume {
-		t.Errorf("mise mount = %+v, want volume tpod-cache-mise", miseMounts[0])
+		var miseMounts []mount.Mount
+		for _, mt := range m {
+			if mt.Target == "/root/.local/share/mise" {
+				miseMounts = append(miseMounts, mt)
+			}
+		}
+		if len(miseMounts) != 1 {
+			t.Fatalf("expected exactly one mise mount, got %d: %+v", len(miseMounts), miseMounts)
+		}
+		mm := miseMounts[0]
+		if subpath {
+			if mm.Source != "tpod-cache-mise" || mm.Type != mount.TypeVolume || mm.VolumeOptions == nil || mm.VolumeOptions.Subpath != "deadbeef" {
+				t.Errorf("subpath mount = %+v, want volume tpod-cache-mise subpath=deadbeef", mm)
+			}
+		} else if mm.Source != "tpod-cache-mise-deadbeef" || mm.VolumeOptions != nil {
+			t.Errorf("fallback mount = %+v, want volume tpod-cache-mise-deadbeef", mm)
+		}
 	}
 }
 
@@ -158,7 +165,7 @@ func TestBuildMountsCreatesSourceWhenRequested(t *testing.T) {
 			{Target: "/data", Source: src, Create: true},
 		},
 	}
-	m, err := buildMounts(spec, "/root")
+	m, err := buildMounts(spec, "/root", false)
 	if err != nil {
 		t.Fatalf("buildMounts: %v", err)
 	}
@@ -184,7 +191,7 @@ func TestBuildMountsDoesNotCreateWithoutFlag(t *testing.T) {
 			{Target: "/data", Source: src},
 		},
 	}
-	if _, err := buildMounts(spec, "/root"); err != nil {
+	if _, err := buildMounts(spec, "/root", false); err != nil {
 		t.Fatalf("buildMounts: %v", err)
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
@@ -206,7 +213,7 @@ func TestBuildMountsFailsCreateForRequiredMount(t *testing.T) {
 			{Target: "/data", Source: filepath.Join(link, "sub"), Create: true},
 		},
 	}
-	if _, err := buildMounts(spec, "/root"); err == nil {
+	if _, err := buildMounts(spec, "/root", false); err == nil {
 		t.Fatal("required mount with failed create should error, got nil")
 	}
 }
@@ -219,7 +226,7 @@ func TestBuildMountsSkipsOptionalMissing(t *testing.T) {
 			{Target: "/nonexistent", Source: "/this/does/not/exist", Optional: true},
 		},
 	}
-	m, err := buildMounts(spec, "/root")
+	m, err := buildMounts(spec, "/root", false)
 	if err != nil {
 		t.Fatalf("buildMounts: %v", err)
 	}
@@ -578,7 +585,7 @@ func TestBuildMountsHidesRealBusSocket(t *testing.T) {
 		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
 		Env:       map[string]string{"XDG_RUNTIME_DIR": "/run/user/1000"},
 	}
-	mounts, err := buildMounts(spec, "/root")
+	mounts, err := buildMounts(spec, "/root", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +608,7 @@ func TestBuildMountsNoBusOverlayWithoutRuntimeDir(t *testing.T) {
 		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
 		Env:       map[string]string{},
 	}
-	mounts, err := buildMounts(spec, "/root")
+	mounts, err := buildMounts(spec, "/root", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +625,7 @@ func TestBuildMountsSkipsOverlayWhenBusAlreadyMounted(t *testing.T) {
 		Mounts:    []MountSpec{{Target: "/run/user/1000/bus", Source: "/host/socket", ReadOnly: true}},
 		Env:       map[string]string{"XDG_RUNTIME_DIR": "/run/user/1000"},
 	}
-	mounts, err := buildMounts(spec, "/root")
+	mounts, err := buildMounts(spec, "/root", false)
 	if err != nil {
 		t.Fatal(err)
 	}

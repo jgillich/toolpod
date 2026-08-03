@@ -127,7 +127,7 @@ func TestBuildSpecBasic(t *testing.T) {
 		Mounts: map[string]profile.Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
-		Caches:  map[string]string{"npm": "~/.npm"},
+		Caches:  map[string]profile.CachePaths{"npm": {"~/.npm"}},
 		Network: "bridge",
 	}
 	opts := LaunchOpts{ProfileName: "opencode", Args: []string{"--model", "foo"}, Workspace: "/home/me/proj"}

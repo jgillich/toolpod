@@ -80,7 +80,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 		}
 		var remove []string
 		for _, v := range existing {
-			if opts.All || !usedVolumes[v.Name] {
+			if opts.All || !volumeUsed(v.Name, usedVolumes) {
 				remove = append(remove, v.Name)
 			}
 		}
@@ -172,6 +172,19 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 		}
 	}
 	return usedVolumes, usedImages, nil
+}
+
+// volumeUsed reports whether name is a cache volume some profile uses: the
+// shared subpath volume (exact match) or a per-target fallback volume
+// (base-<hash> prefix, since the hash is computed over the expanded target
+// path which prune does not see).
+func volumeUsed(name string, usedVolumes map[string]bool) bool {
+	for base := range usedVolumes {
+		if name == base || strings.HasPrefix(name, base+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func listTpodVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, error) {

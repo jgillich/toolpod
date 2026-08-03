@@ -81,7 +81,7 @@ func (r Result) HasFailure() bool {
 }
 
 type Options struct {
-	Workspace string
+	Workspace  string
 	ProfileDir string
 }
 

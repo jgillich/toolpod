@@ -27,7 +27,7 @@ func TestLaunchDryRunPrintsSpec(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      true,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 		Workspace:   "/home/me/proj",
 	}, &out)
 	if res.Err != nil {
@@ -50,7 +50,7 @@ func TestLaunchProfileNotFound(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "nope",
 		DryRun:      true,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 	}, &strings.Builder{})
 	if res.Err == nil {
 		t.Fatal("expected error for missing profile")
@@ -66,7 +66,7 @@ func TestLaunchWithFakeRuntime(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      false,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 		Runtime:     fr,
 	}, &strings.Builder{})
 	if res.Err != nil {
@@ -88,7 +88,7 @@ func TestLaunchPrepareFails(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      false,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 		Runtime:     fr,
 	}, &strings.Builder{})
 	if res.Err == nil {
@@ -107,7 +107,7 @@ func TestLaunchRunFails(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      false,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 		Runtime:     fr,
 	}, &strings.Builder{})
 	if res.Err == nil {
@@ -124,7 +124,7 @@ func TestLaunchPropagatesExitCode(t *testing.T) {
 	res := LaunchWithWriter(context.Background(), LaunchOpts{
 		ProfileName: "shell",
 		DryRun:      false,
-		ProfileDir:   dir,
+		ProfileDir:  dir,
 		Runtime:     fr,
 	}, &strings.Builder{})
 	if res.Err != nil {

@@ -504,7 +504,7 @@ func printSummary(stdout io.Writer, profileName string, extends []string, resolv
 		fmt.Fprintf(stdout, "  • passes %s\n", k)
 	}
 	for _, name := range sortedStringMapKeys(resolved.Caches) {
-		fmt.Fprintf(stdout, "  • caches %s\n", resolved.Caches[name])
+		fmt.Fprintf(stdout, "  • caches %s\n", strings.Join(resolved.Caches[name], ", "))
 	}
 }
 
@@ -517,7 +517,7 @@ func sortedKeys(m map[string]profile.Mount) []string {
 	return keys
 }
 
-func sortedStringMapKeys(m map[string]string) []string {
+func sortedStringMapKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

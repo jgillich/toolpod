@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
@@ -38,9 +40,32 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		imageRef = derivedRef
 	}
 
-	for _, cache := range spec.Caches {
-		if err := mise.EnsureVolume(ctx, d.cli, cache.Name); err != nil {
-			return "", fmt.Errorf("cache volume %s: %w", cache.Name, err)
+	// Cache volumes and (when the engine honors subpaths) their subdirectories.
+	// volume-subpath requires the subdirectory to already exist in the volume;
+	// create it through the volume's host mountpoint before the container runs.
+	subpath := d.subpathSupported(ctx)
+	volumes := map[string][]string{}
+	for _, c := range spec.Caches {
+		if subpath {
+			volumes[c.Name] = append(volumes[c.Name], c.Subpath)
+		} else {
+			volumes[c.Name+"-"+c.Subpath] = nil
+		}
+	}
+	for name, subpaths := range volumes {
+		if err := mise.EnsureVolume(ctx, d.cli, name); err != nil {
+			return "", fmt.Errorf("cache volume %s: %w", name, err)
+		}
+		if subpath && len(subpaths) > 0 {
+			insp, _, err := d.cli.VolumeInspectWithRaw(ctx, name)
+			if err != nil {
+				return "", fmt.Errorf("inspect cache volume %s: %w", name, err)
+			}
+			for _, sp := range subpaths {
+				if err := os.MkdirAll(filepath.Join(insp.Mountpoint, sp), 0o755); err != nil {
+					return "", fmt.Errorf("create cache subpath %s in %s: %w", sp, name, err)
+				}
+			}
 		}
 	}
 

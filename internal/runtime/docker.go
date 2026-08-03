@@ -17,8 +17,19 @@ var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
 	cli     *client.Client
-	podman  bool // rootless Podman: containers need --userns=keep-id
-	selinux bool // SELinux enforcing: containers need --security-opt label=disable
+	podman  bool  // rootless Podman: containers need --userns=keep-id
+	selinux bool  // SELinux enforcing: containers need --security-opt label=disable
+	subpath *bool // cached VolumeOptions.Subpath support probe
+}
+
+// subpathSupported reports whether this engine's Docker-compatible API honors
+// volume subpaths, detected once and cached for the runtime's lifetime.
+func (d *DockerRuntime) subpathSupported(ctx context.Context) bool {
+	if d.subpath == nil {
+		v := supportsVolumeSubpath(ctx, d.cli)
+		d.subpath = &v
+	}
+	return *d.subpath
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {

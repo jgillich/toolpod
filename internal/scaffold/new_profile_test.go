@@ -215,7 +215,7 @@ func TestUnknownNameCreatesNewProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "rustdev",
-		Extends:  []string{"javascript"},
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {

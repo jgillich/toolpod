@@ -70,7 +70,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	bootstrap := fmt.Sprintf("mkdir -p %s && chown %d:%d %s", shq(runtimeHome), hostUID, hostGID, quoteJoin(writable))
 	cmd := wrapAsUser(bootstrap, hostUID, hostGID, []string{"sh", "-c", userCmd})
 
-	mounts, err := buildMounts(spec, runtimeHome)
+	mounts, err := buildMounts(spec, runtimeHome, d.subpathSupported(ctx))
 	if err != nil {
 		return 3, fmt.Errorf("build mounts: %w", err)
 	}
@@ -406,7 +406,7 @@ func wrapAsUser(bootstrap string, uid, gid int, shellCmd []string) []string {
 	return []string{"sh", "-c", bootstrap + " && " + run}
 }
 
-func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
+func buildMounts(spec Spec, runtimeHome string, subpath bool) ([]mount.Mount, error) {
 	m := []mount.Mount{
 		{Type: mount.TypeBind, Source: spec.Workspace.HostPath, Target: spec.Workspace.Target},
 	}
@@ -453,11 +453,15 @@ func buildMounts(spec Spec, runtimeHome string) ([]mount.Mount, error) {
 		}
 	}
 	for _, c := range spec.Caches {
-		m = append(m, mount.Mount{
-			Type:   mount.TypeVolume,
-			Source: c.Name,
-			Target: c.Target,
-		})
+		mnt := mount.Mount{Type: mount.TypeVolume, Source: c.Name, Target: c.Target}
+		if subpath {
+			mnt.VolumeOptions = &mount.VolumeOptions{Subpath: c.Subpath}
+		} else {
+			// Engines that ignore VolumeOptions.Subpath get a dedicated
+			// volume per target so each path stays separate.
+			mnt.Source = c.Name + "-" + c.Subpath
+		}
+		m = append(m, mnt)
 	}
 	return m, nil
 }

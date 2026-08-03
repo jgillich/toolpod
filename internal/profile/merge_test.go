@@ -87,8 +87,8 @@ func TestResolveExtendsSelfViaBuiltin(t *testing.T) {
 	if cfg.Image != "debian:13-slim" {
 		t.Errorf("Image = %q, want debian:13-slim (inherited from built-in)", cfg.Image)
 	}
-	if cfg.Caches["npm"] != "~/.npm" {
-		t.Errorf("Caches[npm] = %q, want ~/.npm", cfg.Caches["npm"])
+	if got := cfg.Caches["npm"]; len(got) != 1 || got[0] != "~/.npm" {
+		t.Errorf("Caches[npm] = %v, want [~/.npm]", got)
 	}
 }
 
@@ -423,5 +423,41 @@ func TestResolveFilesWholeFieldNull(t *testing.T) {
 	}
 	if len(cfg.Files) != 0 {
 		t.Errorf("whole-field null should drop all inherited files, got %v", cfg.Files)
+	}
+}
+
+func TestCachePathsScalarAndListUnmarshal(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "p.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\ncaches:\n  go: ~/go\n  mise:\n    - ~/.local/share/mise\n    - ~/.cache/mise\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("p")
+	if !ok {
+		t.Fatal("profile not found")
+	}
+	if got := rc.Caches["go"]; len(got) != 1 || got[0] != "~/go" {
+		t.Errorf("Caches[go] = %v, want [~/go]", got)
+	}
+	if got := rc.Caches["mise"]; len(got) != 2 || got[0] != "~/.local/share/mise" || got[1] != "~/.cache/mise" {
+		t.Errorf("Caches[mise] = %v, want both paths", got)
+	}
+}
+
+func TestResolveCachesReplacePerName(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: x\ncommand: [\"x\"]\ncaches:\n  mise:\n    - ~/.local/share/mise\n    - ~/.cache/mise\n")
+	mustWriteProfile(t, dir, "child.yaml", "version: 1\nextends: base\ncaches:\n  mise: ~/.aube\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfile(cat, "child")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := cfg.Caches["mise"]; len(got) != 1 || got[0] != "~/.aube" {
+		t.Errorf("Caches[mise] = %v, want [~/.aube] (child replaces list)", got)
 	}
 }

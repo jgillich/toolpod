@@ -69,7 +69,7 @@ func TestCachesBeforeMounts(t *testing.T) {
 		Version: 1,
 		Image:   "ubuntu",
 		Command: []string{"sh"},
-		Caches:  map[string]string{"npm": "~/.npm"},
+		Caches:  map[string]CachePaths{"npm": {"~/.npm"}},
 		Mounts:  map[string]Mount{"/src": {Source: ".", ReadOnly: false}},
 		Env:     map[string]string{"FOO": "bar"},
 	}

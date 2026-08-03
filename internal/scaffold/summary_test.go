@@ -14,8 +14,8 @@ func TestInitSummaryWithMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Non-interactive, no TTY — summary prints but no editor prompt
 	err := Run(context.Background(), Options{
-		Name:    "opencode",
-		Extends:  []string{"ssh"},
+		Name:       "opencode",
+		Extends:    []string{"ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -35,8 +35,8 @@ func TestInitNoEditorPromptWithoutMounts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// javascript fragment has only caches+tools, no mounts
 	err := Run(context.Background(), Options{
-		Name:    "shell",
-		Extends:  []string{"javascript"},
+		Name:       "shell",
+		Extends:    []string{"javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -53,8 +53,8 @@ func TestInitReviewAbort(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Interactive + ssh fragment (has mounts) → review prompt → "a" aborts
 	err := Run(context.Background(), Options{
-		Name:     "opencode",
-		Extends:   []string{"ssh"},
+		Name:        "opencode",
+		Extends:     []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader("a\n"), &stdout, &stderr)
@@ -74,8 +74,8 @@ func TestInitReviewProceed(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Interactive + ssh fragment → review prompt → "p" (default) proceeds
 	err := Run(context.Background(), Options{
-		Name:     "opencode",
-		Extends:   []string{"ssh"},
+		Name:        "opencode",
+		Extends:     []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader("\n"), &stdout, &stderr)

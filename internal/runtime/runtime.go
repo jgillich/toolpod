@@ -2,9 +2,19 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 
 	"github.com/jgillich/tpod/internal/workspace"
 )
+
+// CacheSubpath derives the stable per-target cache key: the first 8 hex chars
+// of the sha256 of the target path. Hashing keeps the key order-independent
+// and collision-safe as profiles add or remove cache paths.
+func CacheSubpath(target string) string {
+	sum := sha256.Sum256([]byte(target))
+	return hex.EncodeToString(sum[:])[:8]
+}
 
 type Spec struct {
 	ProfileName string
@@ -67,8 +77,16 @@ type DeviceSpec struct {
 }
 
 type CacheSpec struct {
+	// Name is the shared volume for the whole cache entry. On engines that
+	// honor volume subpaths each target mounts Name with VolumeOptions.Subpath
+	// set to Subpath; otherwise a dedicated volume Name-<Subpath> backs each
+	// target.
 	Name   string
 	Target string
+	// Subpath is the stable per-target key (sha256 of the target path,
+	// truncated). It keeps the subdirectory/fallback-volume stable and
+	// order-independent as profiles add or remove paths.
+	Subpath string
 }
 
 type WorkspaceSpec struct {

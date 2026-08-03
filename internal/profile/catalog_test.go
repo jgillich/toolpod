@@ -254,7 +254,6 @@ func TestDefaultProfileDirEmpty(t *testing.T) {
 	}
 }
 
-
 func TestBuiltinProfilesResolvePackages(t *testing.T) {
 	cat, err := LoadProfiles("")
 	if err != nil {

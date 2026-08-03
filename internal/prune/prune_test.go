@@ -254,12 +254,15 @@ caches:
 	if !usedV["tpod-cache-usedcache"] {
 		t.Errorf("usedcache from good profile should be marked used; got %v", usedV)
 	}
-	// Built-in tool profiles extend mise, so the mise caches stay used even
-	// though this standalone user profile does not declare them.
-	for _, v := range []string{"tpod-cache-mise", "tpod-cache-aube"} {
-		if !usedV[v] {
-			t.Errorf("%s should be marked used via built-in mise-extending profiles; got %v", v, usedV)
-		}
+	// Built-in tool profiles extend mise, so the consolidated mise cache stays
+	// used even though this standalone user profile does not declare it.
+	if !usedV["tpod-cache-mise"] {
+		t.Errorf("tpod-cache-mise should be marked used via built-in mise-extending profiles; got %v", usedV)
+	}
+	// volumeUsed must also keep per-target fallback volumes derived from a base
+	// cache name (e.g. tpod-cache-mise-<hash>) so prune never removes them.
+	if !volumeUsed("tpod-cache-mise-1234abcd", usedV) {
+		t.Error("volumeUsed should match base-<hash> fallback volumes")
 	}
 	// good profile has no packages (packages omitted), so no derived image.
 	if len(usedI) != 0 {
@@ -268,8 +271,8 @@ caches:
 }
 
 func TestComputeUsedMarksMiseProfileCaches(t *testing.T) {
-	// A profile extending mise inherits its `aube` and `mise` caches; prune must
-	// keep those volumes while the profile resolves.
+	// A profile extending mise inherits the consolidated `mise` cache; prune must
+	// keep that volume while the profile resolves.
 	writeUserProfiles(t, map[string]string{"myagent": `version: 1
 extends: mise
 command: ["echo"]
@@ -279,10 +282,8 @@ command: ["echo"]
 	if err != nil {
 		t.Fatalf("computeUsed: %v", err)
 	}
-	for _, v := range []string{"tpod-cache-mise", "tpod-cache-aube"} {
-		if !usedV[v] {
-			t.Errorf("mise-extending profile should mark %s used; got %v", v, usedV)
-		}
+	if !usedV["tpod-cache-mise"] {
+		t.Errorf("mise-extending profile should mark tpod-cache-mise used; got %v", usedV)
 	}
 }
 

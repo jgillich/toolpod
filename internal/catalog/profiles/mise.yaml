@@ -25,8 +25,10 @@ mounts:
     source: ~/.config/mise
     optional: true
 caches:
-  aube: ~/.aube
-  mise: ~/.local/share/mise
+  mise:
+    - ~/.local/share/mise
+    - ~/.cache/mise
+    - ~/.aube
 tools:
   bat: latest
   fd: latest

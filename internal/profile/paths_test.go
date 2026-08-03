@@ -14,8 +14,8 @@ func TestResolveTildesMountSourceAndTarget(t *testing.T) {
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 			"/etc/hosts":         {Source: "/etc/hosts", ReadOnly: true},
 		},
-		Caches: map[string]string{
-			"npm": "~/.npm",
+		Caches: map[string]CachePaths{
+			"npm": {"~/.npm"},
 		},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
@@ -29,8 +29,8 @@ func TestResolveTildesMountSourceAndTarget(t *testing.T) {
 	if _, exists := out.Mounts["~/.config/opencode"]; exists {
 		t.Error("tilde target key should be replaced with absolute path")
 	}
-	if out.Caches["npm"] != "/home/me/.npm" {
-		t.Errorf("cache target = %q, want /home/me/.npm", out.Caches["npm"])
+	if got := out.Caches["npm"]; len(got) != 1 || got[0] != "/home/me/.npm" {
+		t.Errorf("cache target = %v, want [/home/me/.npm]", got)
 	}
 	if _, exists := out.Mounts["/etc/hosts"]; !exists {
 		t.Error("absolute-path mount should be left as-is")
@@ -245,7 +245,7 @@ func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
 func TestResolveTildesEmptyCacheTargetErrors(t *testing.T) {
 	os.Unsetenv("TPOD_UNSET_VAR")
 	cfg := Profile{
-		Caches: map[string]string{"npm": `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`},
+		Caches: map[string]CachePaths{"npm": {`{{ or (index .Env "TPOD_UNSET_VAR") "" }}`}},
 	}
 	if _, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil); err == nil {
 		t.Fatal("cache with empty rendered target should error, got nil")

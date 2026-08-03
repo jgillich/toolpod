@@ -35,7 +35,7 @@ type Profile struct {
 	Repos       map[string]Repo       `yaml:"repos,omitempty"`
 	Files       map[string]File       `yaml:"files,omitempty"`
 	Command     []string              `yaml:"command,omitempty"`
-	Caches      map[string]string     `yaml:"caches,omitempty"`
+	Caches      map[string]CachePaths `yaml:"caches,omitempty"`
 	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
 	Env         map[string]string     `yaml:"environment,omitempty"`
 	Labels      map[string]string     `yaml:"labels,omitempty"`
@@ -140,6 +140,35 @@ type DeviceBind struct {
 	Source      string `yaml:"source,omitempty"`
 	Permissions string `yaml:"permissions,omitempty"`
 	Cgroup      bool   `yaml:"cgroup,omitempty"`
+}
+
+// CachePaths is the set of container paths a single cache volume backs. A
+// scalar ("caches: {foo: ~/.foo}") and a list both decode; a single path
+// marshals back as a scalar so single-path caches read naturally in show.
+type CachePaths []string
+
+func (c *CachePaths) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
+		*c = CachePaths{s}
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*c = CachePaths(list)
+	return nil
+}
+
+func (c CachePaths) MarshalYAML() (interface{}, error) {
+	if len(c) == 1 {
+		return c[0], nil
+	}
+	return []string(c), nil
 }
 
 // Resources are optional resource hints (best-effort; runtime may ignore).

@@ -96,16 +96,20 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 	}
 
 	if out.Caches != nil {
-		expanded := make(map[string]string, len(out.Caches))
-		for name, target := range out.Caches {
-			var err error
-			expanded[name], err = expandTarget(target, runtimeHome, data)
-			if err != nil {
-				return out, err
+		expanded := make(map[string]CachePaths, len(out.Caches))
+		for name, paths := range out.Caches {
+			var exps CachePaths
+			for _, p := range paths {
+				e, err := expandTarget(p, runtimeHome, data)
+				if err != nil {
+					return out, err
+				}
+				if e == "" {
+					return out, fmt.Errorf("cache %s resolved to an empty target after template expansion (is the host variable set?)", name)
+				}
+				exps = append(exps, e)
 			}
-			if expanded[name] == "" {
-				return out, fmt.Errorf("cache %s resolved to an empty target after template expansion (is the host variable set?)", name)
-			}
+			expanded[name] = exps
 		}
 		out.Caches = expanded
 	}
