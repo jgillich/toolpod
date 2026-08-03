@@ -129,7 +129,9 @@ func LoadProfiles(userDir string) (Catalog, error) {
 // load. Built-ins always load strictly. Used by `tpd prune`, where one
 // broken user file must not prevent computing liveness for the rest — a
 // strict abort there is a regression from the old prune (which never read
-// profiles) and risks pruning live resources.
+// profiles) and risks pruning live resources. Also used by shell completion
+// (cmd/tpd/completion.go) so a malformed user file never breaks tab
+// completion.
 func LoadProfilesTolerant(userDir string, warn func(string)) (Catalog, error) {
 	builtins := map[string]RawProfile{}
 	if err := loadBuiltins(builtins); err != nil {

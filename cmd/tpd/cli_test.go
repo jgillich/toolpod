@@ -75,6 +75,26 @@ func TestLaunchPassthroughAfterProfile(t *testing.T) {
 	}
 }
 
+func TestRootLaunchPassthrough(t *testing.T) {
+	root := newRootCommand()
+	target, args, err := root.Find([]string{"--dry-run", "shell", "--model", "foo"})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if target != root {
+		t.Fatalf("expected root as dispatch target, got %q", target.Name())
+	}
+	if err := target.ParseFlags(args); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if got := target.Flags().Args(); fmt.Sprint(got) != "[shell --model foo]" {
+		t.Errorf("passthrough args = %v, want [shell --model foo]", got)
+	}
+	if !target.Flags().Changed("dry-run") {
+		t.Error("--dry-run before the profile name must bind to the root launch flags")
+	}
+}
+
 func TestInitHelpMentionsExtends(t *testing.T) {
 	bin := buildTpd(t)
 	cmd := exec.Command(bin, "init", "--help")

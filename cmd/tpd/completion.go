@@ -38,6 +38,15 @@ func completeNames(c *cobra.Command, args []string, toComplete string) ([]string
 	return filterCompletion(cat.Names(), toComplete)
 }
 
+// completeNamesOnce completes profile and fragment names for single-positional
+// commands (show, edit): nothing once the name is given.
+func completeNamesOnce(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+	return completeNames(c, args, toComplete)
+}
+
 func filterCompletion(names []string, prefix string) ([]string, cobra.ShellCompDirective) {
 	var out []string
 	for _, n := range names {

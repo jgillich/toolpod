@@ -128,7 +128,7 @@ func newShowCommand() *cobra.Command {
 		Use:               "show <name>",
 		Short:             "Print a profile (use --resolved to inline extends).",
 		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: completeNames,
+		ValidArgsFunction: completeNamesOnce,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runShow(args[0], resolved)
 		},
@@ -180,7 +180,7 @@ func newEditCommand() *cobra.Command {
 		Use:               "edit <name>",
 		Short:             "Open the user profile file in $EDITOR.",
 		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: completeNames,
+		ValidArgsFunction: completeNamesOnce,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runEdit(args[0])
 		},
@@ -209,6 +209,9 @@ func runEdit(name string) error {
 	if _, err := os.Stat(targetPath); err == nil {
 		return openEditor(targetPath)
 	}
+	// No user file yet: seed the target with a shadow that extends the
+	// built-in and shows the resolved profile as a reference comment, then
+	// remove the seed unless the user actually saved.
 	fsys, root := catalog.Profiles, "profiles"
 	kind := "profile"
 	if cat.IsFragment(name) {
