@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/workspace"
 )
 
@@ -123,7 +124,7 @@ func TestBuildSpecBasic(t *testing.T) {
 		Version: 1,
 		Image:   "myimage:latest",
 		Command: []string{"opencode"},
-		Tools:   map[string]string{"opencode": "latest", "node": "20"},
+		Tools:   map[string]profile.Tool{"opencode": {Version: "latest"}, "node": {Version: "20"}},
 		Mounts: map[string]profile.Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
@@ -154,8 +155,8 @@ func TestBuildSpecBasic(t *testing.T) {
 	if spec.Workspace.Mode != workspace.ModeRootless {
 		t.Errorf("workspace mode = %s, want rootless", spec.Workspace.Mode)
 	}
-	if spec.Tools["opencode"] != "latest" {
-		t.Errorf("tools[opencode] = %q", spec.Tools["opencode"])
+	if spec.Tools["opencode"].Version != "latest" {
+		t.Errorf("tools[opencode].Version = %q", spec.Tools["opencode"].Version)
 	}
 	if len(spec.Caches) != 1 || spec.Caches[0].Name != "tpd-cache-npm" {
 		t.Errorf("Caches = %+v, want one entry tpd-cache-npm", spec.Caches)
@@ -170,6 +171,11 @@ func TestBuildSpecBasic(t *testing.T) {
 	// Profile label is set dynamically from opts.ProfileName, not from YAML
 	if spec.Labels["profile"] != "opencode" {
 		t.Errorf("Labels[profile] = %q, want \"opencode\" (set dynamically from ProfileName)", spec.Labels["profile"])
+	}
+	// Every launched container carries the ownership label so prune and leak
+	// detection can filter by label instead of the name prefix.
+	if spec.Labels[runtime.OwnershipLabel] != "true" {
+		t.Errorf("Labels[%s] = %q, want \"true\"", runtime.OwnershipLabel, spec.Labels[runtime.OwnershipLabel])
 	}
 }
 
@@ -325,6 +331,26 @@ func TestBuildSpecMapsFiles(t *testing.T) {
 	f := spec.Files[0]
 	if f.Target != "/root/.config/foo" || f.Content != "hello" || f.Mode != 0o600 {
 		t.Errorf("spec.Files[0] = %+v, want {/root/.config/foo hello 384}", f)
+	}
+}
+
+func TestBuildSpecResources(t *testing.T) {
+	cfg := profile.Profile{
+		Version:   1,
+		Image:     "img",
+		Command:   []string{"x"},
+		Resources: &profile.Resources{Memory: "512m", CPUs: "2"},
+	}
+	opts := LaunchOpts{ProfileName: "x", Workspace: "/p"}
+	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Resources.MemoryBytes != 512<<20 {
+		t.Errorf("MemoryBytes = %d, want %d", spec.Resources.MemoryBytes, 512<<20)
+	}
+	if spec.Resources.NanoCPUs != 2e9 {
+		t.Errorf("NanoCPUs = %d, want %d", spec.Resources.NanoCPUs, int64(2e9))
 	}
 }
 

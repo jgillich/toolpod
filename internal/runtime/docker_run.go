@@ -118,6 +118,8 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		Resources: container.Resources{
 			Devices:           devices,
 			DeviceCgroupRules: cgroupRules,
+			Memory:            spec.Resources.MemoryBytes,
+			NanoCPUs:          spec.Resources.NanoCPUs,
 		},
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
@@ -127,7 +129,9 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true})
+		if err := d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: remove container %s: %v\n", resp.ID, err)
+		}
 	}()
 
 	if len(spec.Files) > 0 {

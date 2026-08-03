@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/workspace"
@@ -16,20 +18,20 @@ import (
 var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
-	cli     *client.Client
-	podman  bool  // rootless Podman: containers need --userns=keep-id
-	selinux bool  // SELinux enforcing: containers need --security-opt label=disable
-	subpath *bool // cached VolumeOptions.Subpath support probe
+	cli         *client.Client
+	podman      bool // rootless Podman: containers need --userns=keep-id
+	selinux     bool // SELinux enforcing: containers need --security-opt label=disable
+	subpathOnce sync.Once
+	subpath     bool // cached VolumeOptions.Subpath support probe
 }
 
 // subpathSupported reports whether this engine's Docker-compatible API honors
 // volume subpaths, detected once and cached for the runtime's lifetime.
 func (d *DockerRuntime) subpathSupported(ctx context.Context) bool {
-	if d.subpath == nil {
-		v := supportsVolumeSubpath(ctx, d.cli)
-		d.subpath = &v
-	}
-	return *d.subpath
+	d.subpathOnce.Do(func() {
+		d.subpath = supportsVolumeSubpath(ctx, d.cli)
+	})
+	return d.subpath
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {
@@ -80,10 +82,11 @@ func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
 	var httpClient *http.Client
 	var url string
 	if len(host) > 7 && host[:7] == "unix://" {
+		dialer := &net.Dialer{}
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", host[7:])
+					return dialer.DialContext(ctx, "unix", host[7:])
 				},
 			},
 		}
@@ -102,9 +105,15 @@ func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
 		return false, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("GET /info: %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10+1))
 	if err != nil {
 		return false, err
+	}
+	if len(body) > 64<<10 {
+		return false, errors.New("GET /info: response exceeds 64 KiB")
 	}
 	var info struct {
 		Rootless bool `json:"rootless"`

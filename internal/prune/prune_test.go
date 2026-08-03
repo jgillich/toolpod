@@ -2,13 +2,17 @@ package prune
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/jgillich/tpd/internal/runtime"
 )
@@ -37,11 +41,13 @@ func TestIsTpdVolume(t *testing.T) {
 // and a not-found-style error otherwise, so built-in profiles whose base
 // image isn't configured contribute no derived-image hashes.
 type fakeClient struct {
-	volumes  []*volume.Volume
-	images   []image.Summary
-	inspects map[string]string // ref -> image ID
-	removedV []string
-	removedI []string
+	volumes           []*volume.Volume
+	images            []image.Summary
+	inspects          map[string]string              // ref -> image ID
+	containers        []types.Container              // returned by ContainerList
+	containerInspects map[string]types.ContainerJSON // ID -> inspect
+	removedV          []string
+	removedI          []string
 }
 
 func (f *fakeClient) VolumeList(ctx context.Context, _ volume.ListOptions) (volume.ListResponse, error) {
@@ -63,6 +69,15 @@ func (f *fakeClient) ImageInspectWithRaw(ctx context.Context, ref string) (types
 		return types.ImageInspect{ID: id}, nil, nil
 	}
 	return types.ImageInspect{}, nil, errNotFound{}
+}
+func (f *fakeClient) ContainerList(ctx context.Context, _ container.ListOptions) ([]types.Container, error) {
+	return f.containers, nil
+}
+func (f *fakeClient) ContainerInspectWithRaw(ctx context.Context, id string, _ bool) (types.ContainerJSON, []byte, error) {
+	if insp, ok := f.containerInspects[id]; ok {
+		return insp, nil, nil
+	}
+	return types.ContainerJSON{}, nil, errNotFound{}
 }
 
 type errNotFound struct{}
@@ -109,12 +124,12 @@ func setupFake(t *testing.T) (*fakeClient, string) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		volumes: []*volume.Volume{
-			{Name: "tpd-cache-usedcache"},
-			{Name: "tpd-cache-orphan"},
+			{Name: "tpd-cache-usedcache", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
 		},
 		images: []image.Summary{
-			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}},
+			{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
 		},
 	}
 	return fc, usedTag
@@ -150,9 +165,9 @@ func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		images: []image.Summary{
-			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"localhost/tpd/packages:deadbeefdeadbeef"}},
-			{RepoTags: []string{"quay.io/tpd/packages:cafebabe"}},
+			{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"localhost/tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"quay.io/tpd/packages:cafebabe"}, Labels: runtime.OwnershipLabels()},
 		},
 	}
 	res, err := run(context.Background(), fc, Options{Force: true})
@@ -168,6 +183,57 @@ func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
 	}
 	if sliceContains(res.ImagesRemoved, usedTag) {
 		t.Errorf("used derived image %q must not be pruned", usedTag)
+	}
+}
+
+func TestPruneSkipsUnlabeledTpdResources(t *testing.T) {
+	// Pre-labeling cruft: volumes/images matching the tpd name pattern but
+	// missing the ownership label must survive prune (with a stderr warning)
+	// so an unrelated user resource that merely starts with "tpd-" is never
+	// removed.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": "sha256:baseid"},
+		volumes: []*volume.Volume{
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-important-data"},
+		},
+		images: []image.Summary{
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:cafebabe"}},
+		},
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	res, err := run(context.Background(), fc, Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	warned, _ := io.ReadAll(r)
+
+	if !equalSlice(res.VolumesRemoved, []string{"tpd-cache-orphan"}) {
+		t.Errorf("volumes removed = %v, want only labeled [tpd-cache-orphan]", res.VolumesRemoved)
+	}
+	if sliceContains(res.VolumesRemoved, "tpd-important-data") {
+		t.Error("unlabeled volume tpd-important-data must not be removed")
+	}
+	if !equalSlice(res.ImagesRemoved, []string{"tpd/packages:deadbeefdeadbeef"}) {
+		t.Errorf("images removed = %v, want only labeled [tpd/packages:deadbeefdeadbeef]", res.ImagesRemoved)
+	}
+	if sliceContains(res.ImagesRemoved, "tpd/packages:cafebabe") {
+		t.Error("unlabeled image tpd/packages:cafebabe must not be removed")
+	}
+	for _, want := range []string{"tpd-important-data", "tpd/packages:cafebabe", "not tpd-owned"} {
+		if !strings.Contains(string(warned), want) {
+			t.Errorf("stderr should warn about skipped unlabeled resource %q; got %q", want, string(warned))
+		}
 	}
 }
 
@@ -190,6 +256,123 @@ func TestRunAllRemovesEverything(t *testing.T) {
 	sort.Strings(gotI)
 	if !equalSlice(gotI, wantI) {
 		t.Errorf("images removed = %v, want %v (sorted)", gotI, wantI)
+	}
+}
+
+func TestRunSkipsVolumesInUseByRunningContainer(t *testing.T) {
+	// A labeled volume mounted by a running tpd container must survive prune
+	// even though no profile declares it, while an unreferenced one is removed.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": "sha256:baseid"},
+		volumes: []*volume.Volume{
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-cache-orphan2", Labels: runtime.OwnershipLabels()},
+		},
+		containers: []types.Container{{ID: "c1", Labels: runtime.OwnershipLabels()}},
+		containerInspects: map[string]types.ContainerJSON{
+			"c1": {
+				ContainerJSONBase: &types.ContainerJSONBase{Image: "sha256:unused"},
+				Mounts:            []types.MountPoint{{Type: mount.TypeVolume, Name: "tpd-cache-orphan"}},
+			},
+		},
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	res, err := run(context.Background(), fc, Options{Force: true})
+	w.Close()
+	os.Stderr = old
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(r)
+	if sliceContains(res.VolumesRemoved, "tpd-cache-orphan") {
+		t.Error("volume tpd-cache-orphan mounted by a running container must not be removed")
+	}
+	if !equalSlice(res.VolumesRemoved, []string{"tpd-cache-orphan2"}) {
+		t.Errorf("volumes removed = %v, want only unreferenced [tpd-cache-orphan2]", res.VolumesRemoved)
+	}
+	if !strings.Contains(string(out), "skipping tpd-cache-orphan: in use by a running container") {
+		t.Errorf("stderr should report the skip; got %q", string(out))
+	}
+}
+
+func TestRunAllSkipsVolumesInUseByRunningContainer(t *testing.T) {
+	// --all relaxes the catalog-liveness check only; a volume mounted by a
+	// running container must still survive.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": "sha256:baseid"},
+		volumes: []*volume.Volume{
+			{Name: "tpd-cache-usedcache", Labels: runtime.OwnershipLabels()},
+			{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
+		},
+		containers: []types.Container{{ID: "c1", Labels: runtime.OwnershipLabels()}},
+		containerInspects: map[string]types.ContainerJSON{
+			"c1": {
+				ContainerJSONBase: &types.ContainerJSONBase{Image: "sha256:unused"},
+				Mounts:            []types.MountPoint{{Type: mount.TypeVolume, Name: "tpd-cache-usedcache"}},
+			},
+		},
+	}
+	res, err := run(context.Background(), fc, Options{All: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sliceContains(res.VolumesRemoved, "tpd-cache-usedcache") {
+		t.Error("volume tpd-cache-usedcache mounted by a running container must survive --all")
+	}
+	if !equalSlice(res.VolumesRemoved, []string{"tpd-cache-orphan"}) {
+		t.Errorf("volumes removed = %v, want only unreferenced [tpd-cache-orphan]", res.VolumesRemoved)
+	}
+}
+
+func TestRunSkipsImagesInUseByRunningContainer(t *testing.T) {
+	// A derived image whose ID a running container references must survive
+	// prune, with and without --all; an unreferenced derived image is removed.
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	const baseID = "sha256:baseid"
+	usedTag := runtime.DerivedTag(baseID, []string{"curl", "git"}, nil)
+	base := &fakeClient{
+		inspects: map[string]string{"mybase:latest": baseID, "tpd/packages:deadbeefdeadbeef": "sha256:orphanid"},
+		images: []image.Summary{
+			{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+			{RepoTags: []string{"tpd/packages:cafebabe"}, Labels: runtime.OwnershipLabels()},
+		},
+		containers: []types.Container{{ID: "c1", Labels: runtime.OwnershipLabels()}},
+		containerInspects: map[string]types.ContainerJSON{
+			"c1": {ContainerJSONBase: &types.ContainerJSONBase{Image: "sha256:orphanid"}},
+		},
+	}
+	for _, tt := range []struct {
+		name string
+		all  bool
+		want []string
+	}{
+		{name: "default", want: []string{"tpd/packages:cafebabe"}},
+		{name: "all", all: true, want: []string{"tpd/packages:cafebabe", usedTag}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := *base
+			res, err := run(context.Background(), &fc, Options{All: tt.all, Force: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sliceContains(res.ImagesRemoved, "tpd/packages:deadbeefdeadbeef") {
+				t.Error("derived image in use by a running container must not be removed")
+			}
+			sort.Strings(tt.want)
+			got := append([]string(nil), res.ImagesRemoved...)
+			sort.Strings(got)
+			if !equalSlice(got, tt.want) {
+				t.Errorf("images removed = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

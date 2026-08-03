@@ -1,0 +1,7 @@
+version: 1
+mounts:
+  '{{ .Env.XDG_RUNTIME_DIR }}':
+    source: '{{ .Env.XDG_RUNTIME_DIR }}'
+    optional: true
+environment:
+  XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'

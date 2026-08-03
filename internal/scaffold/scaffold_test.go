@@ -130,14 +130,14 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 		t.Errorf("Command = %v, want [opencode] inherited from built-in", cfg.Command)
 	}
 	// Fragments install mise tools alongside their caches
-	if cfg.Tools["node"] != "latest" {
-		t.Errorf("Tools[node] = %q, want latest (from javascript fragment)", cfg.Tools["node"])
+	if cfg.Tools["node"].Version != "latest" {
+		t.Errorf("Tools[node].Version = %q, want latest (from javascript fragment)", cfg.Tools["node"].Version)
 	}
-	if cfg.Tools["go"] != "latest" {
-		t.Errorf("Tools[go] = %q, want latest (from go fragment)", cfg.Tools["go"])
+	if cfg.Tools["go"].Version != "latest" {
+		t.Errorf("Tools[go].Version = %q, want latest (from go fragment)", cfg.Tools["go"].Version)
 	}
-	if cfg.Tools["opencode"] != "latest" {
-		t.Errorf("Tools[opencode] = %q, want latest (inherited from built-in)", cfg.Tools["opencode"])
+	if cfg.Tools["opencode"].Version != "latest" {
+		t.Errorf("Tools[opencode].Version = %q, want latest (inherited from built-in)", cfg.Tools["opencode"].Version)
 	}
 }
 
@@ -548,6 +548,36 @@ func TestBrokenSiblingBlocksInit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "broken.yaml") {
 		t.Errorf("error should reference the broken file, got: %v", err)
+	}
+}
+
+func TestScaffoldPrintsAdvisoryForSensitiveFragments(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"docker"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "note: docker grants:") {
+		t.Errorf("expected advisory note on stderr, got: %q", stderr.String())
+	}
+
+	quietDir := t.TempDir()
+	var quietOut, quietErr bytes.Buffer
+	err = Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"javascript"},
+		ProfileDir: quietDir,
+	}, strings.NewReader(""), &quietOut, &quietErr)
+	if err != nil {
+		t.Fatalf("Run (javascript): %v", err)
+	}
+	if strings.Contains(quietErr.String(), "grants:") {
+		t.Errorf("non-sensitive fragments should not print an advisory, got: %q", quietErr.String())
 	}
 }
 

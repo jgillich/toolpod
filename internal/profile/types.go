@@ -1,6 +1,10 @@
 package profile
 
-import "gopkg.in/yaml.v3"
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
 
 // ExtendsList is a list of profile/fragment names to extend.
 // It unmarshals from both a string ("extends: foo") and a list
@@ -42,10 +46,60 @@ type Profile struct {
 	Network     string                `yaml:"network,omitempty"`
 	Resources   *Resources            `yaml:"resources,omitempty"`
 	TTY         string                `yaml:"tty,omitempty"`
-	Tools       map[string]string     `yaml:"tools,omitempty"`
+	Tools       map[string]Tool       `yaml:"tools,omitempty"`
 	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
 	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
+}
+
+// Tool is a single mise tool: the version plus optional verification
+// metadata. SHA256 is a universal asset digest; SHA256ByArch keys are the
+// schema's arch set ("amd64", "aarch64"), which the appimage backend maps its
+// RUNTIME.archType to. Decodes from a YAML scalar (the version) or a map
+// ({version, sha256}).
+type Tool struct {
+	Version      string
+	SHA256       string
+	SHA256ByArch map[string]string
+}
+
+func (t *Tool) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Decode(&t.Version)
+	case yaml.MappingNode:
+		var raw struct {
+			Version string    `yaml:"version"`
+			SHA256  yaml.Node `yaml:"sha256"`
+		}
+		if err := node.Decode(&raw); err != nil {
+			return err
+		}
+		t.Version = raw.Version
+		switch raw.SHA256.Kind {
+		case yaml.ScalarNode:
+			return raw.SHA256.Decode(&t.SHA256)
+		case yaml.MappingNode:
+			return raw.SHA256.Decode(&t.SHA256ByArch)
+		}
+	}
+	return fmt.Errorf("tools value must be a version string or a {version, sha256} map")
+}
+
+func (t Tool) MarshalYAML() (interface{}, error) {
+	if len(t.SHA256ByArch) > 0 {
+		return struct {
+			Version string            `yaml:"version"`
+			SHA256  map[string]string `yaml:"sha256"`
+		}{t.Version, t.SHA256ByArch}, nil
+	}
+	if t.SHA256 == "" {
+		return t.Version, nil
+	}
+	return struct {
+		Version string `yaml:"version"`
+		SHA256  string `yaml:"sha256"`
+	}{t.Version, t.SHA256}, nil
 }
 
 // DbusConfig is a flatpak-style session-bus allowlist. Talk names may be

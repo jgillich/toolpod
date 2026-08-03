@@ -3,13 +3,19 @@ package runtime
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/docker/docker/client"
 )
 
 type recordingWriter struct {
@@ -213,6 +219,54 @@ func TestDerivedTagEmptyReposEqualsPackagesOnly(t *testing.T) {
 		t.Errorf("DerivedTag with empty repos = %q, want pre-repos hash %q", a, want)
 	}
 }
+func TestOwnershipLabels(t *testing.T) {
+	want := map[string]string{"tpd.managed": "true"}
+	if OwnershipLabel != "tpd.managed" {
+		t.Errorf("OwnershipLabel = %q, want %q", OwnershipLabel, "tpd.managed")
+	}
+	if got := OwnershipLabels(); !reflect.DeepEqual(got, want) {
+		t.Errorf("OwnershipLabels() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildDerivedImageLabelsImage(t *testing.T) {
+	// The ownership + provenance labels must ride on every derived image so
+	// prune (and the future container-leak checks) can filter by label
+	// instead of name.
+	var gotLabels string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/build") {
+			http.NotFound(w, r)
+			return
+		}
+		gotLabels = r.URL.Query().Get("labels")
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"stream":"Successfully built abc123\n"}`+"\n")
+	}))
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", nil, []string{"git"}, &recordingWriter{}); err != nil {
+		t.Fatalf("buildDerivedImage: %v", err)
+	}
+	want := OwnershipLabels()
+	want["tpd.build"] = "1"
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotLabels != string(wantJSON) {
+		t.Errorf("build labels = %s, want %s (ownership + provenance labels must ride on derived images)", gotLabels, wantJSON)
+	}
+}
+
 func TestSynthesizeDockerfile(t *testing.T) {
 	const baseRef = "debian:13-slim"
 	got := synthesizeDockerfile(baseRef, nil, []string{"libxml2-dev", "git"})

@@ -1,11 +1,16 @@
 package profile
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/distribution/reference"
+	units "github.com/docker/go-units"
 )
 
 var busNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\.[*])?$`)
@@ -22,6 +27,13 @@ var reservedNames = map[string]bool{
 	"init":       true,
 }
 
+var (
+	envKeyRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	toolNameRe  = regexp.MustCompile(`^[A-Za-z0-9_@./:-]+$`)
+	hexSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	networkRe   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+)
+
 func validate(rc RawProfile) error {
 	if rc.Version == 0 {
 		return ProfileError{Path: rc.Path, Message: "missing required field: version"}
@@ -31,6 +43,14 @@ func validate(rc RawProfile) error {
 	}
 	if rc.Image == "" {
 		return ProfileError{Path: rc.Path, Message: "missing required field: image"}
+	}
+	if rc.Image != "" {
+		if strings.ContainsAny(rc.Image, "\x00\n\r") {
+			return ProfileError{Path: rc.Path, Message: "image: must not contain control characters"}
+		}
+		if _, err := reference.ParseNormalizedNamed(rc.Image); err != nil {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("image: invalid image reference %q: %v", rc.Image, err)}
+		}
 	}
 	if err := validatePorts(rc); err != nil {
 		return err
@@ -48,6 +68,18 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateFiles(rc); err != nil {
+		return err
+	}
+	if err := validateTools(rc); err != nil {
+		return err
+	}
+	if err := validateEnv(rc); err != nil {
+		return err
+	}
+	if err := validateNetwork(rc); err != nil {
+		return err
+	}
+	if err := validateResources(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -173,6 +205,102 @@ func validateFiles(rc RawProfile) error {
 	return nil
 }
 
+func validateTools(rc RawProfile) error {
+	for name, tool := range rc.Tools {
+		if !toolNameRe.MatchString(name) || containsControl(name) || containsControl(tool.Version) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: invalid tool name/version %q", name)}
+		}
+		if strings.HasPrefix(name, "appimage:") {
+			if tool.SHA256 != "" && !hexSHA256Re.MatchString(tool.SHA256) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: invalid universal sha256", name)}
+			}
+			for arch, sum := range tool.SHA256ByArch {
+				if arch != "amd64" && arch != "aarch64" {
+					return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: unknown arch %q (want amd64 or aarch64)", name, arch)}
+				}
+				if !hexSHA256Re.MatchString(sum) {
+					return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: %s: invalid sha256 for arch %q", name, arch)}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateEnv(rc RawProfile) error {
+	for k, v := range rc.Env {
+		if !envKeyRe.MatchString(k) || containsControl(k) || containsControl(v) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("environment: invalid key %q", k)}
+		}
+	}
+	return nil
+}
+
+func validateNetwork(rc RawProfile) error {
+	if rc.Network != "" && (!networkRe.MatchString(rc.Network) || containsControl(rc.Network)) {
+		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid network name %q", rc.Network)}
+	}
+	return nil
+}
+
+func validateResources(rc RawProfile) error {
+	if rc.Resources == nil {
+		return nil
+	}
+	if rc.Resources.Memory != "" {
+		if _, err := ParseMemoryBytes(rc.Resources.Memory); err != nil {
+			return ProfileError{Path: rc.Path, Message: "resources: memory: " + err.Error()}
+		}
+	}
+	if rc.Resources.CPUs != "" {
+		if _, err := ParseNanoCPUs(rc.Resources.CPUs); err != nil {
+			return ProfileError{Path: rc.Path, Message: "resources: cpus: " + err.Error()}
+		}
+	}
+	return nil
+}
+
+// ParseMemoryBytes converts a Docker-style memory string to bytes using
+// docker/go-units, the same parser Docker's --memory uses. Rejects empty and
+// unparseable values.
+func ParseMemoryBytes(s string) (int64, error) {
+	if strings.TrimSpace(s) == "" {
+		return 0, errors.New("empty memory value")
+	}
+	b, err := units.RAMInBytes(s)
+	if err != nil || b <= 0 {
+		return 0, fmt.Errorf("invalid memory value %q", s)
+	}
+	return b, nil
+}
+
+// ParseNanoCPUs converts a CPU-count string ("2", "1.5") to nanos, matching
+// Docker's --cpus semantics. Rejects NaN, infinities, values <= 0, and values
+// that would overflow int64 after scaling (a fractional count above ~9.2e9).
+func ParseNanoCPUs(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
+		return 0, fmt.Errorf("invalid cpu count %q", s)
+	}
+	n := f * 1e9
+	// float64(math.MaxInt64) rounds to 2^63, so `>` would let an exact 2^63
+	// through and int64() wrap it negative; `>=` rejects the wrap boundary.
+	if n >= math.MaxInt64 {
+		return 0, fmt.Errorf("cpu count %q out of range", s)
+	}
+	return int64(n), nil
+}
+
+func containsControl(s string) bool {
+	for _, r := range s {
+		if r == 0 || r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 func checkPortNum(s, what, path string) error {
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 1 || n > 65535 {
@@ -195,8 +323,8 @@ func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("profile name is required")
 	}
-	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
-		return fmt.Errorf("invalid profile name %q: must not contain slashes, whitespace, or '..'", name)
+	if !profileNameRe.MatchString(name) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid profile name %q: must match %s and must not contain '..'", name, profileNameRe)
 	}
 	if reservedNames[name] {
 		return fmt.Errorf("profile name %q is reserved (collides with a subcommand)", name)

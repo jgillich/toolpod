@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/jgillich/tpd/internal/mise"
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/workspace"
@@ -67,9 +68,9 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Target < files[j].Target })
 
-	tools := cfg.Tools
-	if tools == nil {
-		tools = map[string]string{}
+	tools := make(map[string]mise.Tool, len(cfg.Tools))
+	for name, t := range cfg.Tools {
+		tools[name] = mise.Tool{Version: t.Version, SHA256: t.SHA256, SHA256ByArch: t.SHA256ByArch}
 	}
 
 	env := cfg.Env
@@ -86,6 +87,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	// overriding any value inherited from a parent profile (e.g. a user
 	// profile extending "opencode" should show its own name, not "opencode").
 	labels["profile"] = opts.ProfileName
+	labels[runtime.OwnershipLabel] = "true"
 
 	// Workspace mount (CLI, not profile) per spec §4.2
 	wsTarget := opts.Workspace
@@ -110,6 +112,18 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		cmd = append(cmd, opts.Args...)
 	}
 
+	// Validation guarantees the strings parse; parse errors here are ignored
+	// rather than propagated back to a profile that already passed validate().
+	resources := runtime.ResourceSpec{}
+	if cfg.Resources != nil {
+		if cfg.Resources.Memory != "" {
+			resources.MemoryBytes, _ = profile.ParseMemoryBytes(cfg.Resources.Memory)
+		}
+		if cfg.Resources.CPUs != "" {
+			resources.NanoCPUs, _ = profile.ParseNanoCPUs(cfg.Resources.CPUs)
+		}
+	}
+
 	return Spec{
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
@@ -128,6 +142,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		Workspace:   WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},
 		TTY:         cfg.TTY,
 		RuntimeHome: runtimeHome,
+		Resources:   resources,
 	}, nil
 }
 

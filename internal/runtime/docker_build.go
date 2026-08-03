@@ -125,9 +125,12 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 	}
 
 	w.WriteProgress("build: " + derivedRef)
+	labels := OwnershipLabels()
+	labels["tpd.build"] = "1"
 	resp, err := cli.ImageBuild(ctx, buildContext, types.ImageBuildOptions{
 		Tags:       []string{derivedRef},
 		Dockerfile: "Dockerfile",
+		Labels:     labels,
 		Remove:     true,
 	})
 	if err != nil {

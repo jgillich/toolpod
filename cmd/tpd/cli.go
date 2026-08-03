@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +29,7 @@ type LaunchCmd struct {
 	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
 	DryRun    bool   `help:"Print the spec without launching."`
 	Verbose   bool   `help:"Print the spec before launching."`
+	Pull      bool   `help:"Pull the base image even if already present (refresh mutable tags)."`
 
 	// Profile-and-args holds the profile name followed by everything
 	// passed verbatim to the profile's command. passthrough:"" stops
@@ -89,15 +91,46 @@ func main() {
 		args = []string{"--help"}
 	}
 	ctx, err := parser.Parse(args)
-	parser.FatalIfErrorf(err)
-	err = ctx.Run()
-	parser.FatalIfErrorf(err)
 	if err != nil {
-		// Non-parse errors from Run are handled per-command for exit codes;
-		// anything that reaches here is already printed.
-		os.Exit(1)
+		parser.FatalIfErrorf(err)
+	}
+	if err := ctx.Run(); err != nil {
+		os.Exit(exitCodeFor(err))
 	}
 }
+
+// exitCodeFor maps a Run error to the process exit code: exitError carries
+// its own code; profile-layer errors exit 2; everything else exits 1.
+func exitCodeFor(err error) int {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		if ee.err != nil {
+			fmt.Fprintln(os.Stderr, ee.err)
+		}
+		return ee.code
+	}
+	var pc profile.ExitCoder
+	if errors.As(err, &pc) {
+		fmt.Fprintln(os.Stderr, err)
+		return pc.ExitCode()
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
+}
+
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *exitError) Unwrap() error { return e.err }
 
 func (l *LaunchCmd) Run(ctx *kong.Context) error {
 	if len(l.ProfileAndArgs) == 0 {
@@ -117,13 +150,16 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 		Workspace:   workspace,
 		DryRun:      l.DryRun,
 		Verbose:     l.Verbose,
+		Pull:        l.Pull,
 		Command:     l.Command,
 		Args:        passthrough,
 	})
 	if result.Err != nil {
-		fmt.Fprintln(os.Stderr, result.Err)
+		return &exitError{code: result.ExitCode, err: result.Err}
 	}
-	os.Exit(result.ExitCode)
+	if result.ExitCode != 0 {
+		return &exitError{code: result.ExitCode}
+	}
 	return nil
 }
 
@@ -136,8 +172,7 @@ func (i *InitCmd) Run() error {
 		Interactive: scaffold.IsTTY(os.Stdin),
 	}
 	if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		return &exitError{code: 2, err: err}
 	}
 	return nil
 }
@@ -167,7 +202,7 @@ func (d *DoctorCmd) Run() error {
 	fmt.Println()
 	fmt.Println(out.Color("reset", result.Summary()))
 	if result.HasFailure() {
-		os.Exit(1)
+		return &exitError{code: 1}
 	}
 	return nil
 }
@@ -181,8 +216,7 @@ func (p *PruneCmd) Run() error {
 	}
 	result, err := prune.Run(context.Background(), opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(3)
+		return &exitError{code: 3, err: err}
 	}
 	if len(result.VolumesRemoved) > 0 {
 		fmt.Printf("Removed %d volume(s):\n", len(result.VolumesRemoved))
@@ -220,17 +254,23 @@ func (c *ProfileShowCmd) Run() error {
 			return err
 		}
 		fmt.Print(string(out))
+		if msg := catalog.Advisory(c.Name); msg != "" {
+			fmt.Fprintln(os.Stderr, "warning: "+msg)
+		}
 		return nil
 	}
 	rc, ok := cat.Get(c.Name)
 	if !ok {
-		return fmt.Errorf("profile not found: %s", c.Name)
+		return profile.ProfileError{Message: "profile not found: " + c.Name}
 	}
 	out, err := yaml.Marshal(rc.Profile)
 	if err != nil {
 		return err
 	}
 	fmt.Print(string(out))
+	if msg := catalog.Advisory(c.Name); msg != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
+	}
 	return nil
 }
 
@@ -244,7 +284,10 @@ func (c *ProfileEditCmd) Run() error {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
 	if _, ok := cat.Get(c.Name); !ok {
-		return fmt.Errorf("profile not found: %s", c.Name)
+		return profile.ProfileError{Message: "profile not found: " + c.Name}
+	}
+	if msg := catalog.Advisory(c.Name); msg != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
 	}
 	targetPath := filepath.Join(userDir, c.Name+".yaml")
 	if cat.IsFragment(c.Name) {

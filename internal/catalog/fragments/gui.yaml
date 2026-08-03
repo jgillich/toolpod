@@ -47,11 +47,10 @@ mounts:
   /tmp/.X11-unix:
     source: /tmp/.X11-unix
     optional: true
-  '{{ .Env.XDG_RUNTIME_DIR }}':
-    source: '{{ .Env.XDG_RUNTIME_DIR }}'
+  '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}':
+    source: '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}'
     optional: true
 environment:
-  XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'
   WAYLAND_DISPLAY: '{{ .Env.WAYLAND_DISPLAY }}'
   DISPLAY: '{{ .Env.DISPLAY }}'
 dbus:
@@ -62,8 +61,8 @@ files:
     content: |
       #!/bin/sh
       # Open URLs in the host browser by forwarding to the XDG desktop portal on the
-      # session bus (gui fragment mounts the host XDG_RUNTIME_DIR); fall back to the
-      # real xdg-open otherwise.
+      # session bus (via the launch's filtered dbus proxy); fall back to the real
+      # xdg-open otherwise.
       portal_open() {
         timeout 10 env LD_LIBRARY_PATH= DBUS_SESSION_BUS_ADDRESS="$1" /usr/bin/dbus-send --session --print-reply \
           --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \

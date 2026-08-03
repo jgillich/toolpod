@@ -22,7 +22,10 @@ type LaunchOpts struct {
 	ExtraTools  []string
 	DryRun      bool
 	Verbose     bool
-	Runtime     runtime.Runtime
+	// Pull re-pulls the base image even when already present locally,
+	// refreshing mutable tags like latest.
+	Pull    bool
+	Runtime runtime.Runtime
 	// Progress receives status lines during Prepare (image pull, mise
 	// install). If nil, progress goes to stderr. Set to a no-op writer
 	// to silence progress entirely.

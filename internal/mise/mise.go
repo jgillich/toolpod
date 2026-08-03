@@ -1,9 +1,11 @@
 package mise
 
 import (
+	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -20,28 +22,40 @@ type ProgressWriter interface {
 //
 // When the user cd's into the workspace, mise's directory walk picks up any
 // project-local .tool-versions / mise.toml and overrides these defaults.
-func ActivateCommand(configDir string, tools map[string]string) string {
-	configFile := filepath.Join(configDir, "config.toml")
-
+// The config is base64-encoded so unvalidated tool names, versions, and
+// digests cannot escape into the shell or the TOML.
+func ActivateCommand(configDir string, tools map[string]Tool) string {
 	if len(tools) == 0 {
 		return ""
 	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "mkdir -p %s && printf '%%s' '", shq(configDir))
-	b.WriteString("[tools]\n")
-
+	var cfg strings.Builder
+	cfg.WriteString("[tools]\n")
 	names := make([]string, 0, len(tools))
 	for name := range tools {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		fmt.Fprintf(&b, "%q = \"%s\"\n", name, tools[name])
+		tool := tools[name]
+		key := strconv.Quote(name)
+		switch {
+		case len(tool.SHA256ByArch) > 0:
+			var arch []string
+			for _, a := range []string{"amd64", "aarch64"} {
+				if sum := tool.SHA256ByArch[a]; sum != "" {
+					arch = append(arch, fmt.Sprintf("%s = %s", a, strconv.Quote(sum)))
+				}
+			}
+			fmt.Fprintf(&cfg, "%s = { version = %s, sha256 = { %s } }\n", key, strconv.Quote(tool.Version), strings.Join(arch, ", "))
+		case tool.SHA256 != "":
+			fmt.Fprintf(&cfg, "%s = { version = %s, sha256 = %s }\n", key, strconv.Quote(tool.Version), strconv.Quote(tool.SHA256))
+		default:
+			fmt.Fprintf(&cfg, "%s = %s\n", key, strconv.Quote(tool.Version))
+		}
 	}
-	b.WriteString("' > ")
-	b.WriteString(shq(configFile))
-	return b.String()
+	configFile := filepath.Join(configDir, "config.toml")
+	encoded := base64.StdEncoding.EncodeToString([]byte(cfg.String()))
+	return fmt.Sprintf("mkdir -p %s && printf '%%s' '%s' | base64 -d > %s", shq(configDir), encoded, shq(configFile))
 }
 
 // BackendRuntimesCommand returns a shell snippet that ensures the runtime for
@@ -57,9 +71,9 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 // missing.
 //
 // Returns "" when no runtime is needed or already present.
-func BackendRuntimesCommand(configDir string, tools map[string]string) string {
-	needNode := tools["node"] == ""
-	needUV := tools["uv"] == "" && tools["pipx"] == ""
+func BackendRuntimesCommand(configDir string, tools map[string]Tool) string {
+	needNode := tools["node"].Version == ""
+	needUV := tools["uv"].Version == "" && tools["pipx"].Version == ""
 	if !needNode && !needUV {
 		return ""
 	}
@@ -135,7 +149,7 @@ func BackendRuntimesCommand(configDir string, tools map[string]string) string {
 // embedded mise plugin (currently the generic appimage backend). When true,
 // PluginInstallCommand must run before `mise install` so the prefixed tools
 // can resolve.
-func NeedsEmbeddedPlugin(tools map[string]string) bool {
+func NeedsEmbeddedPlugin(tools map[string]Tool) bool {
 	for name := range tools {
 		if strings.HasPrefix(name, appimageBackendPrefix) {
 			return true

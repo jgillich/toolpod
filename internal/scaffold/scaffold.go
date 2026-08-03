@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jgillich/tpd/internal/catalog"
 	"github.com/jgillich/tpd/internal/profile"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -162,6 +163,11 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	for _, b := range bases {
 		if _, ok := cat.Get(b); !ok {
 			return fmt.Errorf("unknown extends target: %s", b)
+		}
+	}
+	for _, b := range bases {
+		if msg := catalog.Advisory(b); msg != "" {
+			fmt.Fprintf(stderr, "note: %s grants: %s\n", b, msg)
 		}
 	}
 

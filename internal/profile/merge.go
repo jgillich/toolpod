@@ -197,7 +197,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
-	out.Tools = mergeStringMap(parent.Tools, child.Tools, child.NullKeys["tools"])
+	out.Tools = mergeMap(parent.Tools, child.Tools, child.NullKeys["tools"])
 	out.Caches = mergeMap(parent.Caches, child.Caches, child.NullKeys["caches"])
 	out.Labels = mergeStringMap(parent.Labels, child.Labels, child.NullKeys["labels"])
 	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
@@ -205,7 +205,17 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
 
 	if child.Resources != nil {
-		out.Resources = child.Resources
+		out.Resources = &Resources{}
+		if parent.Resources != nil {
+			out.Resources.Memory = parent.Resources.Memory
+			out.Resources.CPUs = parent.Resources.CPUs
+		}
+		if child.Resources.Memory != "" {
+			out.Resources.Memory = child.Resources.Memory
+		}
+		if child.Resources.CPUs != "" {
+			out.Resources.CPUs = child.Resources.CPUs
+		}
 	}
 
 	out.ExtendsList = nil

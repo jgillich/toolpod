@@ -59,12 +59,12 @@ func proxyFilterArgs(cfg profile.Profile) []string {
 // It returns a cleanup that kills the proxy and removes the socket, and the
 // DBUS_SESSION_BUS_ADDRESS to set in the container ("" = bus disabled).
 //
-// The bus is disabled (no proxy, empty address) when the profile has no dbus
-// config, there is no host session bus to proxy, or xdg-dbus-proxy is not
-// installed on the host.
-func startBusProxy(cfg profile.Profile) (func(), string) {
+// When the profile has a dbus allowlist, the bus fails closed: an error is
+// returned (and Launch aborts) if there is no host session bus to proxy or
+// xdg-dbus-proxy is not installed, instead of silently disabling the bus.
+func startBusProxy(cfg profile.Profile) (func(), string, error) {
 	if !dbusEnabled(cfg) {
-		return nil, ""
+		return nil, "", nil
 	}
 	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	hostBus := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
@@ -74,12 +74,11 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 		}
 	}
 	if runtimeDir == "" || hostBus == "" {
-		return nil, ""
+		return nil, "", fmt.Errorf("profile requires filtered D-Bus but no host session bus is available")
 	}
 	proxy, err := exec.LookPath("xdg-dbus-proxy")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "tpd: warning: xdg-dbus-proxy not found; container D-Bus disabled")
-		return nil, ""
+		return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy is not installed")
 	}
 	sockPath := filepath.Join(runtimeDir, fmt.Sprintf("tpd-bus-%d.sock", os.Getpid()))
 	_ = os.Remove(sockPath)
@@ -93,7 +92,7 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "tpd: warning: start xdg-dbus-proxy: %v\n", err)
-		return nil, ""
+		return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy did not start")
 	}
 	// Wait for the proxy to create its socket so container clients don't race
 	// startup (a client that connects before the proxy listens gets ENOENT).
@@ -103,18 +102,29 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-			_ = os.Remove(sockPath)
-			fmt.Fprintln(os.Stderr, "tpd: warning: xdg-dbus-proxy did not start; container D-Bus disabled")
-			return nil, ""
+			if err := cmd.Process.Kill(); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+			}
+			if _, err := cmd.Process.Wait(); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+			}
+			if err := os.Remove(sockPath); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+			}
+			return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy did not start")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	cleanup := func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		_ = os.Remove(sockPath)
+		if err := cmd.Process.Kill(); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+		}
+		if _, err := cmd.Process.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+		}
+		if err := os.Remove(sockPath); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+		}
 	}
-	return cleanup, "unix:path=" + sockPath
+	return cleanup, "unix:path=" + sockPath, nil
 }

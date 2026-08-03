@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
+	"github.com/jgillich/tpd/internal/mise"
 	"github.com/jgillich/tpd/internal/workspace"
 )
 
@@ -27,13 +28,19 @@ type Spec struct {
 	PortSpecs   []PortSpec
 	DeviceSpecs []DeviceSpec
 	Env         map[string]string
-	Tools       map[string]string
+	Tools       map[string]mise.Tool
 	Caches      []CacheSpec
 	Network     string
 	Labels      map[string]string
 	Workspace   WorkspaceSpec
 	TTY         string
 	RuntimeHome string
+	Resources   ResourceSpec
+}
+
+type ResourceSpec struct {
+	MemoryBytes int64
+	NanoCPUs    int64
 }
 
 // Repo mirrors profile.Repo: a single extra apt source, either an extrepo
@@ -104,6 +111,6 @@ type NoopProgressWriter struct{}
 func (NoopProgressWriter) WriteProgress(string) {}
 
 type Runtime interface {
-	Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error)
+	Prepare(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (string, error)
 	Run(ctx context.Context, spec Spec) (int, error)
 }

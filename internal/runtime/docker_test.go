@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/workspace"
 	"golang.org/x/sys/unix"
 )
@@ -34,6 +38,91 @@ func TestIsLikelyRootlessSocket(t *testing.T) {
 			t.Errorf("isLikelyRootlessSocket(%q) = %v, want %v", tt.host, got, tt.want)
 		}
 	}
+}
+
+func newQueryRootlessClient(t *testing.T, handler http.Handler) *client.Client {
+	t.Helper()
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: handler}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+
+	cli, err := client.NewClientWithOpts(client.WithHost("unix://"+sock), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cli
+}
+
+func TestQueryRootlessServerError(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		// Valid JSON so only the status check can catch this.
+		w.Write([]byte(`{"rootless":false}`))
+	}))
+	if _, err := QueryRootless(context.Background(), cli); err == nil {
+		t.Error("QueryRootless must fail when /info returns 500")
+	}
+}
+
+func TestQueryRootlessRejectsLargeBody(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Valid JSON padded past 64 KiB so only the size cap can catch this.
+		w.Write([]byte(strings.Repeat("x", 64<<10) + `{"rootless":false}`))
+	}))
+	if _, err := QueryRootless(context.Background(), cli); err == nil {
+		t.Error("QueryRootless must reject an /info body over 64 KiB")
+	}
+}
+
+func TestQueryRootlessOK(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"rootless":true}`))
+	}))
+	rootless, err := QueryRootless(context.Background(), cli)
+	if err != nil {
+		t.Fatalf("QueryRootless: %v", err)
+	}
+	if !rootless {
+		t.Error("QueryRootless = false, want true (rootless field in /info)")
+	}
+}
+
+func TestSubpathSupportedConcurrent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/version") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"Version":"27.1.0"}`)
+	}))
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &DockerRuntime{cli: cli}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got := rt.subpathSupported(context.Background()); !got {
+				t.Error("subpathSupported = false, want true (docker 27.1.0 supports subpaths)")
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestBuildEnvDropsEmptyEnvValues(t *testing.T) {
@@ -440,7 +529,7 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	code, err := rt.Run(context.Background(), spec)
@@ -481,7 +570,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 		RuntimeHome: "/root",
 		PortSpecs:   []PortSpec{{Container: "8080", HostPort: hostPort, Protocol: "tcp"}},
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -660,7 +749,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -672,7 +761,7 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		t.Errorf("derived image %q not inspectable after Prepare: %v", imageRef, err)
 	}
 	// Second Prepare must reuse the cached image (idempotent).
-	imageRef2, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef2, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("second Prepare: %v", err)
 	}
@@ -719,7 +808,7 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{})
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -776,7 +865,7 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	}
-	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}); err != nil {
+	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	code, err := rt.Run(context.Background(), spec)

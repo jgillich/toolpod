@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/profile"
@@ -27,6 +29,8 @@ type dockerClient interface {
 	ImageList(ctx context.Context, opts image.ListOptions) ([]image.Summary, error)
 	ImageRemove(ctx context.Context, ref string, opts image.RemoveOptions) ([]image.DeleteResponse, error)
 	ImageInspectWithRaw(ctx context.Context, ref string) (types.ImageInspect, []byte, error)
+	ContainerList(ctx context.Context, opts container.ListOptions) ([]types.Container, error)
+	ContainerInspectWithRaw(ctx context.Context, containerID string, getSize bool) (types.ContainerJSON, []byte, error)
 }
 
 type Options struct {
@@ -71,57 +75,120 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 		}
 	}
 
-	var result Result
-
+	var removeVolumes, removeImages []string
 	if scopeVolumes {
 		existing, err := listTpdVolumes(ctx, cli)
 		if err != nil {
-			return result, fmt.Errorf("list volumes: %w", err)
+			return Result{}, fmt.Errorf("list volumes: %w", err)
 		}
-		var remove []string
 		for _, v := range existing {
 			if opts.All || !volumeUsed(v.Name, usedVolumes) {
-				remove = append(remove, v.Name)
+				removeVolumes = append(removeVolumes, v.Name)
 			}
 		}
-		if len(remove) > 0 {
-			if opts.Force || confirm("volumes", remove, os.Stdin) {
-				for _, name := range remove {
-					if err := cli.VolumeRemove(ctx, name, true); err != nil {
-						fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", name, err)
-					} else {
-						result.VolumesRemoved = append(result.VolumesRemoved, name)
-					}
+	}
+	if scopeImages {
+		existing, err := listTpdImages(ctx, cli)
+		if err != nil {
+			return Result{}, fmt.Errorf("list images: %w", err)
+		}
+		for _, ref := range existing {
+			if opts.All || !usedImages[ref] {
+				removeImages = append(removeImages, ref)
+			}
+		}
+	}
+
+	if len(removeVolumes) > 0 || len(removeImages) > 0 {
+		// A resource referenced by a running container must never be removed,
+		// even under --all (which only relaxes the catalog-liveness check).
+		volumesInUse, imagesInUse, err := runningContainerRefs(ctx, cli)
+		if err != nil {
+			return Result{}, fmt.Errorf("list running containers: %w", err)
+		}
+		var keptV, keptI []string
+		for _, name := range removeVolumes {
+			if volumesInUse[name] {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", name)
+				continue
+			}
+			keptV = append(keptV, name)
+		}
+		removeVolumes = keptV
+		for _, ref := range removeImages {
+			if imageInUse(ctx, cli, ref, imagesInUse) {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", ref)
+				continue
+			}
+			keptI = append(keptI, ref)
+		}
+		removeImages = keptI
+	}
+
+	var result Result
+
+	if scopeVolumes && len(removeVolumes) > 0 {
+		if opts.Force || confirm("volumes", removeVolumes, os.Stdin) {
+			for _, name := range removeVolumes {
+				if err := cli.VolumeRemove(ctx, name, true); err != nil {
+					fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", name, err)
+				} else {
+					result.VolumesRemoved = append(result.VolumesRemoved, name)
 				}
 			}
 		}
 	}
 
-	if scopeImages {
-		existing, err := listTpdImages(ctx, cli)
-		if err != nil {
-			return result, fmt.Errorf("list images: %w", err)
-		}
-		var remove []string
-		for _, ref := range existing {
-			if opts.All || !usedImages[ref] {
-				remove = append(remove, ref)
-			}
-		}
-		if len(remove) > 0 {
-			if opts.Force || confirm("images", remove, os.Stdin) {
-				for _, ref := range remove {
-					if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
-						fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", ref, err)
-					} else {
-						result.ImagesRemoved = append(result.ImagesRemoved, ref)
-					}
+	if scopeImages && len(removeImages) > 0 {
+		if opts.Force || confirm("images", removeImages, os.Stdin) {
+			for _, ref := range removeImages {
+				if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
+					fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", ref, err)
+				} else {
+					result.ImagesRemoved = append(result.ImagesRemoved, ref)
 				}
 			}
 		}
 	}
 
 	return result, nil
+}
+
+// runningContainerRefs returns the tpd-managed resources referenced by running
+// containers: volume names by mount, and image IDs by inspect. Only tpd's own
+// containers (ownership label) are considered.
+func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[string]bool, images map[string]bool, err error) {
+	f := filters.NewArgs()
+	f.Add("label", runtime.OwnershipLabel+"=true")
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, nil, err
+	}
+	volumes, images = map[string]bool{}, map[string]bool{}
+	for _, c := range containers {
+		insp, _, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
+		if err != nil {
+			continue
+		}
+		for _, m := range insp.Mounts {
+			if m.Type == mount.TypeVolume {
+				volumes[m.Name] = true
+			}
+		}
+		images[insp.Image] = true
+	}
+	return volumes, images, nil
+}
+
+// imageInUse reports whether the derived image ref is referenced by a running
+// container, resolved by comparing the ref's image ID against the used set.
+// An un-resolvable ref is treated as not in use.
+func imageInUse(ctx context.Context, cli dockerClient, ref string, usedImages map[string]bool) bool {
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, ref)
+	if err != nil {
+		return false
+	}
+	return usedImages[inspect.ID]
 }
 
 // computeUsed walks every resolvable profile (built-in + user) and returns
@@ -194,9 +261,14 @@ func listTpdVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, er
 	}
 	var found []*volume.Volume
 	for _, v := range resp.Volumes {
-		if isTpdVolume(v.Name) {
-			found = append(found, v)
+		if !isTpdVolume(v.Name) {
+			continue
 		}
+		if v.Labels[runtime.OwnershipLabel] != "true" {
+			fmt.Fprintf(os.Stderr, "warning: skipping unlabeled tpd-* resource %s (not tpd-owned)\n", v.Name)
+			continue
+		}
+		found = append(found, v)
 	}
 	return found, nil
 }
@@ -210,6 +282,14 @@ func listTpdImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	}
 	var refs []string
 	for _, img := range images {
+		if img.Labels[runtime.OwnershipLabel] != "true" {
+			name := img.ID
+			if len(img.RepoTags) > 0 {
+				name = img.RepoTags[0]
+			}
+			fmt.Fprintf(os.Stderr, "warning: skipping unlabeled tpd-* resource %s (not tpd-owned)\n", name)
+			continue
+		}
 		for _, tags := range img.RepoTags {
 			if ref := runtime.DerivedRef(tags); ref != "" {
 				refs = append(refs, ref)

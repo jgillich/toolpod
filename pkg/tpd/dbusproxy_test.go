@@ -47,7 +47,10 @@ func TestProxyFilterArgsSkipsNilNames(t *testing.T) {
 func TestStartBusProxyNoConfigDisables(t *testing.T) {
 	// No dbus config -> no proxy, empty address (bus disabled).
 	cfg := profile.Profile{}
-	cleanup, addr := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg)
+	if err != nil {
+		t.Fatalf("no dbus config should not error, got %v", err)
+	}
 	if addr != "" {
 		t.Errorf("addr = %q, want empty when profile has no dbus config", addr)
 	}
@@ -74,7 +77,10 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg)
+	if err != nil {
+		t.Fatalf("startBusProxy: %v", err)
+	}
 	if cleanup == nil {
 		t.Fatal("expected a running proxy")
 	}
@@ -102,7 +108,7 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 	}
 }
 
-func TestStartBusProxyMissingBinaryDisables(t *testing.T) {
+func TestStartBusProxyMissingBinaryFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir) // no xdg-dbus-proxy here
 	t.Setenv("XDG_RUNTIME_DIR", dir)
@@ -110,9 +116,37 @@ func TestStartBusProxyMissingBinaryDisables(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg)
+	if err == nil {
+		t.Fatal("expected an error when xdg-dbus-proxy binary is missing")
+	}
+	if !strings.Contains(err.Error(), "xdg-dbus-proxy") {
+		t.Errorf("error should mention xdg-dbus-proxy: %v", err)
+	}
 	if cleanup != nil || addr != "" {
-		t.Errorf("expected disabled bus (cleanup=%v addr=%q) when proxy binary missing", cleanup != nil, addr)
+		t.Errorf("no proxy should be running (cleanup=%v addr=%q)", cleanup != nil, addr)
+	}
+}
+
+func TestStartBusProxyNoHostBusFailsClosed(t *testing.T) {
+	// No host session bus (neither $XDG_RUNTIME_DIR nor
+	// $DBUS_SESSION_BUS_ADDRESS) must fail closed, not silently disable.
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	cfg := profile.Profile{Dbus: &profile.DbusConfig{
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
+	}}
+	cleanup, addr, err := startBusProxy(cfg)
+	if err == nil {
+		t.Fatal("expected an error when no host session bus is available")
+	}
+	if !strings.Contains(err.Error(), "session bus") {
+		t.Errorf("error should mention the missing session bus: %v", err)
+	}
+	if cleanup != nil || addr != "" {
+		t.Errorf("no proxy should be running (cleanup=%v addr=%q)", cleanup != nil, addr)
 	}
 }
 
@@ -134,7 +168,10 @@ func TestStartBusProxyFallsBackToRuntimeDirBus(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg)
+	if err != nil {
+		t.Fatalf("startBusProxy: %v", err)
+	}
 	if cleanup == nil {
 		t.Fatal("expected a running proxy")
 	}

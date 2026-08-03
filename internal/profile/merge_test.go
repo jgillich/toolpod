@@ -46,11 +46,91 @@ func TestResolveMapMergeAndNullDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if cfg.Tools["node"] != "22" {
-		t.Errorf("node = %q, want 22 (overridden)", cfg.Tools["node"])
+	if cfg.Tools["node"].Version != "22" {
+		t.Errorf("node = %q, want 22 (overridden)", cfg.Tools["node"].Version)
 	}
 	if _, exists := cfg.Tools["rust"]; exists {
 		t.Error("rust should be deleted by null-to-delete rule")
+	}
+}
+
+func TestMergeResourcesPerField(t *testing.T) {
+	cases := []struct {
+		name   string
+		parent *Resources
+		child  *Resources
+		want   *Resources
+	}{
+		{
+			name:   "child CPUs fill in inherited memory",
+			parent: &Resources{Memory: "1g"},
+			child:  &Resources{CPUs: "2"},
+			want:   &Resources{Memory: "1g", CPUs: "2"},
+		},
+		{
+			name:   "child memory only, no inherited CPUs",
+			parent: &Resources{},
+			child:  &Resources{Memory: "2g"},
+			want:   &Resources{Memory: "2g"},
+		},
+		{
+			name:   "child CPUs keep inherited memory",
+			parent: &Resources{Memory: "1g", CPUs: "1"},
+			child:  &Resources{CPUs: "2"},
+			want:   &Resources{Memory: "1g", CPUs: "2"},
+		},
+		{
+			name:   "child memory overrides inherited",
+			parent: &Resources{Memory: "1g", CPUs: "2"},
+			child:  &Resources{Memory: "2g"},
+			want:   &Resources{Memory: "2g", CPUs: "2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := RawProfile{Profile: Profile{Resources: tc.parent}}
+			child := RawProfile{Profile: Profile{Resources: tc.child}}
+			merged := MergeProfiles(parent, child)
+			if merged.Resources == nil {
+				t.Fatalf("Resources = nil, want %+v", tc.want)
+			}
+			if merged.Resources.Memory != tc.want.Memory || merged.Resources.CPUs != tc.want.CPUs {
+				t.Errorf("Resources = %+v, want %+v", merged.Resources, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeResourcesDoesNotMutateParent(t *testing.T) {
+	parent := RawProfile{Profile: Profile{Resources: &Resources{Memory: "1g"}}}
+	child := RawProfile{Profile: Profile{Resources: &Resources{CPUs: "2"}}}
+	merged := MergeProfiles(parent, child)
+	if merged.Resources == nil || merged.Resources.Memory != "1g" || merged.Resources.CPUs != "2" {
+		t.Fatalf("merged.Resources = %+v, want {Memory: \"1g\" CPUs: \"2\"}", merged.Resources)
+	}
+	if parent.Resources.Memory != "1g" || parent.Resources.CPUs != "" {
+		t.Errorf("parent.Resources mutated to %+v, want {Memory: \"1g\" CPUs: \"\"}", parent.Resources)
+	}
+}
+
+func TestMergeToolsChildWinsAndNullDelete(t *testing.T) {
+	parent := RawProfile{Profile: Profile{Tools: map[string]Tool{
+		"node": {Version: "20"},
+		"rust": {Version: "1.74"},
+	}}}
+	child := RawProfile{
+		Profile: Profile{Tools: map[string]Tool{
+			"node": {},
+			"rust": {Version: "1.75"},
+		}},
+		NullKeys: map[string]map[string]bool{"tools": {"node": true}},
+	}
+	merged := MergeProfiles(parent, child)
+	if merged.Tools["rust"].Version != "1.75" {
+		t.Errorf("rust = %q, want 1.75 (child wins per key)", merged.Tools["rust"].Version)
+	}
+	if _, ok := merged.Tools["node"]; ok {
+		t.Error("tools: {node: ~} should drop the inherited node")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -13,13 +14,13 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/tpd/internal/mise"
 )
 
-func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter) (string, error) {
+func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (string, error) {
 	baseRef := spec.Image
-	if err := ensureImagePulled(ctx, d.cli, baseRef, w); err != nil {
+	if err := ensureImagePulled(ctx, d.cli, baseRef, w, pull); err != nil {
 		return "", fmt.Errorf("ensure base image: %w", err)
 	}
 	baseID, err := ResolveImageID(ctx, d.cli, baseRef)
@@ -40,7 +41,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 		}
 	}
 	for name := range volumes {
-		if err := mise.EnsureVolume(ctx, d.cli, name); err != nil {
+		if err := EnsureVolume(ctx, d.cli, name); err != nil {
 			return "", fmt.Errorf("cache volume %s: %w", name, err)
 		}
 	}
@@ -111,7 +112,9 @@ func (d *DockerRuntime) ensureCacheSubpaths(ctx context.Context, image string, v
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true})
+		if err := d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: remove helper container %s: %v\n", resp.ID, err)
+		}
 	}()
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start helper container: %w", err)
@@ -159,13 +162,15 @@ func checkExtrepoOnly(repos map[string]Repo) error {
 	return nil
 }
 
-func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter) error {
-	exists, err := imageExists(ctx, cli, ref)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
+func ensureImagePulled(ctx context.Context, cli *client.Client, ref string, w ProgressWriter, force bool) error {
+	if !force {
+		exists, err := imageExists(ctx, cli, ref)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 	}
 	w.WriteProgress("pull: " + ref)
 	reader, err := cli.ImagePull(ctx, ref, image.PullOptions{})
@@ -188,4 +193,14 @@ func imageExists(ctx context.Context, cli *client.Client, ref string) (bool, err
 		return false, err
 	}
 	return true, nil
+}
+
+// EnsureVolume creates name if it does not already exist, tagging it with the
+// ownership label so prune only ever removes volumes tpd created.
+func EnsureVolume(ctx context.Context, cli *client.Client, name string) error {
+	_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name:   name,
+		Labels: OwnershipLabels(),
+	})
+	return err
 }
