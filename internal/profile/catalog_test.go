@@ -101,6 +101,32 @@ func TestLoadProfilesRejectsCrossTypeDisplayNameCollision(t *testing.T) {
 	}
 }
 
+func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *testing.T) {
+	// A user profile named ssh collides with the built-in core/ssh fragment.
+	// Tolerant mode keeps the profile (launchable) and drops the fragment.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ssh.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	cat, err := LoadProfilesTolerant(dir, func(w string) { warnings = append(warnings, w) })
+	if err != nil {
+		t.Fatalf("LoadProfilesTolerant: %v", err)
+	}
+	if rc, ok := cat.Get("ssh"); !ok || rc.Namespace != "" {
+		t.Errorf("user profile ssh = {%q, %q}, want {\"\", ssh}", rc.Namespace, rc.Name)
+	}
+	if cat.IsFragment("ssh") {
+		t.Error("user profile ssh should not be a fragment")
+	}
+	if _, ok := cat.Get("core/ssh"); ok {
+		t.Error("core/ssh fragment should be dropped on cross-type collision")
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "ssh") || !strings.Contains(warnings[0], "fragment") {
+		t.Errorf("warn should name ssh and fragment, got %v", warnings)
+	}
+}
+
 func TestLoadProfilesBuiltinsOnly(t *testing.T) {
 	cat, err := LoadProfiles("")
 	if err != nil {

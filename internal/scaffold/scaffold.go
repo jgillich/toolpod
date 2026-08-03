@@ -188,7 +188,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		wizardUsed = true
 	}
 
-	bases = dedup(bases)
 	for i, b := range bases {
 		ref, err := profile.ParseRef(b, cat.Namespaces())
 		if err != nil {
@@ -200,6 +199,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 		bases[i] = key
 	}
+	bases = dedup(bases)
 
 	content, err := generate(profileName, bases, cat)
 	if err != nil {

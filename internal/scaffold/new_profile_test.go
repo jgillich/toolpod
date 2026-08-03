@@ -93,6 +93,26 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 	}
 }
 
+func TestNewProfileExtendsDedupsAfterCanonicalization(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "myagent",
+		Extends:    []string{"mise", "core/mise"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "myagent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(data), "- core/mise"); count != 1 {
+		t.Errorf("generated file should list core/mise once after dedup, got %d occurrences:\n%s", count, string(data))
+	}
+}
+
 func TestNewProfileExtendsUserProfile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "base.yaml"), []byte("version: 1\nextends: opencode\n"), 0o644); err != nil {
