@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/mount"
 )
 
 func TestSubpathSupportedByVersion(t *testing.T) {
@@ -26,5 +28,30 @@ func TestSubpathSupportedByVersion(t *testing.T) {
 				t.Errorf("subpathSupportedByVersion(%+v) = %v, want %v", tc.ver, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSubpathVolumeSpecs(t *testing.T) {
+	mounts, mkdirs := subpathVolumeSpecs(map[string][]string{
+		"tpod-cache-mise":  {"aa", "bb"},
+		"tpod-cache-other": {"cc"},
+	})
+	wantMounts := []mount.Mount{
+		{Type: mount.TypeVolume, Source: "tpod-cache-mise", Target: "/data/0"},
+		{Type: mount.TypeVolume, Source: "tpod-cache-other", Target: "/data/1"},
+	}
+	if !slices.Equal(mounts, wantMounts) {
+		t.Errorf("mounts = %+v, want %+v", mounts, wantMounts)
+	}
+	wantMkdirs := []string{"/data/0/aa", "/data/0/bb", "/data/1/cc"}
+	if !slices.Equal(mkdirs, wantMkdirs) {
+		t.Errorf("mkdirs = %v, want %v", mkdirs, wantMkdirs)
+	}
+}
+
+func TestSubpathVolumeSpecsNoMkdirs(t *testing.T) {
+	_, mkdirs := subpathVolumeSpecs(map[string][]string{"tpod-cache-other": nil})
+	if len(mkdirs) != 0 {
+		t.Errorf("mkdirs = %v, want none", mkdirs)
 	}
 }
