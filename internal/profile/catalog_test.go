@@ -559,6 +559,48 @@ func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
 	}
 }
 
+func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
+	cat, err := LoadProfiles("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("core/typescript")
+	if !ok {
+		t.Fatal("core/typescript missing")
+	}
+	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "javascript"}) {
+		t.Errorf("core/typescript extends = %+v, want [core/javascript]", rc.ExtendsList.Resolved)
+	}
+}
+
+func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
+	// A user *fragment* named javascript wins unqualified fallback, but
+	// core/typescript extends core/javascript (qualified), so the built-in
+	// fragment still provides its tools despite the display-name shadow.
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  userjs: \"user\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := ResolveFragment(cat, "typescript")
+	if err != nil {
+		t.Fatalf("ResolveFragment: %v", err)
+	}
+	if merged.Tools["node"] != "latest" {
+		t.Error("core/typescript should inherit node from the built-in core/javascript fragment, not the user fragment")
+	}
+	if _, ok := merged.Tools["userjs"]; ok {
+		t.Error("core/typescript must not inherit tools from the user javascript fragment")
+	}
+}
+
 func contains(slice []string, s string) bool {
 	for _, v := range slice {
 		if v == s {
