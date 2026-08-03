@@ -124,6 +124,21 @@ func TestLoadProfilesRejectsReservedName(t *testing.T) {
 	}
 }
 
+func TestLoadProfilesRejectsBadFilename(t *testing.T) {
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "foo bar.yaml"), []byte("version: 1\nimage: x\ncommand: [\"sh\"]\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadProfiles(dir)
+	if err == nil {
+		t.Fatal("expected rejection of invalid filename, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid profile name derived from filename") {
+		t.Fatalf("error = %v, want 'invalid profile name derived from filename'", err)
+	}
+}
+
 func TestBuiltinsDoNotMountUserDirs(t *testing.T) {
 	cat, err := LoadProfiles("")
 	if err != nil {

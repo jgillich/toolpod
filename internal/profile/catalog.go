@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -182,6 +183,10 @@ func loadUserDirTolerant(dir string, entries map[string]RawProfile, fragmentName
 			return nil
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		if err := validateFilenameName(name, path); err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
 		rc, err := parseRaw(data, path)
 		if err != nil {
 			warn(path + ": " + err.Error())
@@ -218,6 +223,10 @@ func loadUserFragmentsTolerant(dir string, entries map[string]RawProfile, fragme
 			return nil
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		if err := validateFilenameName(name, path); err != nil {
+			warn(path + ": " + err.Error())
+			return nil
+		}
 		rc, err := parseRaw(data, path)
 		if err != nil {
 			warn(path + ": " + err.Error())
@@ -286,6 +295,9 @@ func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[st
 			return err
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		if err := validateFilenameName(name, path); err != nil {
+			return err
+		}
 		rc, err := parseRaw(data, path)
 		if err != nil {
 			return err
@@ -495,6 +507,9 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 			return err
 		}
 		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		if err := validateFilenameName(name, path); err != nil {
+			return err
+		}
 		rc, err := parseRaw(data, path)
 		if err != nil {
 			return err
@@ -513,6 +528,23 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 
 func ParseRaw(data []byte, path string) (RawProfile, error) {
 	return parseRaw(data, path)
+}
+
+// profileNameRe is the single strict grammar for profile names. It matches
+// Docker's container-name charset, so the derived container name
+// (tpd-<name>-<rand> in docker_run.go) and Hostname are always valid:
+// [a-zA-Z0-9][a-zA-Z0-9._-]*. Rejects ':', '\', '/', whitespace, and control
+// characters. Applied uniformly to CLI input (ValidateName), names derived
+// from user filenames, and the container name/hostname construction.
+var profileNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// validateFilenameName applies profileNameRe to names derived from filenames,
+// additionally rejecting ".." for path safety.
+func validateFilenameName(name, path string) error {
+	if !profileNameRe.MatchString(name) || strings.Contains(name, "..") {
+		return ProfileError{Path: path, Message: "invalid profile name derived from filename: " + name}
+	}
+	return nil
 }
 
 func validateFragmentName(name string, rc RawProfile) error {

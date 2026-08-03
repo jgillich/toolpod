@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/distribution/reference"
 )
 
 var busNameRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\.[*])?$`)
@@ -38,6 +40,14 @@ func validate(rc RawProfile) error {
 	}
 	if rc.Image == "" {
 		return ProfileError{Path: rc.Path, Message: "missing required field: image"}
+	}
+	if rc.Image != "" {
+		if strings.ContainsAny(rc.Image, "\x00\n\r") {
+			return ProfileError{Path: rc.Path, Message: "image: must not contain control characters"}
+		}
+		if _, err := reference.ParseNormalizedNamed(rc.Image); err != nil {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("image: invalid image reference %q: %v", rc.Image, err)}
+		}
 	}
 	if err := validatePorts(rc); err != nil {
 		return err
@@ -212,9 +222,9 @@ func validateTools(rc RawProfile) error {
 }
 
 func validateEnv(rc RawProfile) error {
-	for key, value := range rc.Env {
-		if !envKeyRe.MatchString(key) || containsControl(key) || containsControl(value) {
-			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("environment: invalid key/value %q", key)}
+	for k, v := range rc.Env {
+		if !envKeyRe.MatchString(k) || containsControl(k) || containsControl(v) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("environment: invalid key %q", k)}
 		}
 	}
 	return nil
@@ -222,7 +232,7 @@ func validateEnv(rc RawProfile) error {
 
 func validateNetwork(rc RawProfile) error {
 	if rc.Network != "" && (!networkRe.MatchString(rc.Network) || containsControl(rc.Network)) {
-		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid value %q", rc.Network)}
+		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid network name %q", rc.Network)}
 	}
 	return nil
 }
@@ -258,8 +268,8 @@ func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("profile name is required")
 	}
-	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
-		return fmt.Errorf("invalid profile name %q: must not contain slashes, whitespace, or '..'", name)
+	if !profileNameRe.MatchString(name) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid profile name %q: must match %s and must not contain '..'", name, profileNameRe)
 	}
 	if reservedNames[name] {
 		return fmt.Errorf("profile name %q is reserved (collides with a subcommand)", name)

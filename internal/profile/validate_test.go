@@ -50,6 +50,26 @@ func TestValidateValid(t *testing.T) {
 	}
 }
 
+func TestValidateImage(t *testing.T) {
+	base := Profile{Version: 1, Command: []string{"sh"}}
+	valid := []string{"debian", "debian:13-slim", "docker.io/library/debian:13", "ghcr.io/org/repo:v1"}
+	for _, img := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Image = img
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(image=%q) = %v, want nil", img, err)
+		}
+	}
+	invalid := []string{"debian:13-slim\nRUN id", "../evil", "debian\x00x", "debian:13 slim"}
+	for _, img := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Image = img
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(image=%q) = nil, want error", img)
+		}
+	}
+}
+
 func TestValidateName(t *testing.T) {
 	valid := []string{"foo", "my-agent", "a.b", "opencode", "x_y"}
 	for _, name := range valid {
@@ -325,6 +345,8 @@ func TestValidateEnv(t *testing.T) {
 	}
 	for _, bad := range []map[string]string{
 		{"BAD KEY": "x"},
+		{"bad-key": "x"},
+		{"GOOD\nKEY": "x"},
 		{"1BAD": "x"},
 		{"GOOD": "bad\nvalue"},
 		{"GOOD": "bad\x00value"},
@@ -346,7 +368,7 @@ func TestValidateNetwork(t *testing.T) {
 			t.Errorf("validate(network=%q) = %v, want nil", nw, err)
 		}
 	}
-	for _, nw := range []string{"host\n", "bad network", "net;x"} {
+	for _, nw := range []string{"host\n", "bad network", "net;x", "bad/name"} {
 		rc := RawProfile{Profile: base}
 		rc.Network = nw
 		if err := validate(rc); err == nil {
