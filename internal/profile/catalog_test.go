@@ -221,7 +221,7 @@ func TestDefaultProfileDirHonorsXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/custom-config")
 	t.Setenv("HOME", "/tmp/fake-home")
 	got := DefaultProfileDir()
-	want := "/tmp/custom-config/tpod/profiles"
+	want := "/tmp/custom-config/tpd/profiles"
 	if got != want {
 		t.Errorf("DefaultProfileDir() = %q, want %q", got, want)
 	}
@@ -235,7 +235,7 @@ func TestDefaultProfileDirFallback(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", "/tmp/fake-home")
 	got := DefaultProfileDir()
-	want := "/tmp/fake-home/.config/tpod/profiles"
+	want := "/tmp/fake-home/.config/tpd/profiles"
 	if got != want {
 		t.Errorf("DefaultProfileDir() = %q, want %q", got, want)
 	}

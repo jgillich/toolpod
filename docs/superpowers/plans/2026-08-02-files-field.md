@@ -132,7 +132,7 @@ func TestValidateFiles(t *testing.T) {
 		target string
 		f      File
 	}{
-		{"absolute target", "/etc/tpod.conf", File{Content: "hi"}},
+		{"absolute target", "/etc/tpd.conf", File{Content: "hi"}},
 		{"tilde target", "~/.config/foo", File{Content: "hi"}},
 		{"explicit mode", "/tmp/x", File{Content: "hi", Mode: 0o600}},
 		{"tilde alone", "~", File{Content: "hi"}},
@@ -382,21 +382,21 @@ git commit -m "feat(profile): resolve ~ and templates in files: targets and cont
 
 **Files:**
 - Modify: `internal/runtime/runtime.go` (add `FileSpec` struct + `Files` field)
-- Modify: `pkg/tpod/types.go` (add `FileSpec` alias)
-- Modify: `pkg/tpod/spec.go` (map `cfg.Files` → `spec.Files`, default mode, sort)
-- Test: `pkg/tpod/spec_test.go`
+- Modify: `pkg/tpd/types.go` (add `FileSpec` alias)
+- Modify: `pkg/tpd/spec.go` (map `cfg.Files` → `spec.Files`, default mode, sort)
+- Test: `pkg/tpd/spec_test.go`
 
 **Interfaces:**
 - Consumes: `profile.File{Content string, Mode uint32}`; `buildSpec(opts LaunchOpts, cfg profile.Profile, mode, hostHome, runtimeHome string) (Spec, error)`.
 - Produces:
   - `type FileSpec struct { Target, Content string; Mode uint32 }`
   - `Spec.Files []FileSpec`
-  - `pkg/tpod.FileSpec = runtime.FileSpec` (alias)
+  - `pkg/tpd.FileSpec = runtime.FileSpec` (alias)
   - `buildSpec` sets `Spec.Files` — targets already `~`-expanded and content already rendered by `ResolveTildes`.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `pkg/tpod/spec_test.go` (create if absent):
+Append to `pkg/tpd/spec_test.go` (create if absent):
 
 ```go
 func TestBuildSpecMapsFiles(t *testing.T) {
@@ -438,11 +438,11 @@ func TestBuildSpecFilesDefaultMode(t *testing.T) {
 }
 ```
 
-Check the imports at the top of `spec_test.go` — it must already import `github.com/jgillich/tpod/internal/profile` (it does in the existing suite; add if not).
+Check the imports at the top of `spec_test.go` — it must already import `github.com/jgillich/tpd/internal/profile` (it does in the existing suite; add if not).
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `go test ./pkg/tpod/ -run TestBuildSpecFiles -v`
+Run: `go test ./pkg/tpd/ -run TestBuildSpecFiles -v`
 Expected: FAIL — `FileSpec` undefined.
 
 - [ ] **Step 3: Add `FileSpec` to the runtime spec**
@@ -467,7 +467,7 @@ Add to the `Spec` struct, after `Repos`:
 
 - [ ] **Step 4: Add the `FileSpec` alias**
 
-In `pkg/tpod/types.go`, in the type-alias block, add:
+In `pkg/tpd/types.go`, in the type-alias block, add:
 
 ```go
 	Repo          = runtime.Repo
@@ -476,7 +476,7 @@ In `pkg/tpod/types.go`, in the type-alias block, add:
 
 - [ ] **Step 5: Map `cfg.Files` in `buildSpec`**
 
-In `pkg/tpod/spec.go`, after the `repos := make(map[string]Repo, ...)` block (which ends with the `for name, r := range cfg.Repos` loop), add:
+In `pkg/tpd/spec.go`, after the `repos := make(map[string]Repo, ...)` block (which ends with the `for name, r := range cfg.Repos` loop), add:
 
 ```go
 	files := make([]FileSpec, 0, len(cfg.Files))
@@ -494,13 +494,13 @@ Add `Files: files,` to the returned `Spec` literal (next to `Repos: repos,`).
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `go test ./pkg/tpod/ ./internal/runtime/`
+Run: `go test ./pkg/tpd/ ./internal/runtime/`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add internal/runtime/runtime.go pkg/tpod/types.go pkg/tpod/spec.go pkg/tpod/spec_test.go
+git add internal/runtime/runtime.go pkg/tpd/types.go pkg/tpd/spec.go pkg/tpd/spec_test.go
 git commit -m "feat(runtime): plumb files: through Spec and buildSpec"
 ```
 
@@ -533,7 +533,7 @@ import (
 func TestTarFiles(t *testing.T) {
 	files := []FileSpec{
 		{Target: "/root/.config/foo", Content: "hello\n", Mode: 0o600},
-		{Target: "/etc/tpod.conf", Content: "x", Mode: 0o644},
+		{Target: "/etc/tpd.conf", Content: "x", Mode: 0o644},
 	}
 	data, err := tarFiles(files, 1000, 1000)
 	if err != nil {
@@ -673,10 +673,10 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		ProfileName: "test-files",
 		Image:       integrationImage,
 		Files: []FileSpec{
-			{Target: "/root/.config/tpod-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
+			{Target: "/root/.config/tpd-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
 		},
 		// Existence + content + permissions are all exercised end-to-end.
-		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644"`},
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpd-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpd-test/deep.conf)" = "644"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: "B"},
 		RuntimeHome: "/root",
 		Network:     "none",

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/client"
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 var _ Runtime = (*DockerRuntime)(nil)

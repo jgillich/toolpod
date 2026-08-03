@@ -11,7 +11,7 @@ import (
 func TestTarFiles(t *testing.T) {
 	files := []FileSpec{
 		{Target: "/root/.config/foo", Content: "hello\n", Mode: 0o600},
-		{Target: "/etc/tpod.conf", Content: "x", Mode: 0o644},
+		{Target: "/etc/tpd.conf", Content: "x", Mode: 0o644},
 	}
 	data, err := tarFiles(files, 1000, 1000)
 	if err != nil {

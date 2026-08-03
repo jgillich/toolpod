@@ -11,18 +11,18 @@ import (
 	"text/tabwriter"
 
 	"github.com/alecthomas/kong"
-	"github.com/jgillich/tpod/internal/catalog"
-	"github.com/jgillich/tpod/internal/doctor"
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/prune"
-	"github.com/jgillich/tpod/internal/scaffold"
-	"github.com/jgillich/tpod/internal/ui"
-	"github.com/jgillich/tpod/pkg/tpod"
+	"github.com/jgillich/tpd/internal/catalog"
+	"github.com/jgillich/tpd/internal/doctor"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/prune"
+	"github.com/jgillich/tpd/internal/scaffold"
+	"github.com/jgillich/tpd/internal/ui"
+	"github.com/jgillich/tpd/pkg/tpd"
 	"gopkg.in/yaml.v3"
 )
 
 type LaunchCmd struct {
-	// Tpod-owned flags. They appear before the profile name; kong
+	// Tpd-owned flags. They appear before the profile name; kong
 	// parses them as part of the default command.
 	Command   string `short:"c" help:"Command to run in the profile (shell only)."`
 	Workspace string `help:"Workspace directory to mount (default: $PWD)."`
@@ -48,9 +48,9 @@ type DoctorCmd struct {
 }
 
 type PruneCmd struct {
-	All     bool `help:"Remove all tpod-managed resources, even ones the catalog still references."`
-	Volumes bool `help:"Scope to tpod-managed volumes only (default: both volumes and images)."`
-	Images  bool `help:"Scope to tpod/packages:* derived images only (default: both volumes and images)."`
+	All     bool `help:"Remove all tpd-managed resources, even ones the catalog still references."`
+	Volumes bool `help:"Scope to tpd-managed volumes only (default: both volumes and images)."`
+	Images  bool `help:"Scope to tpd/packages:* derived images only (default: both volumes and images)."`
 	Force   bool `help:"Skip confirmation prompt."`
 	Yes     bool `short:"y" help:"Skip confirmation prompt (short)."`
 }
@@ -62,7 +62,7 @@ type CLI struct {
 	Edit   ProfileEditCmd `cmd:"" help:"Open the user profile file in $EDITOR."`
 	List   ProfileListCmd `cmd:"" help:"List all profiles and fragments."`
 	Doctor DoctorCmd      `cmd:"" help:"Run environment diagnostics."`
-	Prune  PruneCmd       `cmd:"" help:"Remove tpod-managed volumes and images."`
+	Prune  PruneCmd       `cmd:"" help:"Remove tpd-managed volumes and images."`
 }
 
 type ProfileShowCmd struct {
@@ -79,12 +79,12 @@ type ProfileListCmd struct{}
 func main() {
 	var cli CLI
 	parser := kong.Must(&cli,
-		kong.Name("tpod"),
+		kong.Name("tpd"),
 		kong.Description("ephemeral dev environments"),
 	)
 	args := os.Args[1:]
 	if len(args) == 0 {
-		// Bare tpod would select the default launch command and print only its
+		// Bare tpd would select the default launch command and print only its
 		// help; route it through --help to show the full command list.
 		args = []string{"--help"}
 	}
@@ -112,7 +112,7 @@ func (l *LaunchCmd) Run(ctx *kong.Context) error {
 		workspace = wd
 	}
 
-	result := tpod.Launch(context.Background(), tpod.LaunchOpts{
+	result := tpd.Launch(context.Background(), tpd.LaunchOpts{
 		ProfileName: profileName,
 		Workspace:   workspace,
 		DryRun:      l.DryRun,
@@ -318,7 +318,7 @@ func builtinEditSeed(kind, name string, resolved []byte) []byte {
 	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", name)
 	b.WriteString(rule)
 	fmt.Fprintf(&b, "# Resolved %s (reference) — snapshot from when this file was created;\n", kind)
-	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpod show --resolved %s`\n", name)
+	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", name)
 	fmt.Fprintf(&b, "# for the current resolved %s.\n", kind)
 	b.WriteString(rule)
 	b.WriteString("\n")

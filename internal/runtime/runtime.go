@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 // CacheSubpath derives the stable per-target cache key: the first 8 hex chars

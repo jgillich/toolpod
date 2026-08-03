@@ -5,7 +5,7 @@ Status: Approved design
 
 ## Problem
 
-The single base image `Dockerfile` (`ghcr.io/jgillich/tpod-mise`) has grown to
+The single base image `Dockerfile` (`ghcr.io/jgillich/tpd-mise`) has grown to
 89 lines of `apt-get install` covering every fragment and profile in the
 catalog — PHP build deps (`libxml2-dev`, `libicu-dev`, `libonig-dev`, `libzip-dev`,
 `libxslt1-dev`, `libpq-dev`, `libmariadb-dev`, `bison`, `re2c`, …), the
@@ -20,8 +20,8 @@ The `build:` escape hatch — point a profile at a custom Dockerfile and force a
 rebuild with `--rebuild` — was removed on 2026-07-31 per
 `2026-07-31-remove-dockerfile-builds-design.md`. The removal was motivated
 not just by the feature being unused dead weight but by a deeper mismatch:
-`build:` didn't align with tpod's vision and was a can of worms for users
-and tpod itself. Today there is no per-profile path to system libraries.
+`build:` didn't align with tpd's vision and was a can of worms for users
+and tpd itself. Today there is no per-profile path to system libraries.
 
 ## Goal
 
@@ -33,8 +33,8 @@ uses the container runtime's native image cache — no relocatable-install hacks
 no foreign package manager, no user-visible "rebuild" step.
 
 Single sentence: a profile/fragment declares `packages:` (a list of apt
-package names); tpod's `Prepare` step lazily builds and tags a derived image
-`tpod/packages:<hash>`, where `<hash>` is the first 16 hex chars of
+package names); tpd's `Prepare` step lazily builds and tags a derived image
+`tpd/packages:<hash>`, where `<hash>` is the first 16 hex chars of
 `sha256(<base-image-id> + \u0000 + sorted(<packages>).join(\u0001))`,
 caches it for reuse, and returns that ref to be used as the runtime image. The
 base Dockerfile shrinks back to "the OS + `mise` + the things every profile
@@ -70,7 +70,7 @@ Debian way), and the OCI image cache is the naturally-suited store.
 Researched and rejected during brainstorming:
 
 - **Nix / nix-portable**: covers every dep in the Dockerfile, but Nix's "store
-  paths are everything" model fights tpod's "workspace mounted from host, mise
+  paths are everything" model fights tpd's "workspace mounted from host, mise
   shims on `PATH`, AppImage extracted into `/mise`" model. User ruled it out as
   too foreign.
 - **vcpkg**: prototyped in an untracked `Dockerfile.vcpkg` and confirmed to
@@ -146,27 +146,27 @@ identically for build and runtime deps because nothing is relocated.
   (extended `Prepare`) and a new helper file
   `internal/runtime/docker_build.go` (image-id resolution, tag derivation,
   in-memory Dockerfile synthesis, `cli.ImageBuild` invocation).
-- A redesigned `tpod prune` in `cmd/tpod/cli.go` and
-  `internal/prune/prune.go`. Today `tpod prune` removes **all** tpod-managed
+- A redesigned `tpd prune` in `cmd/tpd/cli.go` and
+  `internal/prune/prune.go`. Today `tpd prune` removes **all** tpd-managed
   volumes (the existing `--volumes` flag is parsed but ignored); this design
   changes the default to remove only **unused** resources and adds an
   `--all` flag to remove everything. Liveness is catalog-inferred: a
   resource is "used" if it would be produced by some currently resolvable
-  profile (built-in + user) — `tpod-mise` if any profile resolves;
-  `tpod-cache-<name>` if any profile declares `caches.<name>`;
-  `tpod/packages:<hash>` if any profile's `(base-image-id, merged-packages,
+  profile (built-in + user) — `tpd-mise` if any profile resolves;
+  `tpd-cache-<name>` if any profile declares `caches.<name>`;
+  `tpd/packages:<hash>` if any profile's `(base-image-id, merged-packages,
   merged-repos)` hash matches (computed from locally-inspected base images;
   profiles whose base image isn't local contribute no "used" image hashes since
   the derived image can't exist either). Scope with `--volumes` / `--images`
-  (default: both). `--all` removes every tpod-managed volume and every
-  `tpod/packages:*` image regardless of liveness. `--force`/`-y` skip the
+  (default: both). `--all` removes every tpd-managed volume and every
+  `tpd/packages:*` image regardless of liveness. `--force`/`-y` skip the
   confirmation prompt, unchanged.
-- `tpod doctor` reports the count and total reclaimable size of
-  `tpod/packages:*` derived images (best-effort via `cli.ImageList`).
+- `tpd doctor` reports the count and total reclaimable size of
+  `tpd/packages:*` derived images (best-effort via `cli.ImageList`).
 
 ### Changed
 
-- `pkg/tpod/spec.go` — `Spec` gains a `Packages []string` field; `buildSpec`
+- `pkg/tpd/spec.go` — `Spec` gains a `Packages []string` field; `buildSpec`
   copies `cfg.Packages` into `spec.Packages`.
 - `internal/runtime/docker_prepare.go` — `Prepare` resolves the base image's
   ID (`ImageInspectWithRaw(...).ID`, the content-addressed image-config SHA —
@@ -178,7 +178,7 @@ identically for build and runtime deps because nothing is relocated.
   repos early with a deferred-scope error.
 - `internal/runtime/runtime.go` — `Spec` gains `Repos map[string]Repo` (a
   mirror of the profile type, keeping runtime independent of profile);
-  `pkg/tpod/spec.go`'s `buildSpec` maps `cfg.Repos` into it.
+  `pkg/tpd/spec.go`'s `buildSpec` maps `cfg.Repos` into it.
 - `internal/catalog/profiles/mise.yaml` — gains a `packages:` block carrying
      the general C toolchain (`build-essential`, `cmake`, `ninja-build`, `clang`,
      `pkg-config`, `autoconf`, `automake`, `libtool`, `bison`, `re2c`, `python3`,
@@ -207,10 +207,10 @@ identically for build and runtime deps because nothing is relocated.
   at launch; the appimage backend swaps it into bundles). Its fallback execs a
   sibling `xdg-open.real` when present (AppImage bundles) else `/usr/bin/xdg-open`.
 - `README.md` — `packages:` added to the profile schema reference; merge
-  semantics documented; `tpod prune --images` documented; the "host lacks build
+  semantics documented; `tpd prune --images` documented; the "host lacks build
   permission" escape hatch (ship a custom `image:` yourself) documented.
 - `AGENTS.md` — note added under "Conventions" that profiles declare
-  per-profile system deps via `packages:` and that tpod auto-builds derived
+  per-profile system deps via `packages:` and that tpd auto-builds derived
   images keyed on `(base-image-id, packages)`.
 
 ### Out of scope
@@ -221,7 +221,7 @@ identically for build and runtime deps because nothing is relocated.
   store. Sharing across hosts would be a v2 follow-up (the build is
   deterministic so the tag is portable).
 - Concurrency control on derived-image builds. Two simultaneous launches of
-  profiles that resolve to the same `tpod/packages:<hash>` tag both call
+  profiles that resolve to the same `tpd/packages:<hash>` tag both call
   `imageExists`, both see false, both start a build. Docker handles concurrent
   builds fine. One wasted build is acceptable in v1; a host-level lock on
   build keys is a v2 follow-up.
@@ -236,15 +236,15 @@ identically for build and runtime deps because nothing is relocated.
 
 ### Image naming & cache key
 
-Derived images are tagged `tpod/packages:<hash>` where `<hash>` is the first
+Derived images are tagged `tpd/packages:<hash>` where `<hash>` is the first
 16 hex chars of `sha256(<base-image-id> + \u0000 +
 sorted(<packages>).join(\u0001))`. Deterministic for a given base image and
 package set. When a profile also declares `repos:`, the hash gains a trailing
 `\u0000 + sorted(canonical-repos).join(\u0002)` segment (see "Custom apt
 sources" below); the segment is appended **only when non-empty**, so a
 packages-only profile keeps the byte-identical pre-repos hash and its cached
-derived image survives the upgrade. The tag namespace `tpod/packages:<hash>`
-(not `tpod/<profile>:<hash>`) deliberately excludes `spec.ProfileName` from
+derived image survives the upgrade. The tag namespace `tpd/packages:<hash>`
+(not `tpd/<profile>:<hash>`) deliberately excludes `spec.ProfileName` from
 the tag: the cache key is `(base-image-id, package set, repo set)`, not
 `(profile, base-image-id, ...)`. Two profiles that declare the same `packages:`
 (or whose merged package sets match) share one derived image — one
@@ -271,7 +271,7 @@ registry state. Using it eliminates the "no digest available" fallback edge
 case entirely.
 
 The hash includes the base image ID, so when the base image is rebuilt
-(`make image` bumps `ghcr.io/jgillich/tpod-mise`), every affected derived
+(`make image` bumps `ghcr.io/jgillich/tpd-mise`), every affected derived
 image is automatically invalidated on the next run — a new base image gets a
 new ID, the derived tag's hash changes, `imageExists` misses, and a fresh
 derived image is built. No manual "pass `--rebuild`"; the cache naturally
@@ -305,7 +305,7 @@ repo name. The `.sources` and key are resolved at build time by
 The extrepo package is **not** in the base image.
 
 `FROM` uses the original base-image **reference** (e.g.
-`ghcr.io/jgillich/tpod-mise:latest`), not the image ID. `ensureImagePulled`
+`ghcr.io/jgillich/tpd-mise:latest`), not the image ID. `ensureImagePulled`
 has already pulled the exact image, so Docker resolves `FROM <base-ref>` to
 that local image — we build against the same filesystem we hashed. The image
 ID is used only as a hash input, not as a `FROM` target, because image IDs
@@ -347,7 +347,7 @@ per repo, sorted by map key, entries joined with `\u0002` (distinct from the
 in-entry `\u0001`) so the encoding is injective even with arbitrary URL
 characters. The repos segment joins the hash only when non-empty, preserving
 back-compat for packages-only profiles. The hash is **name-based** (the
-extrepo catalog name, not the resolved URL/key), so `tpod prune` — which
+extrepo catalog name, not the resolved URL/key), so `tpd prune` — which
 computes "used" tags offline from profile repos — needs no network; a repo
 whose catalog entry rotates (key/URL change) is only picked up when the
 derived image is rebuilt for another reason.
@@ -438,7 +438,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
   first run.
 - **Cache locality**: derived images live in the local Docker image store
   alongside the base image, cleaned up by `docker image prune` or
-  `tpod prune --images` (which removes all `tpod/packages:<tag>` images
+  `tpd prune --images` (which removes all `tpd/packages:<tag>` images
   with `docker image prune` semantics — no catalog-liveness inference).
 
 ### Failure modes & edge cases
@@ -463,7 +463,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
    unreachable in the way a `RepoDigests[0]` lookup could.
 5. **Concurrent launches of two profiles that resolve to the same derived
    tag** (same base, same merged package set) — both call `imageExists` on the
-   same `tpod/packages:<hash>`, both see false (if first time), both start a
+   same `tpd/packages:<hash>`, both see false (if first time), both start a
    build to the same tag. Docker's tag operation is last-writer-wins at the
    *tag* level but content-addressed at the layer level; both builds produce
    the same layers, so the loser's `ImageBuild` either succeeds silently or
@@ -479,12 +479,12 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
    `libxml/HTMLparser.h` isn't there. Same failure mode a misnamed apt entry
    causes today. Validation catches syntactic bad names but not
    archive-existence; the missing header surfaces at compile time.
-8. **Disk space accumulation** — `tpod prune` (default) removes only
-   unused tpod-managed resources: volumes and `tpod/packages:<hash>` images
+8. **Disk space accumulation** — `tpd prune` (default) removes only
+   unused tpd-managed resources: volumes and `tpd/packages:<hash>` images
    whose `(base-image-id, packages, repos)` combo doesn't match any currently
    resolvable profile's computed hash (or `caches.<name>` for volumes).
-   `tpod prune --all`
-   removes everything tpod-managed regardless of liveness. `--volumes` /
+   `tpd prune --all`
+   removes everything tpd-managed regardless of liveness. `--volumes` /
    `--images` scope to one resource type; `--force`/`-y` skip the prompt.
    Liveness inference is catalog-driven, so a user-created profile that's
    momentarily unresolvable (typo, missing fragment) *does* lose its
@@ -502,7 +502,7 @@ Sequential; each step is independently shippable.
 2. **Derived-image build engine.** Implement
    `internal/runtime/docker_build.go` (`resolveImageID`, `derivedTag`,
    `buildDerivedImage`, in-memory Dockerfile synthesis, streamed build).
-   Extend `Prepare`. `pkg/tpod/spec.go` adds `Spec.Packages` and `buildSpec`
+   Extend `Prepare`. `pkg/tpd/spec.go` adds `Spec.Packages` and `buildSpec`
    maps `cfg.Packages` to it. Catalog YAMLs still don't declare packages;
    behavior identical to today for built-in profiles. Tests with a fake
    `DockerRuntime` covering the new code paths: `derivedTag` determinism (same
@@ -522,16 +522,16 @@ Sequential; each step is independently shippable.
    image built once per `(base-image-id, packages)` combo. First run of any
    profile after migration pays the one-time build cost; subsequent runs are
    instant. `Dockerfile` shrinks accordingly.
-4. **Prune + doctor extensions.** Redesign `tpod prune` in
-   `cmd/tpod/cli.go` and `internal/prune/prune.go`: default = remove
-   catalog-unused volumes and `tpod/packages:<hash>` images; `--all` =
-   remove all tpod-managed resources; `--volumes`/`--images` scope; reuse
-   `--force`/`-y`. `tpod doctor` reports `tpod/packages:*` image count
+4. **Prune + doctor extensions.** Redesign `tpd prune` in
+   `cmd/tpd/cli.go` and `internal/prune/prune.go`: default = remove
+   catalog-unused volumes and `tpd/packages:<hash>` images; `--all` =
+   remove all tpd-managed resources; `--volumes`/`--images` scope; reuse
+   `--force`/`-y`. `tpd doctor` reports `tpd/packages:*` image count
    and reclaimable space.
 5. **Docs.** Update `README.md` schema reference, merge semantics,
-   `tpod prune --images`, and the "host lacks build permission" escape hatch.
+   `tpd prune --images`, and the "host lacks build permission" escape hatch.
    Update `AGENTS.md`: profiles declare per-profile system deps via
-   `packages:`, tpod auto-builds derived images keyed on `(base-image-id,
+   `packages:`, tpd auto-builds derived images keyed on `(base-image-id,
    packages)`.
 
 ## Tests
@@ -549,9 +549,9 @@ Sequential; each step is independently shippable.
   contains the sorted, shell-quoted package list and the base-ref pinned
   `FROM`; empty-packages short-circuit; build invocation exercised against a
   fake `client.Client` like the existing `internal/runtime` fake.
-- `cmd/tpod/cli_test.go` (or a new `internal/prune/prune_test.go`) —
-  `tpod prune` (default) removes only catalog-unused volumes and
-  `tpod/packages:<hash>` images; `--all` removes everything tpod-managed;
+- `cmd/tpd/cli_test.go` (or a new `internal/prune/prune_test.go`) —
+  `tpd prune` (default) removes only catalog-unused volumes and
+  `tpd/packages:<hash>` images; `--all` removes everything tpd-managed;
   `--volumes` / `--images` scope; `--force`/`-y` skip the prompt.
 - `go test ./...` and `go vet ./...` must pass.
 
@@ -568,12 +568,12 @@ Sequential; each step is independently shippable.
 ## Relationship to the removed `build:` feature
 
 `build:` was removed 2026-07-31 as dead weight and because it didn't align
-with tpod's vision and was a can of worms (see the justification in
+with tpd's vision and was a can of worms (see the justification in
 `2026-07-31-remove-dockerfile-builds-design.md`). This design brings back
 the part that aligned — automated derived-image build keyed on a declarative
 input — without the can of worms:
 
-- No user-owned Dockerfile (tpod synthesises it from `packages:`).
+- No user-owned Dockerfile (tpd synthesises it from `packages:`).
 - No `--rebuild` flag (content-addressed tag; base-image bumps invalidate
   automatically).
 - No `depends_on` resolver (one derived image per `(base-image-id, packages)`

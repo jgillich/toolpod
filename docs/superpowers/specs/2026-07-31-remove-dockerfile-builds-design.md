@@ -12,10 +12,10 @@ dead weight: an entire `internal/build` package, a topological dependency
 resolver, drift-detection hints, and the `--rebuild` flag — roughly 400 lines
 including tests.
 
-Beyond dead weight, `build:` didn't align with tpod's vision and was a can
+Beyond dead weight, `build:` didn't align with tpd's vision and was a can
 of worms: per-profile Dockerfiles invert the "one base image serves every
 profile" pitch, push open-ended build responsibility onto users, and saddle
-tpod with build-context path resolution, `depends_on` cycles, drift
+tpd with build-context path resolution, `depends_on` cycles, drift
 detection, and `--rebuild` semantics — permanent support surface for a
 feature that works against the tool's grain.
 

@@ -1,4 +1,4 @@
-package tpod
+package tpd
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/runtime"
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 // PortAllocator reserves an unused host port for a published binding.

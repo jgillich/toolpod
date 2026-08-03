@@ -1,69 +1,69 @@
-# tpod
+# tpd
 
-> **Beta.** tpod is early and currently only supports **Podman on Linux**. Docker and other platforms may work but are untested during this phase.
+> **Beta.** tpd is early and currently only supports **Podman on Linux**. Docker and other platforms may work but are untested during this phase.
 
-Disposable container environments driven by composable profiles: declare tools, mounts, and caches once, then `tpod <profile>` spawns the container, runs your command, and removes it on exit — with a persistent [mise](https://mise.jdx.dev/) toolchain shared across runs.
+Disposable container environments driven by composable profiles: declare tools, mounts, and caches once, then `tpd <profile>` spawns the container, runs your command, and removes it on exit — with a persistent [mise](https://mise.jdx.dev/) toolchain shared across runs.
 
-`tpod opencode` spins up a container, mounts your current directory, runs the agent, and removes the container on exit. The next run is instant — mise, your tools, and your caches are already warm in shared volumes.
+`tpd opencode` spins up a container, mounts your current directory, runs the agent, and removes the container on exit. The next run is instant — mise, your tools, and your caches are already warm in shared volumes.
 
-![](./assets/tpod-banner.svg)
+![](./assets/tpd-banner.svg)
 
 ## Why
 
-Every developer eventually writes scripts that launch containers with the right mounts, SSH keys, caches, tool versions, and AI agents. tpod replaces them with **user-owned, reusable profiles** that follow you to every project without repo changes.
+Every developer eventually writes scripts that launch containers with the right mounts, SSH keys, caches, tool versions, and AI agents. tpd replaces them with **user-owned, reusable profiles** that follow you to every project without repo changes.
 
-Unlike [devcontainers](https://containers.dev/) (project-owned, checked into the repo), tpod profiles are user-owned:
+Unlike [devcontainers](https://containers.dev/) (project-owned, checked into the repo), tpd profiles are user-owned:
 
-- Live in `~/.config/tpod/` — no repo changes needed.
+- Live in `~/.config/tpd/` — no repo changes needed.
 - Declare tools via mise entries, not image layers — no rebuild when a version bumps.
 - Fresh container each run, removed on exit; shared volumes keep installs and caches warm.
 
 ## Install
 
 ```
-mise use -g github:jgillich/tpod
+mise use -g github:jgillich/tpd
 ```
 
 Or build from source (requires Go):
 
 ```
-go install github.com/jgillich/tpod/cmd/tpod@latest
+go install github.com/jgillich/tpd/cmd/tpd@latest
 ```
 
 Point `DOCKER_HOST` at a **rootless Podman** socket for the best experience (correct file ownership and host-path parity); Docker and rootful Podman also work but mount the workspace at `/workspace` as root — see [Runtime modes](#runtime-modes).
 
 ## Basic usage
 
-tpod-owned flags come **before** the profile name; everything after is passed verbatim to the profile's command.
+tpd-owned flags come **before** the profile name; everything after is passed verbatim to the profile's command.
 
 ```sh
-$ tpod opencode     # run the opencode agent, then remove the container
-$ tpod shell        # a disposable shell with the right tools on PATH
+$ tpd opencode     # run the opencode agent, then remove the container
+$ tpd shell        # a disposable shell with the right tools on PATH
 ```
 
 The first launch pulls the base image, builds the profile's derived image (system packages), and installs tools (slow). Subsequent launches reuse them (instant).
 
-### `tpod init`
+### `tpd init`
 
-`tpod init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches):
+`tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches):
 
 ```sh
-$ tpod init opencode
+$ tpd init opencode
 ```
 
 ### Other commands
 
 ```sh
-tpod doctor              # diagnose runtime, mise, volumes, configs, workspace
-tpod prune               # remove catalog-unused tpod resources (volumes + derived images)
+tpd doctor              # diagnose runtime, mise, volumes, configs, workspace
+tpd prune               # remove catalog-unused tpd resources (volumes + derived images)
 ```
 
 ## Profiles
 
-A profile is a YAML file. Built-ins are embedded in the binary; user profiles live in `~/.config/tpod/profiles/` and shadow built-ins of the same name.
+A profile is a YAML file. Built-ins are embedded in the binary; user profiles live in `~/.config/tpd/profiles/` and shadow built-ins of the same name.
 
 ```yaml
-# ~/.config/tpod/profiles/myagent.yaml
+# ~/.config/tpd/profiles/myagent.yaml
 version: 1
 extends: opencode          # inherit everything, then override below
 command: ["myagent", "--serve"]   # replaces the inherited command
@@ -82,7 +82,7 @@ environment:
   OPENAI_API_KEY: '{{ .Env.OPENAI_API_KEY }}'   # forward a host variable
 ```
 
-If a project has its own `mise.toml`, tpod's shell picks it up as an override; otherwise the profile's `tools:` map stands alone.
+If a project has its own `mise.toml`, tpd's shell picks it up as an override; otherwise the profile's `tools:` map stands alone.
 
 ### Built-in profiles
 
@@ -137,7 +137,7 @@ Every field is optional except `version`, `image`, and `command`.
 
 ### System packages (`packages:`)
 
-The base image ships the bare OS. Per-profile system libraries are installed into a **derived image** (base + the profile's package list) that tpod builds on first use and reuses; profiles with identical lists share one image. Packages outside Debian's archive need a `repos:` entry:
+The base image ships the bare OS. Per-profile system libraries are installed into a **derived image** (base + the profile's package list) that tpd builds on first use and reuses; profiles with identical lists share one image. Packages outside Debian's archive need a `repos:` entry:
 
 ```yaml
 repos:
@@ -153,23 +153,23 @@ If your engine can't build images, use a custom `image:` that already includes y
 ### Inspecting profiles
 
 ```sh
-$ tpod show shell            # raw on-disk profile
-$ tpod list                  # every profile and fragment
-$ tpod edit myagent          # open in $EDITOR
+$ tpd show shell            # raw on-disk profile
+$ tpd list                  # every profile and fragment
+$ tpd edit myagent          # open in $EDITOR
 ```
 
 ## Fragments
 
-Fragments are small, composable building blocks — a tool's cache, a host config mount, a credential set. `tpod init` merges selected fragments into a user profile. Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning. Fragments may extend other fragments but never profiles.
+Fragments are small, composable building blocks — a tool's cache, a host config mount, a credential set. `tpd init` merges selected fragments into a user profile. Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning. Fragments may extend other fragments but never profiles.
 
 ## Runtime modes
 
-tpod talks to any Docker-API-compatible engine via `DOCKER_HOST`:
+tpd talks to any Docker-API-compatible engine via `DOCKER_HOST`:
 
 - **Rootless Podman (recommended):** workspace at its host absolute path, agent runs as your host user. Paths and file ownership match exactly.
 - **Docker / rootful Podman:** workspace at `/workspace`, agent runs as root. Files are root-owned — use `sudo chown` or switch to rootless Podman.
 
-`tpod doctor` reports which mode is active.
+`tpd doctor` reports which mode is active.
 
 ## License
 

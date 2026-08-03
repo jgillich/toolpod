@@ -1,13 +1,13 @@
-package tpod
+package tpd
 
 import (
 	"fmt"
 	"path/filepath"
 	"sort"
 
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/runtime"
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 // buildSpec assembles a container Spec from a resolved profile and launch opts.
@@ -45,7 +45,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	for name, paths := range cfg.Caches {
 		for _, target := range paths {
 			caches = append(caches, CacheSpec{
-				Name:    "tpod-cache-" + name,
+				Name:    "tpd-cache-" + name,
 				Target:  target,
 				Subpath: runtime.CacheSubpath(target),
 			})

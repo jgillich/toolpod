@@ -15,7 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 	"golang.org/x/sys/unix"
 )
 
@@ -130,7 +130,7 @@ func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
 	// hashed volume backs each target so paths stay separate.
 	spec := Spec{
 		Workspace: WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
-		Caches:    []CacheSpec{{Name: "tpod-cache-mise", Target: "/root/.local/share/mise", Subpath: "deadbeef"}},
+		Caches:    []CacheSpec{{Name: "tpd-cache-mise", Target: "/root/.local/share/mise", Subpath: "deadbeef"}},
 	}
 	for _, subpath := range []bool{true, false} {
 		m, err := buildMounts(spec, "/root", subpath)
@@ -148,11 +148,11 @@ func TestBuildMountsUsesDeclaredCacheForMise(t *testing.T) {
 		}
 		mm := miseMounts[0]
 		if subpath {
-			if mm.Source != "tpod-cache-mise" || mm.Type != mount.TypeVolume || mm.VolumeOptions == nil || mm.VolumeOptions.Subpath != "deadbeef" {
-				t.Errorf("subpath mount = %+v, want volume tpod-cache-mise subpath=deadbeef", mm)
+			if mm.Source != "tpd-cache-mise" || mm.Type != mount.TypeVolume || mm.VolumeOptions == nil || mm.VolumeOptions.Subpath != "deadbeef" {
+				t.Errorf("subpath mount = %+v, want volume tpd-cache-mise subpath=deadbeef", mm)
 			}
-		} else if mm.Source != "tpod-cache-mise-deadbeef" || mm.VolumeOptions != nil {
-			t.Errorf("fallback mount = %+v, want volume tpod-cache-mise-deadbeef", mm)
+		} else if mm.Source != "tpd-cache-mise-deadbeef" || mm.VolumeOptions != nil {
+			t.Errorf("fallback mount = %+v, want volume tpd-cache-mise-deadbeef", mm)
 		}
 	}
 }
@@ -541,7 +541,7 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 }
 
 // containerIPOf resolves the bridge IP of the newest running container for
-// profileName. The container is named tpod-<profile>-<randomID> by Run.
+// profileName. The container is named tpd-<profile>-<randomID> by Run.
 // Stale (exited) containers matching the prefix are skipped.
 func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	cli := rt.cli
@@ -549,7 +549,7 @@ func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prefix := "tpod-" + profileName + "-"
+	prefix := "tpd-" + profileName + "-"
 	var best types.Container
 	for _, c := range containers {
 		if c.State != "running" {
@@ -664,8 +664,8 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if !strings.HasPrefix(imageRef, "tpod/packages:") {
-		t.Errorf("imageRef = %q, want tpod/packages: prefix", imageRef)
+	if !strings.HasPrefix(imageRef, "tpd/packages:") {
+		t.Errorf("imageRef = %q, want tpd/packages: prefix", imageRef)
 	}
 	// Derived image must be present and inspectable.
 	if _, _, err := rt.cli.ImageInspectWithRaw(context.Background(), imageRef); err != nil {
@@ -724,8 +724,8 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 	defer rt.cli.ImageRemove(context.Background(), imageRef, image.RemoveOptions{Force: true, PruneChildren: true})
-	if !strings.HasPrefix(imageRef, "tpod/packages:") {
-		t.Errorf("imageRef = %q, want tpod/packages: prefix", imageRef)
+	if !strings.HasPrefix(imageRef, "tpd/packages:") {
+		t.Errorf("imageRef = %q, want tpd/packages: prefix", imageRef)
 	}
 	// The resolved repo must have produced a deb822 .sources and signing key
 	// in the derived image (the extrepo reimplementation path), and the repo
@@ -765,13 +765,13 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 		ProfileName: "test-files",
 		Image:       integrationImage,
 		Files: []FileSpec{
-			{Target: "/root/.config/tpod-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
+			{Target: "/root/.config/tpd-test/deep.conf", Content: "hello-files\n", Mode: 0o644},
 		},
 		// Existence + content + permissions + ownership are all exercised
 		// end-to-end. Writing a sibling into the same parent dir proves the
 		// parent was chowned to the execution user (a root-owned 0755 parent
 		// would block the write).
-		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpod-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpod-test/deep.conf)" = "644" && test "$(stat -c %u /root/.config/tpod-test/deep.conf)" = "$(id -u)" && echo sibling > /root/.config/tpod-test/sibling.conf && test "$(cat /root/.config/tpod-test/sibling.conf)" = "sibling"`},
+		Command:     []string{"sh", "-c", `test "$(cat /root/.config/tpd-test/deep.conf)" = "hello-files" && test "$(stat -c %a /root/.config/tpd-test/deep.conf)" = "644" && test "$(stat -c %u /root/.config/tpd-test/deep.conf)" = "$(id -u)" && echo sibling > /root/.config/tpd-test/sibling.conf && test "$(cat /root/.config/tpd-test/sibling.conf)" = "sibling"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",

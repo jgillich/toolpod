@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jgillich/tpod/internal/catalog"
+	"github.com/jgillich/tpd/internal/catalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -113,7 +113,7 @@ func LoadProfiles(userDir string) (Catalog, error) {
 			return Catalog{}, err
 		}
 		// User fragments live in a directory parallel to profiles
-		// ($XDG_CONFIG_HOME/tpod/fragments/), not inside the profiles dir.
+		// ($XDG_CONFIG_HOME/tpd/fragments/), not inside the profiles dir.
 		userFragDir := filepath.Join(filepath.Dir(userDir), "fragments")
 		if err := loadUserFragments(userFragDir, entries, fragmentNames); err != nil {
 			return Catalog{}, err
@@ -125,7 +125,7 @@ func LoadProfiles(userDir string) (Catalog, error) {
 
 // LoadProfilesTolerant is like LoadProfiles but skips a malformed user
 // profile/fragment file (logging it via warn) instead of aborting the whole
-// load. Built-ins always load strictly. Used by `tpod prune`, where one
+// load. Built-ins always load strictly. Used by `tpd prune`, where one
 // broken user file must not prevent computing liveness for the rest — a
 // strict abort there is a regression from the old prune (which never read
 // profiles) and risks pruning live resources.
@@ -533,15 +533,15 @@ func DefaultProfileDir() string {
 	if err != nil || base == "" {
 		return ""
 	}
-	return filepath.Join(base, "tpod", "profiles")
+	return filepath.Join(base, "tpd", "profiles")
 }
 
 // DefaultFragmentDir returns the default user fragment directory, a sibling of
-// DefaultProfileDir under the tpod config root.
+// DefaultProfileDir under the tpd config root.
 func DefaultFragmentDir() string {
 	base, err := os.UserConfigDir()
 	if err != nil || base == "" {
 		return ""
 	}
-	return filepath.Join(base, "tpod", "fragments")
+	return filepath.Join(base, "tpd", "fragments")
 }

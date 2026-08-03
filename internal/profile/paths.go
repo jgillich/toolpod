@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 // tmplData is the execution context for path templates. .Env exposes the

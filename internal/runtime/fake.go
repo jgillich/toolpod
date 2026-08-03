@@ -3,7 +3,7 @@ package runtime
 import "context"
 
 // FakeRuntime is a test helper that records Prepare/Run calls. Exported so
-// pkg/tpod tests can import it without redefining.
+// pkg/tpd tests can import it without redefining.
 type FakeRuntime struct {
 	PreparedSpec *Spec
 	RanSpec      *Spec

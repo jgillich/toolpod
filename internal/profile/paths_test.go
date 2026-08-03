@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 func TestResolveTildesMountSourceAndTarget(t *testing.T) {
@@ -75,13 +75,13 @@ func TestResolveTildesEnvPassthroughTemplate(t *testing.T) {
 	// Forwarding a host variable into the container is explicit: reference it
 	// with a template. When the host variable is missing the value resolves
 	// to empty (and the runtime leaves the variable unset).
-	os.Setenv("TPOD_PASSTHROUGH_VAR", "hello")
-	t.Cleanup(func() { os.Unsetenv("TPOD_PASSTHROUGH_VAR") })
+	os.Setenv("TPD_PASSTHROUGH_VAR", "hello")
+	t.Cleanup(func() { os.Unsetenv("TPD_PASSTHROUGH_VAR") })
 
 	cfg := Profile{
 		Env: map[string]string{
-			"PASSTHROUGH": `{{ .Env.TPOD_PASSTHROUGH_VAR }}`,
-			"MISSING":     `{{ .Env.TPOD_PASSTHROUGH_MISSING }}`,
+			"PASSTHROUGH": `{{ .Env.TPD_PASSTHROUGH_VAR }}`,
+			"MISSING":     `{{ .Env.TPD_PASSTHROUGH_MISSING }}`,
 		},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
@@ -97,12 +97,12 @@ func TestResolveTildesEnvPassthroughTemplate(t *testing.T) {
 }
 
 func TestResolveTildesTemplateExpansion(t *testing.T) {
-	os.Setenv("TPOD_TEST_SOCK", "/run/user/1000/podman/podman.sock")
-	t.Cleanup(func() { os.Unsetenv("TPOD_TEST_SOCK") })
+	os.Setenv("TPD_TEST_SOCK", "/run/user/1000/podman/podman.sock")
+	t.Cleanup(func() { os.Unsetenv("TPD_TEST_SOCK") })
 
 	cfg := Profile{
 		Mounts: map[string]Mount{
-			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPOD_TEST_SOCK") "/var/run/docker.sock" }}`, Optional: true},
+			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPD_TEST_SOCK") "/var/run/docker.sock" }}`, Optional: true},
 		},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
@@ -116,10 +116,10 @@ func TestResolveTildesTemplateExpansion(t *testing.T) {
 }
 
 func TestResolveTildesTemplateFallback(t *testing.T) {
-	os.Unsetenv("TPOD_UNSET_VAR")
+	os.Unsetenv("TPD_UNSET_VAR")
 	cfg := Profile{
 		Mounts: map[string]Mount{
-			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "/var/run/docker.sock" }}`, Optional: true},
+			"/var/run/docker.sock": {Source: `{{ or (index .Env "TPD_UNSET_VAR") "/var/run/docker.sock" }}`, Optional: true},
 		},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
@@ -215,10 +215,10 @@ func TestResolveTildesPortsInEnvironment(t *testing.T) {
 }
 
 func TestResolveTildesEmptyMountSourceErrorsWhenRequired(t *testing.T) {
-	os.Unsetenv("TPOD_UNSET_VAR")
+	os.Unsetenv("TPD_UNSET_VAR")
 	cfg := Profile{
 		Mounts: map[string]Mount{
-			"/data": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`},
+			"/data": {Source: `{{ or (index .Env "TPD_UNSET_VAR") "" }}`},
 		},
 	}
 	if _, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil); err == nil {
@@ -227,10 +227,10 @@ func TestResolveTildesEmptyMountSourceErrorsWhenRequired(t *testing.T) {
 }
 
 func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
-	os.Unsetenv("TPOD_UNSET_VAR")
+	os.Unsetenv("TPD_UNSET_VAR")
 	cfg := Profile{
 		Mounts: map[string]Mount{
-			"/data": {Source: `{{ or (index .Env "TPOD_UNSET_VAR") "" }}`, Optional: true},
+			"/data": {Source: `{{ or (index .Env "TPD_UNSET_VAR") "" }}`, Optional: true},
 		},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
@@ -243,9 +243,9 @@ func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
 }
 
 func TestResolveTildesEmptyCacheTargetErrors(t *testing.T) {
-	os.Unsetenv("TPOD_UNSET_VAR")
+	os.Unsetenv("TPD_UNSET_VAR")
 	cfg := Profile{
-		Caches: map[string]CachePaths{"npm": {`{{ or (index .Env "TPOD_UNSET_VAR") "" }}`}},
+		Caches: map[string]CachePaths{"npm": {`{{ or (index .Env "TPD_UNSET_VAR") "" }}`}},
 	}
 	if _, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil); err == nil {
 		t.Fatal("cache with empty rendered target should error, got nil")
@@ -330,12 +330,12 @@ func TestResolveFilesEmptyRenderedTargetRejected(t *testing.T) {
 }
 
 func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
-	os.Setenv("TPOD_TEST_TRAVERSAL", "/..")
-	t.Cleanup(func() { os.Unsetenv("TPOD_TEST_TRAVERSAL") })
+	os.Setenv("TPD_TEST_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_TEST_TRAVERSAL") })
 
 	cfg := Profile{
 		Files: map[string]File{
-			"{{ .Env.TPOD_TEST_TRAVERSAL }}/etc/passwd": {Content: "x"},
+			"{{ .Env.TPD_TEST_TRAVERSAL }}/etc/passwd": {Content: "x"},
 		},
 	}
 	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)

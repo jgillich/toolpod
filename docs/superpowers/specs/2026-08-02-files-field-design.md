@@ -133,7 +133,7 @@ resolved target.
 
 - `internal/runtime/runtime.go` — `Spec` gains
   `Files []FileSpec{Target, Content string, Mode uint32}`.
-- `pkg/tpod/spec.go` — `buildSpec` maps `cfg.Files` → `spec.Files` *after*
+- `pkg/tpd/spec.go` — `buildSpec` maps `cfg.Files` → `spec.Files` *after*
   `ResolveTildes` has already expanded `~` and rendered templates (so the
   runtime sees concrete targets/content and does no templating).
 
@@ -148,7 +148,7 @@ resolved target.
 - `internal/runtime/docker_run_test.go` — `tarFiles` pure-function tests:
   entry per file, mode/uid/gid in headers, correct paths.
 - `internal/runtime/docker_test.go` — integration: profile with `files:`
-  writes `~/.config/tpod-test.conf` inside the container, verified by the
+  writes `~/.config/tpd-test.conf` inside the container, verified by the
   launched command (`cat`), skipped in `-short`/no `DOCKER_HOST`. Include a
   case where the target's parent dir (`~/.config/...`) does not exist, to
   exercise implied-directory creation.

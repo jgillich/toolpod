@@ -1,6 +1,6 @@
-package tpod
+package tpd
 
-import "github.com/jgillich/tpod/internal/runtime"
+import "github.com/jgillich/tpd/internal/runtime"
 
 type (
 	Spec          = runtime.Spec

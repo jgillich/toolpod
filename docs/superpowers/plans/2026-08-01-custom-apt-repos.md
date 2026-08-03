@@ -54,7 +54,7 @@ Validation (`validateRepos`):
 
 ## Derived image
 
-Tag: `tpod/packages:<hash>` where hash now includes repos:
+Tag: `tpd/packages:<hash>` where hash now includes repos:
 ```
 no repos:     sha256(baseID \x00 sorted(packages).join(\x01))
 with repos:   sha256(baseID \x00 sorted(packages).join(\x01) \x00 sorted(canonical-repos).join(\x02))
@@ -98,7 +98,7 @@ Runtime `Repo` mirror struct + `Repos` field in
 `internal/catalog/profiles/mise.yaml`:
 ```yaml
 version: 1
-image: ghcr.io/jgillich/tpod-mise:latest
+image: ghcr.io/jgillich/tpd-mise:latest
 command: ["/usr/bin/mise"]
 repos:
   mise:
@@ -201,13 +201,13 @@ Files:
   - `synthesizeDockerfile` — extend to take `repos`, emit `extrepo enable <ExtRepo>` per sorted repo before apt-get update.
   - `Prepare` path — pass repos; error early on non-extrepo repos.
 - `internal/runtime/docker_prepare.go` — `Prepare` triggers on repos; passes repos to `buildDerivedImage` + `DerivedTag`.
-- `pkg/tpod/spec.go` — `buildSpec` converts `profile.Repo` → `runtime.Repo`.
+- `pkg/tpd/spec.go` — `buildSpec` converts `profile.Repo` → `runtime.Repo`.
 - `internal/prune/prune.go` — `computeUsed` passes `cfg.Repos` to `DerivedTag`.
 - Tests:
   - `docker_build_test.go` — `DerivedTag` varies with repos; `synthesizeDockerfile` contains `extrepo enable mise`; empty repos tag == packages-only tag (back-compat for packages-only profiles).
   - merge/validate tests for repos.
 
-Verify: `go test ./internal/runtime/ ./internal/profile/ ./pkg/tpod/ ./internal/prune/ && go vet ./...`.
+Verify: `go test ./internal/runtime/ ./internal/profile/ ./pkg/tpd/ ./internal/prune/ && go vet ./...`.
 
 ### Step 3 — Catalog + Dockerfile
 
@@ -216,7 +216,7 @@ Files:
 - `Dockerfile` — shrink to ca-certificates + extrepo + xdg-open.
 - `internal/profile/catalog_test.go` — assert mise profile resolves `repos` with `mise: {extrepo: mise}` and `packages` contains `mise`.
 
-Verify: `go test ./... && go vet ./... && tpod doctor` (all 12 profiles still valid).
+Verify: `go test ./... && go vet ./... && tpd doctor` (all 12 profiles still valid).
 
 ### Step 4 — Integration test
 
@@ -238,7 +238,7 @@ Final verify: `go test ./... && go vet ./...`.
 ## Verify at each milestone
 
 - After step 1: `go test ./internal/profile/` — schema/merge/validate green.
-- After step 2: `go test ./internal/runtime/ ./internal/profile/ ./pkg/tpod/ ./internal/prune/` — all green, existing integration test (TestIntegrationPrepareBuildsDerivedImage against the still-unshrunk base) passes.
-- After step 3: `go test ./...` + `tpod doctor` (12 profiles valid) + `tpod shell -c 'mise --version'` (builds the new mise-derived image, runs mise).
+- After step 2: `go test ./internal/runtime/ ./internal/profile/ ./pkg/tpd/ ./internal/prune/` — all green, existing integration test (TestIntegrationPrepareBuildsDerivedImage against the still-unshrunk base) passes.
+- After step 3: `go test ./...` + `tpd doctor` (12 profiles valid) + `tpd shell -c 'mise --version'` (builds the new mise-derived image, runs mise).
 - After step 4: integration test green (`-count=1`).
 - After step 5: docs+tests pass.

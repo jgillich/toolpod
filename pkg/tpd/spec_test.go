@@ -1,12 +1,12 @@
-package tpod
+package tpd
 
 import (
 	"net"
 	"strconv"
 	"testing"
 
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 func fakePortAllocator() PortAllocator {
@@ -157,8 +157,8 @@ func TestBuildSpecBasic(t *testing.T) {
 	if spec.Tools["opencode"] != "latest" {
 		t.Errorf("tools[opencode] = %q", spec.Tools["opencode"])
 	}
-	if len(spec.Caches) != 1 || spec.Caches[0].Name != "tpod-cache-npm" {
-		t.Errorf("Caches = %+v, want one entry tpod-cache-npm", spec.Caches)
+	if len(spec.Caches) != 1 || spec.Caches[0].Name != "tpd-cache-npm" {
+		t.Errorf("Caches = %+v, want one entry tpd-cache-npm", spec.Caches)
 	}
 	if len(spec.Mounts) == 0 {
 		t.Fatal("expected at least one mount")

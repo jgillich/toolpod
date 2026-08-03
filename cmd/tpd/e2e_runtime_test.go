@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func runTpod(t *testing.T, args ...string) (string, error) {
+func runTpd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command(buildTpod(t), args...)
+	cmd := exec.Command(buildTpd(t), args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -35,7 +35,7 @@ func TestE2EDoctor(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, _ := runTpod(t, "doctor")
+	out, _ := runTpd(t, "doctor")
 	if !strings.Contains(out, "runtime:") {
 		t.Errorf("doctor output missing runtime check; got:\n%s", out)
 	}
@@ -51,7 +51,7 @@ func TestE2EPruneForce(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runTpod(t, "prune", "--force", "--volumes")
+	out, err := runTpd(t, "prune", "--force", "--volumes")
 	if err != nil {
 		t.Fatalf("prune: %v\n%s", err, out)
 	}
@@ -67,11 +67,11 @@ func TestE2EShellLaunch(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runTpod(t, "-c", "echo hello-from-tpod", "shell")
+	out, err := runTpd(t, "-c", "echo hello-from-tpd", "shell")
 	if err != nil {
 		t.Fatalf("shell launch: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "hello-from-tpod") {
+	if !strings.Contains(out, "hello-from-tpd") {
 		t.Errorf("shell launch output missing echo; got:\n%s", out)
 	}
 }
@@ -86,7 +86,7 @@ func TestE2EShellMiseOnPath(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runTpod(t, "-c", "command -v jq", "shell")
+	out, err := runTpd(t, "-c", "command -v jq", "shell")
 	if err != nil {
 		t.Fatalf("shell jq lookup: %v\n%s", err, out)
 	}

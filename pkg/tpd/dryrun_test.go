@@ -1,10 +1,10 @@
-package tpod
+package tpd
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/jgillich/tpod/internal/workspace"
+	"github.com/jgillich/tpd/internal/workspace"
 )
 
 func TestRenderSpecPortsAndDevices(t *testing.T) {

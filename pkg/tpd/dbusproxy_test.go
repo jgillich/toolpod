@@ -1,4 +1,4 @@
-package tpod
+package tpd
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpd/internal/profile"
 )
 
 func TestProxyFilterArgs(t *testing.T) {
@@ -79,7 +79,7 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 		t.Fatal("expected a running proxy")
 	}
 	defer cleanup()
-	if !strings.HasPrefix(addr, "unix:path="+dir+"/tpod-bus-") {
+	if !strings.HasPrefix(addr, "unix:path="+dir+"/tpd-bus-") {
 		t.Errorf("addr = %q, want unix:path in XDG_RUNTIME_DIR", addr)
 	}
 	got, err := os.ReadFile(record)
@@ -97,7 +97,7 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 		}
 	}
 	// The socket path must be a positional arg (a plain path).
-	if !strings.Contains(gotS, "\n"+filepath.Join(dir, "tpod-bus-")) {
+	if !strings.Contains(gotS, "\n"+filepath.Join(dir, "tpd-bus-")) {
 		t.Errorf("proxy should be given the socket path as a plain path:\n%s", gotS)
 	}
 }

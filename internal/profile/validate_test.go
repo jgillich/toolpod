@@ -32,7 +32,7 @@ func TestValidateMissingImage(t *testing.T) {
 func TestValidateReservedName(t *testing.T) {
 	for _, name := range []string{"config", "doctor", "help", "version", "completion", "prune", "init"} {
 		rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
-		rc.Path = "/home/me/.config/tpod/" + name + ".yaml"
+		rc.Path = "/home/me/.config/tpd/" + name + ".yaml"
 		err := validateReservedName(rc, name)
 		if err == nil {
 			t.Errorf("expected reserved-name error for %q", name)
@@ -213,7 +213,7 @@ func TestValidateFiles(t *testing.T) {
 		target string
 		f      File
 	}{
-		{"absolute target", "/etc/tpod.conf", File{Content: "hi"}},
+		{"absolute target", "/etc/tpd.conf", File{Content: "hi"}},
 		{"tilde target", "~/.config/foo", File{Content: "hi"}},
 		{"explicit mode", "/tmp/x", File{Content: "hi", Mode: 0o600}},
 		{"tilde alone", "~", File{Content: "hi"}},

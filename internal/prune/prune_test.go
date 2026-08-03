@@ -10,24 +10,24 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
-	"github.com/jgillich/tpod/internal/runtime"
+	"github.com/jgillich/tpd/internal/runtime"
 )
 
-func TestIsTpodVolume(t *testing.T) {
+func TestIsTpdVolume(t *testing.T) {
 	tests := []struct {
 		name string
 		want bool
 	}{
-		{"tpod-mise", true},
-		{"tpod-cache-npm", true},
-		{"tpod-cache-cargo", true},
+		{"tpd-mise", true},
+		{"tpd-cache-npm", true},
+		{"tpd-cache-cargo", true},
 		{"my-volume", false},
 		{"docker-volumes", false},
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := isTpodVolume(tt.name); got != tt.want {
-			t.Errorf("isTpodVolume(%q) = %v, want %v", tt.name, got, tt.want)
+		if got := isTpdVolume(tt.name); got != tt.want {
+			t.Errorf("isTpdVolume(%q) = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
@@ -70,12 +70,12 @@ type errNotFound struct{}
 func (errNotFound) Error() string { return "not found" }
 
 // writeUserProfiles writes the given profile files under a temp dir's
-// tpod/profiles/ and points XDG_CONFIG_HOME there so DefaultProfileDir()
+// tpd/profiles/ and points XDG_CONFIG_HOME there so DefaultProfileDir()
 // resolves to it. Returns the profiles dir.
 func writeUserProfiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	xdg := t.TempDir()
-	profilesDir := filepath.Join(xdg, "tpod", "profiles")
+	profilesDir := filepath.Join(xdg, "tpd", "profiles")
 	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +109,12 @@ func setupFake(t *testing.T) (*fakeClient, string) {
 	fc := &fakeClient{
 		inspects: map[string]string{"mybase:latest": baseID},
 		volumes: []*volume.Volume{
-			{Name: "tpod-cache-usedcache"},
-			{Name: "tpod-cache-orphan"},
+			{Name: "tpd-cache-usedcache"},
+			{Name: "tpd-cache-orphan"},
 		},
 		images: []image.Summary{
 			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"tpod/packages:deadbeefdeadbeef"}},
+			{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}},
 		},
 	}
 	return fc, usedTag
@@ -126,13 +126,13 @@ func TestRunDefaultPrunesUnusedKeepsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Volumes: tpod-cache-usedcache is used; orphan pruned.
-	wantV := []string{"tpod-cache-orphan"}
+	// Volumes: tpd-cache-usedcache is used; orphan pruned.
+	wantV := []string{"tpd-cache-orphan"}
 	if !equalSlice(res.VolumesRemoved, wantV) {
 		t.Errorf("volumes removed = %v, want %v", res.VolumesRemoved, wantV)
 	}
 	// Images: usedTag kept, the other pruned.
-	wantI := []string{"tpod/packages:deadbeefdeadbeef"}
+	wantI := []string{"tpd/packages:deadbeefdeadbeef"}
 	if !equalSlice(res.ImagesRemoved, wantI) {
 		t.Errorf("images removed = %v, want %v", res.ImagesRemoved, wantI)
 	}
@@ -151,15 +151,15 @@ func TestRunPrunesQualifiedDerivedImage(t *testing.T) {
 		inspects: map[string]string{"mybase:latest": baseID},
 		images: []image.Summary{
 			{RepoTags: []string{usedTag}},
-			{RepoTags: []string{"localhost/tpod/packages:deadbeefdeadbeef"}},
-			{RepoTags: []string{"quay.io/tpod/packages:cafebabe"}},
+			{RepoTags: []string{"localhost/tpd/packages:deadbeefdeadbeef"}},
+			{RepoTags: []string{"quay.io/tpd/packages:cafebabe"}},
 		},
 	}
 	res, err := run(context.Background(), fc, Options{Force: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantI := []string{"tpod/packages:deadbeefdeadbeef", "tpod/packages:cafebabe"}
+	wantI := []string{"tpd/packages:deadbeefdeadbeef", "tpd/packages:cafebabe"}
 	sort.Strings(wantI)
 	gotI := append([]string(nil), res.ImagesRemoved...)
 	sort.Strings(gotI)
@@ -177,14 +177,14 @@ func TestRunAllRemovesEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantV := []string{"tpod-cache-orphan", "tpod-cache-usedcache"}
+	wantV := []string{"tpd-cache-orphan", "tpd-cache-usedcache"}
 	sort.Strings(wantV)
 	gotV := append([]string(nil), res.VolumesRemoved...)
 	sort.Strings(gotV)
 	if !equalSlice(gotV, wantV) {
 		t.Errorf("volumes removed = %v, want %v (sorted)", gotV, wantV)
 	}
-	wantI := []string{"tpod/packages:deadbeefdeadbeef", usedTag}
+	wantI := []string{"tpd/packages:deadbeefdeadbeef", usedTag}
 	sort.Strings(wantI)
 	gotI := append([]string(nil), res.ImagesRemoved...)
 	sort.Strings(gotI)
@@ -202,8 +202,8 @@ func TestRunVolumesScopeOnlyRemovesVolumes(t *testing.T) {
 	if len(res.ImagesRemoved) != 0 {
 		t.Errorf("Volumes scope must not remove images; got %v", res.ImagesRemoved)
 	}
-	if !equalSlice(res.VolumesRemoved, []string{"tpod-cache-orphan"}) {
-		t.Errorf("volumes removed = %v, want [tpod-cache-orphan]", res.VolumesRemoved)
+	if !equalSlice(res.VolumesRemoved, []string{"tpd-cache-orphan"}) {
+		t.Errorf("volumes removed = %v, want [tpd-cache-orphan]", res.VolumesRemoved)
 	}
 }
 
@@ -216,8 +216,8 @@ func TestRunImagesScopeOnlyRemovesImages(t *testing.T) {
 	if len(res.VolumesRemoved) != 0 {
 		t.Errorf("Images scope must not remove volumes; got %v", res.VolumesRemoved)
 	}
-	if !equalSlice(res.ImagesRemoved, []string{"tpod/packages:deadbeefdeadbeef"}) {
-		t.Errorf("images removed = %v, want [tpod/packages:deadbeefdeadbeef]", res.ImagesRemoved)
+	if !equalSlice(res.ImagesRemoved, []string{"tpd/packages:deadbeefdeadbeef"}) {
+		t.Errorf("images removed = %v, want [tpd/packages:deadbeefdeadbeef]", res.ImagesRemoved)
 	}
 }
 
@@ -251,17 +251,17 @@ caches:
 	if err != nil {
 		t.Fatalf("computeUsed should tolerate malformed user files: %v", err)
 	}
-	if !usedV["tpod-cache-usedcache"] {
+	if !usedV["tpd-cache-usedcache"] {
 		t.Errorf("usedcache from good profile should be marked used; got %v", usedV)
 	}
 	// Built-in tool profiles extend mise, so the consolidated mise cache stays
 	// used even though this standalone user profile does not declare it.
-	if !usedV["tpod-cache-mise"] {
-		t.Errorf("tpod-cache-mise should be marked used via built-in mise-extending profiles; got %v", usedV)
+	if !usedV["tpd-cache-mise"] {
+		t.Errorf("tpd-cache-mise should be marked used via built-in mise-extending profiles; got %v", usedV)
 	}
 	// volumeUsed must also keep per-target fallback volumes derived from a base
-	// cache name (e.g. tpod-cache-mise-<hash>) so prune never removes them.
-	if !volumeUsed("tpod-cache-mise-1234abcd", usedV) {
+	// cache name (e.g. tpd-cache-mise-<hash>) so prune never removes them.
+	if !volumeUsed("tpd-cache-mise-1234abcd", usedV) {
 		t.Error("volumeUsed should match base-<hash> fallback volumes")
 	}
 	// good profile has no packages (packages omitted), so no derived image.
@@ -282,8 +282,8 @@ command: ["echo"]
 	if err != nil {
 		t.Fatalf("computeUsed: %v", err)
 	}
-	if !usedV["tpod-cache-mise"] {
-		t.Errorf("mise-extending profile should mark tpod-cache-mise used; got %v", usedV)
+	if !usedV["tpd-cache-mise"] {
+		t.Errorf("mise-extending profile should mark tpd-cache-mise used; got %v", usedV)
 	}
 }
 

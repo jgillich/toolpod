@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// runTpodEnv runs the built binary with the given extra environment variables.
-func runTpodEnv(t *testing.T, env []string, args ...string) (string, error) {
+// runTpdEnv runs the built binary with the given extra environment variables.
+func runTpdEnv(t *testing.T, env []string, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command(buildTpod(t), args...)
+	cmd := exec.Command(buildTpd(t), args...)
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -29,7 +29,7 @@ func writeEditor(t *testing.T, dir, name, body string) string {
 }
 
 func TestProfileShowBuiltIn(t *testing.T) {
-	out, err := runTpod(t, "show", "shell")
+	out, err := runTpd(t, "show", "shell")
 	if err != nil {
 		t.Fatalf("profile show shell: %v\n%s", err, out)
 	}
@@ -39,7 +39,7 @@ func TestProfileShowBuiltIn(t *testing.T) {
 }
 
 func TestProfileShowResolved(t *testing.T) {
-	out, err := runTpod(t, "show", "--resolved", "shell")
+	out, err := runTpd(t, "show", "--resolved", "shell")
 	if err != nil {
 		t.Fatalf("profile show --resolved shell: %v\n%s", err, out)
 	}
@@ -49,14 +49,14 @@ func TestProfileShowResolved(t *testing.T) {
 }
 
 func TestProfileShowNonexistent(t *testing.T) {
-	out, _ := runTpod(t, "show", "nope")
+	out, _ := runTpd(t, "show", "nope")
 	if !strings.Contains(out, "not found") {
 		t.Errorf("expected 'not found' error for missing profile, got:\n%s", out)
 	}
 }
 
 func TestProfileList(t *testing.T) {
-	bin := buildTpod(t)
+	bin := buildTpd(t)
 	out, err := exec.Command(bin, "list").CombinedOutput()
 	if err != nil {
 		t.Fatalf("profile list: %v\n%s", err, out)
@@ -93,11 +93,11 @@ func TestProfileEditBuiltInNoSaveRemovesSeed(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpodEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "shell")
 	if err != nil {
 		t.Fatalf("edit shell (no save): %v\n%s", err, out)
 	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpod", "profiles", "shell.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg, "tpd", "profiles", "shell.yaml")); !os.IsNotExist(err) {
 		t.Errorf("expected no user profile after quitting without saving, stat err: %v", err)
 	}
 }
@@ -108,11 +108,11 @@ func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
 	}
-	out, err := runTpodEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "shell")
 	if err != nil {
 		t.Fatalf("edit shell (save): %v\n%s", err, out)
 	}
-	target := filepath.Join(cfg, "tpod", "profiles", "shell.yaml")
+	target := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("expected user override to be created on save: %v", err)
@@ -127,7 +127,7 @@ func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
 	if !strings.Contains(s, "Resolved profile (reference)") {
 		t.Errorf("seed must carry a resolved-reference banner, got:\n%s", s)
 	}
-	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpod show --resolved shell`) {
+	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved shell`) {
 		t.Errorf("seed must note the resolved block is a stale snapshot and how to refresh it, got:\n%s", s)
 	}
 	if !strings.Contains(s, "# image: debian:13-slim") {
@@ -144,11 +144,11 @@ func TestProfileEditBuiltInFragmentNoSaveRemovesSeed(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpodEnv(t, env, "edit", "docker")
+	out, err := runTpdEnv(t, env, "edit", "docker")
 	if err != nil {
 		t.Fatalf("edit docker fragment (no save): %v\n%s", err, out)
 	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpod", "fragments", "docker.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg, "tpd", "fragments", "docker.yaml")); !os.IsNotExist(err) {
 		t.Errorf("expected no user fragment after quitting without saving, stat err: %v", err)
 	}
 }
@@ -159,11 +159,11 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
 	}
-	out, err := runTpodEnv(t, env, "edit", "docker")
+	out, err := runTpdEnv(t, env, "edit", "docker")
 	if err != nil {
 		t.Fatalf("edit docker fragment (save): %v\n%s", err, out)
 	}
-	target := filepath.Join(cfg, "tpod", "fragments", "docker.yaml")
+	target := filepath.Join(cfg, "tpd", "fragments", "docker.yaml")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
@@ -182,7 +182,7 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 
 func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 	cfg := t.TempDir()
-	target := filepath.Join(cfg, "tpod", "profiles", "shell.yaml")
+	target := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpodEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "shell")
 	if err != nil {
 		t.Fatalf("edit existing user file: %v\n%s", err, out)
 	}
@@ -239,7 +239,7 @@ func (f fakeFileInfo) IsDir() bool        { return false }
 func (f fakeFileInfo) Sys() interface{}   { return nil }
 
 func TestProfileShowResolvedFragmentRefused(t *testing.T) {
-	out, _ := runTpod(t, "show", "--resolved", "ssh")
+	out, _ := runTpd(t, "show", "--resolved", "ssh")
 	if !strings.Contains(out, "fragment") {
 		t.Errorf("expected --resolved on a fragment to be refused with a 'fragment' message, got:\n%s", out)
 	}

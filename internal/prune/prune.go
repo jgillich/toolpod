@@ -14,8 +14,8 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/runtime"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
 	"golang.org/x/term"
 )
 
@@ -30,7 +30,7 @@ type dockerClient interface {
 }
 
 type Options struct {
-	All     bool // remove every tpod-managed resource regardless of liveness
+	All     bool // remove every tpd-managed resource regardless of liveness
 	Volumes bool // scope to volumes only
 	Images  bool // scope to images only
 	Force   bool // skip confirmation prompt
@@ -41,14 +41,14 @@ type Result struct {
 	ImagesRemoved  []string
 }
 
-// Run prunes tpod-managed Docker resources (volumes and derived images).
+// Run prunes tpd-managed Docker resources (volumes and derived images).
 //
 // Default (no flags): remove only catalog-unused resources — a volume is
-// used if some resolvable profile declares it (tpod-mise if any profile
-// exists, tpod-cache-<name> for any profile declaring caches.<name>); a
-// tpod/packages:<hash> image is used if some resolvable profile's
+// used if some resolvable profile declares it (tpd-mise if any profile
+// exists, tpd-cache-<name> for any profile declaring caches.<name>); a
+// tpd/packages:<hash> image is used if some resolvable profile's
 // (base-image-id, merged-packages) hash matches. --all removes
-// every tpod-managed resource regardless of liveness. --volumes / --images
+// every tpd-managed resource regardless of liveness. --volumes / --images
 // scope to one resource type; without either, both are pruned.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -74,7 +74,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	var result Result
 
 	if scopeVolumes {
-		existing, err := listTpodVolumes(ctx, cli)
+		existing, err := listTpdVolumes(ctx, cli)
 		if err != nil {
 			return result, fmt.Errorf("list volumes: %w", err)
 		}
@@ -98,7 +98,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	}
 
 	if scopeImages {
-		existing, err := listTpodImages(ctx, cli)
+		existing, err := listTpdImages(ctx, cli)
 		if err != nil {
 			return result, fmt.Errorf("list images: %w", err)
 		}
@@ -125,7 +125,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 }
 
 // computeUsed walks every resolvable profile (built-in + user) and returns
-// the set of tpod-managed volume names and tpod/packages:<hash> image refs
+// the set of tpd-managed volume names and tpd/packages:<hash> image refs
 // that would be produced by some current profile. Profiles whose base image
 // is not present locally contribute no derived-image hashes (no local base
 // ⇒ no possible derived image).
@@ -153,7 +153,7 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 			continue
 		}
 		for cacheName := range cfg.Caches {
-			usedVolumes["tpod-cache-"+cacheName] = true
+			usedVolumes["tpd-cache-"+cacheName] = true
 		}
 		if (len(cfg.Packages) == 0 && len(cfg.Repos) == 0) || cfg.Image == "" {
 			continue
@@ -187,23 +187,23 @@ func volumeUsed(name string, usedVolumes map[string]bool) bool {
 	return false
 }
 
-func listTpodVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, error) {
+func listTpdVolumes(ctx context.Context, cli dockerClient) ([]*volume.Volume, error) {
 	resp, err := cli.VolumeList(ctx, volume.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	var found []*volume.Volume
 	for _, v := range resp.Volumes {
-		if isTpodVolume(v.Name) {
+		if isTpdVolume(v.Name) {
 			found = append(found, v)
 		}
 	}
 	return found, nil
 }
 
-func listTpodImages(ctx context.Context, cli dockerClient) ([]string, error) {
+func listTpdImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	f := filters.NewArgs()
-	f.Add("reference", "tpod/packages")
+	f.Add("reference", "tpd/packages")
 	images, err := cli.ImageList(ctx, image.ListOptions{Filters: f})
 	if err != nil {
 		return nil, err
@@ -220,8 +220,8 @@ func listTpodImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	return refs, nil
 }
 
-func isTpodVolume(name string) bool {
-	return strings.HasPrefix(name, "tpod-")
+func isTpdVolume(name string) bool {
+	return strings.HasPrefix(name, "tpd-")
 }
 
 func confirm(kind string, items []string, r io.Reader) bool {

@@ -25,7 +25,7 @@ func (e *ExtendsList) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// Profile is a resolved tpod profile (after extends-merge and validation).
+// Profile is a resolved tpd profile (after extends-merge and validation).
 // YAML tags match the schema in the design doc §4.1.
 type Profile struct {
 	Version     int                   `yaml:"version"`

@@ -33,12 +33,12 @@ func TestSubpathSupportedByVersion(t *testing.T) {
 
 func TestSubpathVolumeSpecs(t *testing.T) {
 	mounts, mkdirs := subpathVolumeSpecs(map[string][]string{
-		"tpod-cache-mise":  {"aa", "bb"},
-		"tpod-cache-other": {"cc"},
+		"tpd-cache-mise":  {"aa", "bb"},
+		"tpd-cache-other": {"cc"},
 	})
 	wantMounts := []mount.Mount{
-		{Type: mount.TypeVolume, Source: "tpod-cache-mise", Target: "/data/0"},
-		{Type: mount.TypeVolume, Source: "tpod-cache-other", Target: "/data/1"},
+		{Type: mount.TypeVolume, Source: "tpd-cache-mise", Target: "/data/0"},
+		{Type: mount.TypeVolume, Source: "tpd-cache-other", Target: "/data/1"},
 	}
 	if !slices.Equal(mounts, wantMounts) {
 		t.Errorf("mounts = %+v, want %+v", mounts, wantMounts)
@@ -50,7 +50,7 @@ func TestSubpathVolumeSpecs(t *testing.T) {
 }
 
 func TestSubpathVolumeSpecsNoMkdirs(t *testing.T) {
-	_, mkdirs := subpathVolumeSpecs(map[string][]string{"tpod-cache-other": nil})
+	_, mkdirs := subpathVolumeSpecs(map[string][]string{"tpd-cache-other": nil})
 	if len(mkdirs) != 0 {
 		t.Errorf("mkdirs = %v, want none", mkdirs)
 	}

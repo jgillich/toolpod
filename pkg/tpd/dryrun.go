@@ -1,4 +1,4 @@
-package tpod
+package tpd
 
 import (
 	"fmt"

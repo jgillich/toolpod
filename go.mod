@@ -1,4 +1,4 @@
-module github.com/jgillich/tpod
+module github.com/jgillich/tpd
 
 go 1.25.0
 

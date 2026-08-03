@@ -14,8 +14,8 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/jgillich/tpod/internal/profile"
-	"github.com/jgillich/tpod/internal/runtime"
+	"github.com/jgillich/tpd/internal/profile"
+	"github.com/jgillich/tpd/internal/runtime"
 )
 
 func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
@@ -98,7 +98,7 @@ func checkMiseBaseImage(ctx context.Context, rt *dockerRT) Check {
 
 func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	f := filters.NewArgs()
-	f.Add("reference", "tpod/packages")
+	f.Add("reference", "tpd/packages")
 	images, err := rt.cli.ImageList(ctx, image.ListOptions{Filters: f})
 	if err != nil {
 		return Check{Name: "derived images", Status: Warn, Message: err.Error()}
@@ -106,14 +106,14 @@ func checkDerivedImages(ctx context.Context, rt *dockerRT) Check {
 	var tags []string
 	var total int64
 	for _, img := range images {
-		hasTpodTag := false
+		hasTpdTag := false
 		for _, t := range img.RepoTags {
 			if ref := runtime.DerivedRef(t); ref != "" {
 				tags = append(tags, ref)
-				hasTpodTag = true
+				hasTpdTag = true
 			}
 		}
-		if hasTpodTag && img.Size > 0 {
+		if hasTpdTag && img.Size > 0 {
 			total += img.Size
 		}
 	}
@@ -144,7 +144,7 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 	}
 	var found []string
 	for _, v := range volumes.Volumes {
-		if strings.HasPrefix(v.Name, "tpod-") {
+		if strings.HasPrefix(v.Name, "tpd-") {
 			found = append(found, v.Name)
 		}
 	}
@@ -155,11 +155,11 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 }
 
 func checkPermissions(ctx context.Context, rt *dockerRT) Check {
-	_, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: "tpod-perm-test"})
+	_, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: "tpd-perm-test"})
 	if err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create volumes: " + err.Error()}
 	}
-	_ = rt.cli.VolumeRemove(ctx, "tpod-perm-test", true)
+	_ = rt.cli.VolumeRemove(ctx, "tpd-perm-test", true)
 
 	resp, err := rt.cli.ContainerCreate(ctx, &container.Config{
 		Image: "alpine:latest",
@@ -236,13 +236,13 @@ func checkUserOverrides(userDir string) []Check {
 			checks = append(checks, Check{
 				Name:    "gitconfig",
 				Status:  Info,
-				Message: fmt.Sprintf("%s: not mounted (run `tpod init %s --fragments gitconfig`)", name, name),
+				Message: fmt.Sprintf("%s: not mounted (run `tpd init %s --fragments gitconfig`)", name, name),
 			})
 		}
 	}
 
 	if userFileCount == 0 {
-		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides — run `tpod init <profile>` to add caches and gitconfig"}}
+		return []Check{{Name: "fragments", Status: Info, Message: "no user profile overrides — run `tpd init <profile>` to add caches and gitconfig"}}
 	}
 	if len(checks) == 0 {
 		return []Check{{Name: "fragments", Status: Pass, Message: "all user overrides mount gitconfig"}}
@@ -269,7 +269,7 @@ func checkProjectTools(ctx context.Context, workspace string) Check {
 }
 
 func checkWorkspaceWritable(ctx context.Context, workspace string) Check {
-	testFile := filepath.Join(workspace, ".tpod-write-test")
+	testFile := filepath.Join(workspace, ".tpd-write-test")
 	if err := os.WriteFile(testFile, []byte("x"), 0o644); err != nil {
 		return Check{Name: "workspace", Status: Fail, Message: workspace + " is not writable"}
 	}

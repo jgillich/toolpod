@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jgillich/tpod/internal/profile"
+	"github.com/jgillich/tpd/internal/profile"
 )
 
 func TestFragmentsAreValid(t *testing.T) {

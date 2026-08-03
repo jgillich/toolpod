@@ -19,7 +19,7 @@ import (
 	"github.com/docker/docker/pkg/jsonmessage"
 )
 
-// DerivedTag returns the content-addressed tag tpod lays on a derived image
+// DerivedTag returns the content-addressed tag tpd lays on a derived image
 // built from baseID with the given packages and apt repos. The tag is the
 // first 16 hex chars of a sha256 over baseID, the sorted package list, and
 // (when non-empty) the sorted canonical repo descriptors:
@@ -45,7 +45,7 @@ func DerivedTag(baseID string, packages []string, repos map[string]Repo) string 
 	if cr := canonicalRepos(repos); cr != "" {
 		fmt.Fprintf(h, "\x00%s", cr)
 	}
-	return "tpod/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
+	return "tpd/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // canonicalRepos serializes a repo map deterministically: entries sorted by
@@ -73,21 +73,21 @@ func canonicalRepos(repos map[string]Repo) string {
 }
 
 // DerivedRef normalizes a RepoTag from ImageList into the canonical
-// tpod/packages:<hash> form, or "" if the tag doesn't belong to a derived
+// tpd/packages:<hash> form, or "" if the tag doesn't belong to a derived
 // image. Engines qualify RepoTags with their registry (docker.io/,
 // localhost/, quay.io/, ...), so the match is on the reference path, not a
 // string prefix — a locally built image keeps its tag even though its hash
 // is what identifies it.
 func DerivedRef(repoTag string) string {
 	named, err := reference.ParseNormalizedNamed(repoTag)
-	if err != nil || reference.Path(named) != "tpod/packages" || reference.IsNameOnly(named) {
+	if err != nil || reference.Path(named) != "tpd/packages" || reference.IsNameOnly(named) {
 		return ""
 	}
 	tagged, ok := named.(reference.NamedTagged)
 	if !ok {
 		return ""
 	}
-	return "tpod/packages:" + tagged.Tag()
+	return "tpd/packages:" + tagged.Tag()
 }
 
 // ResolveImageID returns the content-addressed image-config SHA of the

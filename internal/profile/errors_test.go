@@ -3,16 +3,16 @@ package profile
 import "testing"
 
 func TestProfileErrorFormat(t *testing.T) {
-	err := ProfileError{Path: "/home/me/.config/tpod/opencode.yaml", Line: 5, Message: "extends: cycle detected"}
-	want := "/home/me/.config/tpod/opencode.yaml:5: extends: cycle detected"
+	err := ProfileError{Path: "/home/me/.config/tpd/opencode.yaml", Line: 5, Message: "extends: cycle detected"}
+	want := "/home/me/.config/tpd/opencode.yaml:5: extends: cycle detected"
 	if err.Error() != want {
 		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}
 }
 
 func TestProfileErrorNoLine(t *testing.T) {
-	err := ProfileError{Path: "/home/me/.config/tpod/opencode.yaml", Message: "missing required field: command"}
-	want := "/home/me/.config/tpod/opencode.yaml: missing required field: command"
+	err := ProfileError{Path: "/home/me/.config/tpd/opencode.yaml", Message: "missing required field: command"}
+	want := "/home/me/.config/tpd/opencode.yaml: missing required field: command"
 	if err.Error() != want {
 		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}

@@ -10,7 +10,7 @@ Status: **Design only.** Implementation deliberately left open and not scheduled
 
 Give profile fields a single, uniform merge language so *every* field composes
 the same way — the way Kubernetes Strategic Merge Patch does — instead of
-tpod's current ad-hoc per-field rules. The concrete driver is per-item
+tpd's current ad-hoc per-field rules. The concrete driver is per-item
 removal from inherited lists: today `packages` is append-with-dedup or
 `packages: null` (clear-all), with no way to drop a single inherited package
 (e.g. replacing `docker` with `podman-docker`).
@@ -104,7 +104,7 @@ library would not change existing behavior.
 **Recommended against**, for three reasons:
 1. **Weight.** `apimachinery` is ~5.6MB and pulls protobuf, gogo, and
    OpenTelemetry into a CLI that currently has a lean dependency tree.
-2. **Fit.** strategicpatch is JSON-bytes + struct-tag driven; tpod's merge runs
+2. **Fit.** strategicpatch is JSON-bytes + struct-tag driven; tpd's merge runs
    on `yaml.Node` with custom decoders (`ExtendsList`, `Mount`). Adopting it
    means re-architecting the merge to a JSON round-trip, not a drop-in call.
 3. **Need.** The semantics are ~100 lines to hand-roll on `yaml.Node`, and the

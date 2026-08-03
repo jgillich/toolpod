@@ -1,7 +1,7 @@
 .PHONY: install patch
 
 install:
-	go install ./cmd/tpod
+	go install ./cmd/tpd
 
 patch:
-	git tag $$(svu patch) && git push origin --tags
+	git tag $$(mise exec -- svu patch) && git push origin --tags

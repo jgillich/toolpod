@@ -37,7 +37,7 @@ func expectedTag(baseID string, packages []string, repos map[string]Repo) string
 	if cr := expectedCanonicalRepos(repos); cr != "" {
 		fmt.Fprintf(h, "\x00%s", cr)
 	}
-	return "tpod/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
+	return "tpd/packages:" + hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 func expectedCanonicalRepos(repos map[string]Repo) string {
@@ -125,7 +125,7 @@ func TestDerivedTagOrderIndependent(t *testing.T) {
 
 func TestDerivedTagTagShape(t *testing.T) {
 	tag := DerivedTag("sha256:abc", []string{"git"}, nil)
-	const prefix = "tpod/packages:"
+	const prefix = "tpd/packages:"
 	if len(tag) != len(prefix)+16 {
 		t.Errorf("tag hash must be 16 hex chars: %q (suffix len %d)", tag, len(tag)-len(prefix))
 	}
@@ -179,15 +179,15 @@ func TestDerivedRefNormalizesRepoTags(t *testing.T) {
 		repoTag string
 		want    string
 	}{
-		{"docker.io/tpod/packages:" + hash, "tpod/packages:" + hash},
-		{"tpod/packages:" + hash, "tpod/packages:" + hash},
-		{"localhost/tpod/packages:" + hash, "tpod/packages:" + hash},
-		{"quay.io/tpod/packages:" + hash, "tpod/packages:" + hash},
-		{"myregistry.internal/tpod/packages:" + hash, "tpod/packages:" + hash},
+		{"docker.io/tpd/packages:" + hash, "tpd/packages:" + hash},
+		{"tpd/packages:" + hash, "tpd/packages:" + hash},
+		{"localhost/tpd/packages:" + hash, "tpd/packages:" + hash},
+		{"quay.io/tpd/packages:" + hash, "tpd/packages:" + hash},
+		{"myregistry.internal/tpd/packages:" + hash, "tpd/packages:" + hash},
 		// Not derived images → empty.
 		{"docker.io/library/foo:latest", ""},
-		{"tpod/packages", ""}, // no tag
-		{"ghcr.io/jgillich/tpod-mise:latest", ""},
+		{"tpd/packages", ""}, // no tag
+		{"ghcr.io/jgillich/tpd-mise:latest", ""},
 		{"not even a reference!", ""},
 	}
 	for _, tt := range cases {

@@ -19,7 +19,7 @@ func selinuxEnforcing(path string) bool {
 }
 
 // SELinuxEnforcing reports whether SELinux is enforcing on this host.
-// Exported for tpod doctor, which mirrors the launch-time detection.
+// Exported for tpd doctor, which mirrors the launch-time detection.
 func SELinuxEnforcing() bool {
 	return selinuxEnforcing(selinuxEnforceFile)
 }
