@@ -5,7 +5,7 @@ Builds on: `2026-07-30-toolpod-design.md` (catalog, extends), `2026-07-31-multi-
 
 ## Goal
 
-Give profiles and fragments explicit namespaces so `core/mise` always refers to the embedded built-in and an unqualified `mise` resolves to either the user profile or the built-in. Replace the current "extends the built-in of the same name" special-case with an explicit `extends: core/foo`. Self-referencing a file (extending a name that resolves back to itself) becomes a hard error caught by cycle detection. Lay the namespace plumbing so remote imports (`extends: github.com/user/project/profiles/foo`, Go-import-style) can register a namespace at runtime later.
+Give profiles and fragments explicit namespaces so `core/mise` always refers to the embedded built-in and an unqualified `mise` resolves to either the user profile or the built-in. Replace the current "extends the built-in of the same name" special-case with an explicit `extends: core/foo`. Self-referencing a file (extending a name that resolves back to itself) becomes a hard error caught by cycle detection. Lay the namespace plumbing so remote imports (`extends: github.com/user/project/foo`, Go-import-style) can register a namespace at runtime later.
 
 ## Why namespaces, why now
 
@@ -19,7 +19,7 @@ Every catalog entry carries a structured identity `(Namespace, Name)`:
 
 - `core` — embedded built-in profiles and fragments. Stored as `core/mise`, `core/go`, etc.
 - `""` (empty) — user profiles/fragments in `~/.config/tpd/{profiles,fragments}/`. Stored as the bare name (`mise`, `go`).
-- Future: remote imports register a namespace at runtime, e.g. `github.com/user/project`, with entries stored as `github.com/user/project/foo`.
+- Future: remote imports register a namespace at runtime, e.g. `github.com/user/project`, with entries stored as `github.com/user/project/foo`. The local name is always a single path segment (file basename); the namespace is the full prefix. See Remote imports.
 
 The empty namespace is the only one that participates in unqualified fallback (see Resolution). All other namespaces require their prefix.
 
@@ -31,16 +31,22 @@ The empty namespace is the only one that participates in unqualified fallback (s
 type RawProfile struct {
 	Profile
 	Namespace string                  `yaml:"-"` // "core", "", or future "github.com/..."
-	Name      string                  `yaml:"-"` // local name, e.g. "mise"
+	Name      string                  `yaml:"-"` // local name, a single segment (file basename)
 	Path      string                  `yaml:"-"`
 	NullKeys  map[string]map[string]bool `yaml:"-"`
 }
 
+// FullName is the canonical catalog key and the qualified YAML/string form.
 func (rc RawProfile) FullName() string {
 	if rc.Namespace == "" {
 		return rc.Name
 	}
 	return rc.Namespace + "/" + rc.Name
+}
+
+// DisplayName is the unqualified name used in user-facing output (list, wizard).
+func (rc RawProfile) DisplayName() string {
+	return rc.Name
 }
 ```
 
@@ -54,40 +60,63 @@ type Catalog struct {
 }
 ```
 
-`Get`, `IsFragment`, `Names`, `ProfileNames`, `AddRaw` operate on `FullName`. `GetBuiltin` and `IsUserShadow` are removed: a built-in is just `Get("core/"+name)`, and the shadow special-case is gone.
+### Catalog API (canonical vs display)
 
-Loading (`loadBuiltins`, `loadBuiltinFragments`) stamps `Namespace: "core"`, `Name: <file basename>` before inserting. User loaders stamp `Namespace: ""`. Collision check compares `FullName`, so `core/mise` and `mise` coexist (no collision); a user `mise` and a user fragment `mise` still collide (both `mise`).
+Two distinct APIs replace the old single-name API:
+
+- **Canonical** (catalog-internal, used by `Get`, `IsFragment`, `AddRaw`, `entries` map, cycle detection): `FullName` strings. `Get(name)` looks up by `FullName` (the caller is expected to pass the canonical form; `Get` does **not** do fallback — see Resolution for the helper that does).
+- **Display** (user-facing list, wizard pickers, summary): `DisplayName`. `DisplayNames()` returns the set of `DisplayName`s, deduplicated across namespaces (user shadows core: user wins; core-only `mise` shows as `mise`; `core/go` with no user `go` shows as `go`). `ProfileDisplayNames()` is the same filtered to non-fragments. `Source(name)` returns `"user"`, `"core"`, or `"user shadow"` for a display name, used by `tpd list`'s SOURCE column.
+
+`GetBuiltin` and `IsUserShadow` are removed: a built-in is `Get("core/"+name)`, and a shadow is `Source(name) == "user shadow"`.
+
+`AddRaw(ns, name, rc)` sets `rc.Namespace`/`rc.Name` and inserts under `FullName`. The scaffold flow calls `AddRaw("", profileName, rc)` for the generated profile.
+
+### Loading
+
+`loadBuiltins` and `loadBuiltinFragments` stamp `Namespace: "core"`, `Name: <file basename>`. User loaders stamp `Namespace: ""`. Collision check compares `FullName`, so `core/mise` and `mise` coexist (no collision); a user `mise` and a user fragment `mise` still collide (both `mise`).
 
 `NewProfileCatalogForTest` stamps `Namespace: "core"` to preserve current behavior (tests that today treat entries as built-ins).
 
 ## Resolution
 
-A reference in `extends:` (or a CLI profile name) is parsed into `(ns, name)` once at load:
+Resolution converts a reference (from `extends:` or the CLI) into a **canonical identity** `(Namespace, Name)` and then looks it up in `entries`. There are two cases:
 
-- **Qualified** (`core/foo`, future `github.com/user/project/foo`): split at the *registered* namespace prefix. The resolver consults the namespace registry to find the longest registered prefix matching the string; the remainder is the local name. Direct lookup: `entries[ns+"/"+name]`. No fallback.
-- **Unqualified** (`foo`): look up `entries[""+"/"+name]` (user); if absent, look up `entries["core/"+name]`. User wins, else core. This is the only fallback path.
+- **Qualified** (`core/foo`, future `github.com/user/project/foo`): split at the *registered* namespace prefix (longest match), remainder is the local name. Canonical identity is `(ns, name)`. Direct lookup: `entries[ns+"/"+name]`. No fallback.
+- **Unqualified** (`foo`): canonical identity depends on what exists — `("", "foo")` if a user entry exists, else `("core", "foo")`. Resolution picks one canonical identity and uses it for all downstream work (lookup, cycle detection, fragment checks). If neither exists, resolution fails.
 
-The namespace registry is populated at catalog load: `core` and `""` are always registered. Remote imports (future) register their own. The registry is consulted at parse time to split qualified names, so the structured `(ns, name)` is carried from that point on.
+The `Catalog` exposes a `ResolveRef(ref Ref) (string, bool)` helper that returns the canonical `FullName` for a reference:
 
-Unqualified fallback applies everywhere: at the CLI (`tpd mise`), in `extends:` (`extends: mise`), and in `tpd init`'s default base. Only an explicit `core/` prefix escapes the user shadow.
+```go
+// ResolveRef resolves a reference to a canonical catalog FullName.
+// For unqualified names, returns the user key if present, else the core key.
+// For qualified names, returns the qualified key directly (no fallback).
+// Returns ok=false if no entry matches.
+func (c Catalog) ResolveRef(ref Ref) (string, bool)
+```
+
+All callers of `Get` in resolution, cycle detection, and fragment checks go through `ResolveRef` first. This is the only place fallback happens. Cycle detection (`seen` map), fragment checks (`IsFragment`), and type checks all operate on the resolved canonical `FullName`, never on the raw reference. So `extends: mise` from the user `mise.yaml` resolves to `mise` (user), and `seen["mise"]` catches the self-cycle; `extends: core/mise` from the core `mise.yaml` resolves to `core/mise`, and `seen["core/mise"]` catches it.
+
+The namespace registry is populated at catalog load: `core` and `""` are always registered. Remote imports (future) register their own. Unqualified fallback applies everywhere: at the CLI (`tpd mise`), in `extends:` (`extends: mise`), and in `tpd init`'s default base. Only an explicit `core/` (or remote) prefix escapes fallback.
+
+### Fragment type-awareness
+
+Fragment-only-extends-fragments is enforced **after** canonical resolution, on the resolved `FullName`. This handles the built-in fragment case correctly: `core/typescript.yaml` extends `javascript`. `javascript` resolves via fallback — if a user *profile* named `javascript` exists, it would win over `core/javascript` (the fragment), and the fragment check would fail because the resolved entry is a profile.
+
+This is a real ambiguity: the built-in `core/typescript` meant to extend the `core/javascript` *fragment*, not a hypothetical user profile. The fix: **built-in fragment files emit qualified extends** (`extends: core/javascript`) so they never fall back to a user entry of the same name. The embedded catalog is updated accordingly (`core/typescript.yaml`, and any other built-in fragment extending another built-in fragment, gains `core/`-qualified refs). Built-in *profile* files (e.g. `core/opencode.yaml`) keep unqualified `extends: mise` — they intend to pick up user customizations to `mise`.
+
+This mirrors the rule for user shadows: when you mean the built-in specifically, qualify it.
 
 ### Self-reference
 
 Self-reference is a cycle of length 1, caught by the existing `seen` check in `resolveChain` once the special-case is removed. Because unqualified resolution is **user-first**, an unqualified self-name resolves to the entry itself, not to the built-in.
 
-- `extends: mise` from the user `mise.yaml`: `mise` resolves via fallback to the user `mise` (user wins) → the entry being resolved → cycle, rejected. To extend the built-in, the user must write `extends: core/mise` (qualified → direct lookup of `core/mise`, skips the user entry).
-- `extends: core/mise` from the core `mise.yaml`: `FullName` of the extends ref equals the entry's `FullName` (`core/mise`) → cycle, rejected.
-- `extends: mise` from `core/opencode.yaml` (a *different* core file): resolves to user `mise` if it exists, else `core/mise`. Not a self-reference (opencode ≠ mise). This is intentional — built-in profiles pick up user customizations to `mise` automatically.
-
-The embedded catalog files keep unqualified `extends: mise` (e.g. `opencode.yaml`, `shell.yaml`); only newly-generated user shadow files use `extends: core/mise`.
+- `extends: mise` from the user `mise.yaml`: `ResolveRef` returns `mise` (user wins) → the entry being resolved → `seen["mise"]` → cycle, rejected. To extend the built-in, the user writes `extends: core/mise` (qualified → direct `core/mise`, skips the user entry).
+- `extends: core/mise` from the core `mise.yaml`: `ResolveRef` returns `core/mise` → `seen["core/mise"]` → cycle, rejected.
+- `extends: mise` from `core/opencode.yaml` (a *different* core file): resolves to user `mise` if it exists, else `core/mise`. Not a self-reference (`core/opencode` ≠ `mise`). Intentional — built-in profiles pick up user customizations to `mise` automatically.
 
 No new code path. The `IsUserShadow` branch in `merge.go` and the entire `resolveBuiltinChain` function are deleted.
 
-### Fragments
-
-Fragments may only extend fragments. The check compares `(ns, name)` pairs (via `FullName`), unchanged in spirit.
-
-## Extends parsing
+## Reference parsing
 
 `ExtendsList` becomes structured. `internal/profile/types.go`:
 
@@ -95,8 +124,8 @@ Fragments may only extend fragments. The check compares `(ns, name)` pairs (via 
 type ExtendsList []ExtendsRef
 
 type ExtendsRef struct {
-	Namespace string // "core", "", future "github.com/user/project"
-	Name      string  // "mise"
+	Namespace string // "core", "", future "github.com/user/project"; "" means unqualified
+	Name      string  // "mise"; single segment for local, may be multi-segment only for future remote local names
 }
 
 func (e ExtendsRef) String() string {
@@ -107,30 +136,48 @@ func (e ExtendsRef) String() string {
 }
 ```
 
-`UnmarshalYAML` splits each string entry against the catalog's registered namespaces at parse time. `parseRaw` takes the namespace set as a parameter, threaded from `LoadProfiles`. Longest-prefix match: `github.com/user/project/mise` splits as `("github.com/user/project", "mise")` once that namespace is registered; `core/mise` splits as `("core", "mise")`; `mise` is `("", "mise")`. An unregistered prefix is a parse error: "unknown namespace in extends: X".
+### Two-phase parse (no YAML context)
 
-`MarshalYAML` emits the canonical string form (`core/mise`, `mise`). This is what `tpd init` and `tpd edit` seeds write.
+`yaml.v3` calls `UnmarshalYAML(*yaml.Node)` with no context, so the namespace registry can't be consulted during YAML decode. Parsing is two phases:
+
+1. **YAML decode** (`ExtendsList.UnmarshalYAML`): decode each entry as a **raw string**. No namespace splitting. Store the raw strings on the list (`Raw []string`) or, equivalently, keep `ExtendsList` as `[]string` at decode time and convert in phase 2.
+2. **Contextual split** (`ExtendsList.Resolve(namespaces) ([]ExtendsRef, error)`): called by `parseRaw` with the registered namespace set. For each raw string, longest-prefix match against registered namespaces to split into `(Namespace, Name)`. `core/mise` → `("core", "mise")`; `mise` → `("", "mise")`; `github.com/user/project/foo` → `("github.com/user/project", "foo")`. An unregistered prefix is a parse error: "unknown namespace in extends: X".
+
+`parseRaw` takes the namespace set as a parameter, threaded from `LoadProfiles`. `MarshalYAML` emits the canonical string form (`core/mise`, `mise`). This is what `tpd init` and `tpd edit` seeds write.
+
+## CLI behavior for qualified names
+
+The CLI (`tpd show`, `tpd edit`, `tpd <profile>` launch) accepts both qualified (`core/mise`) and unqualified (`mise`) names on the command line. Resolution uses `ResolveRef`: unqualified resolves user-first then core; qualified is direct. Behavior:
+
+- **`tpd show core/mise`**: show the built-in `core/mise` (merged). `tpd show mise`: show user `mise` if present (merged), else `core/mise`.
+- **`tpd <profile>` (launch)**: resolve the CLI name via `ResolveRef` and launch that entry.
+- **`tpd edit core/mise`**: editing a built-in seeds the **user** file `mise.yaml` (the shadow path), never `core/mise.yaml`. The edit-seed mechanism already computes the user target path from the *display* name; for a qualified `core/` argument, the CLI strips the `core/` prefix to get the file name (`mise`), seeds `~/.config/tpd/profiles/mise.yaml` with `extends: core/mise`, and opens it. If a user `mise.yaml` already exists, it's opened directly (the `core/` qualifier is ignored — you can't edit the built-in in place, only shadow it). `tpd edit mise` (unqualified) behaves the same as today: resolves to the user file if present, else seeds a shadow of whatever `ResolveRef` returns (user or core).
+- **`tpd list`**: shows `DisplayName` (unqualified) in the NAME column and `Source` (`user` / `core` / `user shadow`) in the SOURCE column, as today.
+
+Name validation (`ValidateName`) applies to the **file/display name**, which must remain a single segment with no `/`. Qualified names on the CLI bypass `ValidateName` for the namespace prefix; the local name segment is validated.
 
 ## emit core/ in init and edit
 
-`tpd init` and `tpd edit` currently emit `extends: <name>` where `<name>` is the built-in being shadowed. Under namespaces this would be a self-reference (user `mise.yaml` extending `mise`, which resolves to `core/mise` — not a self-ref, but ambiguous and not the intent). Both commands emit `extends: core/<name>` instead.
+`tpd init` and `tpd edit` emit `extends: core/<name>` when seeding a shadow of a built-in, instead of the current `extends: <name>`.
 
-- `internal/scaffold/scaffold.go`: the default base for a new profile shadowing a built-in becomes `core/<name>`; the `bases` list written into the YAML uses `core/`-qualified refs for built-ins. The "fall back to built-in of the same name" path (`if _, ok := cat.GetBuiltin(profileName); ok { bases = append([]string{profileName}, bases...) }`) becomes `bases = append([]string{"core/"+profileName}, bases...)`.
+- `internal/scaffold/scaffold.go`: the default base for a new profile shadowing a built-in becomes `core/<name>`. The "fall back to built-in of the same name" path (`if _, ok := cat.GetBuiltin(profileName); ok { bases = append([]string{profileName}, ...) }`) becomes `bases = append([]string{"core/"+profileName}, ...)`. The `bases` list written into the generated YAML uses `core/`-qualified refs for built-ins. When the user picks a fragment in the wizard, the fragment ref is also `core/`-qualified if it's a built-in fragment.
 - `cmd/tpd/cli.go` `builtinEditSeed`: the seed shadow line becomes `extends: core/<name>`.
 
-The wizard pickers and `tpd list` display unqualified names for user-facing ergonomics (`mise`, not `core/mise`); the `core/` prefix appears only in generated `extends:` lines and when a user explicitly wants the built-in.
+The wizard pickers and `tpd list` display `DisplayName` for user-facing ergonomics (`mise`, not `core/mise`); the `core/` prefix appears only in generated `extends:` lines and when a user explicitly passes a qualified name to the CLI.
 
 ## Remote imports (future, not implemented here)
 
 Rough sketch so the namespace design accommodates it:
 
 ```yaml
-extends: github.com/user/project/profiles/foo
+extends: github.com/user/project/foo
 ```
 
-A remote namespace is registered at runtime (e.g. `tpd` fetches and caches the repo, registers `github.com/user/project` as a namespace, stamps its entries' `Namespace` accordingly). Resolution is uniform: `github.com/user/project/profiles/foo` → longest-prefix split → `("github.com/user/project", "profiles/foo")` → direct lookup. No fallback for remote namespaces.
+The **namespace is `github.com/user/project`** and the **local name is `foo`** (single segment). The `/profiles/` path is an internal layout detail of how the remote repo is fetched and laid out, not part of the namespace string. When `tpd` fetches the repo, it registers `github.com/user/project` as a namespace and stamps each entry's `Namespace` with it; the local name is the file basename under the repo's profiles/fragments dir, exactly as for `core` and user entries.
 
-The namespace registry and the longest-prefix split in `ExtendsList.UnmarshalYAML` are designed so that adding a remote namespace requires only registering it and loading its entries — no changes to resolution, merge, or validation. This spec implements the registry and split; it does not implement fetching.
+Resolution is uniform: `github.com/user/project/foo` → longest-prefix split → `("github.com/user/project", "foo")` → direct lookup. No fallback for remote namespaces.
+
+This keeps local names single-segment everywhere, so `ValidateName` and file-path derivation stay simple. The namespace registry and longest-prefix split are designed so adding a remote namespace requires only registering it and loading its entries — no changes to resolution, merge, or validation. This spec implements the registry and split; it does not implement fetching.
 
 ## Migration
 
@@ -139,18 +186,20 @@ Existing user files fall into two groups:
 - Hand-written profiles extending a built-in by an unqualified name that is *not* their own (e.g. `extends: mise` from `myagent.yaml`) keep working: `mise` resolves to user `mise` if present, else `core/mise`. No change.
 - User shadows that today extend the built-in of the same name via the `extends: <self>` special-case (e.g. a user `mise.yaml` with `extends: mise`). Under the new rules that is a self-reference and becomes an error. The fix is mechanical: change `extends: mise` to `extends: core/mise`. Existing `tpd init`/`tpd edit` seed files are the primary source of these; re-running `tpd init` regenerates them with the correct `core/` form.
 
-The change in `init`/`edit` output (emitting `extends: core/mise` instead of `extends: mise`) only affects newly generated files. The `tpd doctor` command (or a one-line migration note in release notes) can flag the broken pattern for existing files.
+The change in `init`/`edit` output (emitting `extends: core/mise` instead of `extends: mise`) only affects newly generated files. `tpd doctor` (or a one-line migration note in release notes) can flag the broken `extends: <self>` pattern for existing files.
+
+Built-in fragment files that extend other built-in fragments (`core/typescript.yaml` → `javascript`, and any others) are updated to `extends: core/javascript` in the same change. Built-in profile files keep unqualified `extends: mise`.
 
 ## Test surface
 
 - `merge_test.go`: the `extends: opencode` self-shadow test switches to `extends: core/opencode` and expects the same merge; the `extends: foo` self-cycle test now also covers `extends: core/foo` from `core/foo.yaml`.
-- `catalog_test.go`: `ProfileNames`/`Names` return `FullName`s; built-in entries are `core/...`.
-- New tests: unqualified fallback (user `mise` shadows `core/mise`); qualified `core/mise` bypasses user; self-reference rejected for both `extends: mise` (from `core/mise.yaml`) and `extends: core/mise` (from `core/mise.yaml`); longest-prefix split with a synthetic multi-segment namespace.
+- `catalog_test.go`: `DisplayNames`/`ProfileDisplayNames` return unqualified names; `Names` (canonical) returns `FullName`s; built-in entries are `core/...`.
+- New tests: `ResolveRef` unqualified fallback (user `mise` shadows `core/mise`); `ResolveRef` qualified `core/mise` bypasses user; self-reference rejected for `extends: mise` from user `mise.yaml` and `extends: core/mise` from `core/mise.yaml`; longest-prefix split with a synthetic multi-segment namespace; built-in fragment `core/typescript` extends `core/javascript` and is unaffected by a user profile named `javascript`.
 - `scaffold_test.go` / `new_profile_test.go`: generated YAML contains `extends: core/...`.
-- `profile_test.go` (cli): edit seed contains `extends: core/...`.
+- `profile_test.go` (cli): `tpd edit core/mise` seeds `mise.yaml` with `extends: core/mise`; edit seed contains `extends: core/...`.
 
 ## Out of scope
 
 - Remote import fetching (`github.com/...` resolution, caching, verification).
-- Changing the user-facing display in `tpd list` (still shows unqualified names; a future change may add a SOURCE column encoding the namespace).
 - Allowing user-defined namespace prefixes beyond `""` and `core`.
+- Multi-segment local names (the namespace carries the path prefix; local names stay single-segment file basenames).
