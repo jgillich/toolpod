@@ -46,7 +46,7 @@ type Profile struct {
 	Network     string                `yaml:"network,omitempty"`
 	Resources   *Resources            `yaml:"resources,omitempty"`
 	TTY         string                `yaml:"tty,omitempty"`
-	Tools       map[string]Tool        `yaml:"tools,omitempty"`
+	Tools       map[string]Tool       `yaml:"tools,omitempty"`
 	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
 	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
@@ -54,8 +54,9 @@ type Profile struct {
 
 // Tool is a single mise tool: the version plus optional verification
 // metadata. SHA256 is a universal asset digest; SHA256ByArch keys are the
-// backend's RUNTIME.archType values ("amd64", "aarch64"). Decodes from a
-// YAML scalar (the version) or a map ({version, sha256}).
+// schema's arch set ("amd64", "aarch64"), which the appimage backend maps its
+// RUNTIME.archType to. Decodes from a YAML scalar (the version) or a map
+// ({version, sha256}).
 type Tool struct {
 	Version      string
 	SHA256       string

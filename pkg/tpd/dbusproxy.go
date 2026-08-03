@@ -111,7 +111,6 @@ func startBusProxy(cfg profile.Profile) (func(), string, error) {
 			if err := os.Remove(sockPath); err != nil {
 				fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
 			}
-			fmt.Fprintln(os.Stderr, "tpd: warning: xdg-dbus-proxy did not start; container D-Bus disabled")
 			return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy did not start")
 		}
 		time.Sleep(10 * time.Millisecond)

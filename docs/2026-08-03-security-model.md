@@ -34,18 +34,19 @@ table would go stale, and the review explicitly declined it.
 
 ## Ownership labels and what `prune` removes
 
-Every volume, derived image, and launched container tpd creates carries
-`tpd.managed=true` (`runtime.OwnershipLabel`, `internal/runtime/labels.go`).
-Derived images additionally carry `tpd.build=1` build provenance
-(`internal/runtime/docker_build.go`).
+Every volume, derived image, and launched container tpd creates for a launch
+carries `tpd.managed=true` (`runtime.OwnershipLabel`,
+`internal/runtime/labels.go`). Derived images additionally carry `tpd.build=1`
+build provenance (`internal/runtime/docker_build.go`).
 
-Three transient helper containers are deliberately unlabeled: the cache
-subpath helper (`ensureCacheSubpaths`, `internal/runtime/docker_prepare.go`),
-the image-file probe (`readImageFile`, `internal/runtime/extrepo.go`), and the
-doctor container probe (`internal/doctor/checks.go`). Each is created and
-removed synchronously, so a leftover one is only a failed-cleanup straggler.
-Because prune's running-container protection and doctor's leaked-container
-check are label-filtered, neither sees a stray helper.
+Transient diagnostic/helper resources are deliberately unlabeled: the doctor
+probe volume and container (`tpd-diag-*`, `internal/doctor/checks.go`), the
+cache subpath helper (`ensureCacheSubpaths`,
+`internal/runtime/docker_prepare.go`), and the image-file probe
+(`readImageFile`, `internal/runtime/extrepo.go`). Each is created and removed
+synchronously, so a leftover one is only a failed-cleanup straggler. Because
+prune's running-container protection and doctor's leaked-container check are
+label-filtered, neither sees a stray helper.
 
 `tpd prune` removes **only labeled resources**. `listTpdVolumes` and
 `listTpdImages` in `internal/prune/prune.go` require the label; an unlabeled

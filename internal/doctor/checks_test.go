@@ -26,9 +26,9 @@ import (
 var probeVolumeRe = regexp.MustCompile(`^tpd-diag-[0-9a-f]{16}$`)
 
 type fakeDocker struct {
-	t         *testing.T
-	srv       *httptest.Server
-	images    []image.Summary
+	t          *testing.T
+	srv        *httptest.Server
+	images     []image.Summary
 	containers []types.Container
 
 	mu             sync.Mutex

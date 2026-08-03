@@ -43,8 +43,8 @@ func TestIsTpdVolume(t *testing.T) {
 type fakeClient struct {
 	volumes           []*volume.Volume
 	images            []image.Summary
-	inspects          map[string]string          // ref -> image ID
-	containers        []types.Container          // returned by ContainerList
+	inspects          map[string]string              // ref -> image ID
+	containers        []types.Container              // returned by ContainerList
 	containerInspects map[string]types.ContainerJSON // ID -> inspect
 	removedV          []string
 	removedI          []string

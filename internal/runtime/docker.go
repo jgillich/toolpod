@@ -19,8 +19,8 @@ var _ Runtime = (*DockerRuntime)(nil)
 
 type DockerRuntime struct {
 	cli         *client.Client
-	podman      bool      // rootless Podman: containers need --userns=keep-id
-	selinux     bool      // SELinux enforcing: containers need --security-opt label=disable
+	podman      bool // rootless Podman: containers need --userns=keep-id
+	selinux     bool // SELinux enforcing: containers need --security-opt label=disable
 	subpathOnce sync.Once
 	subpath     bool // cached VolumeOptions.Subpath support probe
 }
