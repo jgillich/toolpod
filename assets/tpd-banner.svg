@@ -119,53 +119,54 @@
     <!-- Main Content Area -->
     <g font-family="'Space Grotesk', -apple-system, sans-serif">
       <!-- CLI Command Wordmark -->
-      <g font-family="'Space Grotesk', -apple-system, sans-serif" font-size="64" font-weight="700">
-        <text x="432" y="142" fill="#38edf8">$</text>
-        <text x="478" y="142" fill="#ffffff">tpd</text>
-        <text x="620" y="142" fill="#94a3b8"> opencode</text>
-        <rect x="998" y="90" width="26" height="52" fill="#ff7a45" class="cli-cursor" />
+      <g font-family="'Space Grotesk', -apple-system, sans-serif" font-size="78" font-weight="700">
+        <text x="432" y="150" fill="#38edf8">$</text>
+        <text x="490" y="150" fill="#ffffff">tpd</text>
+        <text x="650" y="150" fill="#94a3b8"> opencode</text>
+        <!-- The 78px line has an approximate visible glyph box from y=92 to y=166; center the cursor on y=129. -->
+        <rect x="1100" y="94" width="30" height="70" fill="#ff7a45" class="cli-cursor" />
       </g>
       
       <!-- Product Description -->
-      <text x="432" y="174" font-size="13" fill="#94a3b8">Disposable, reproducible dev environments in containers.</text>
+      <text x="432" y="184" font-size="16" fill="#94a3b8">Disposable, reproducible dev environments in containers.</text>
 
       <!-- Pill Tags for Features -->
-      <g transform="translate(432, 190)" font-family="'JetBrains Mono', monospace" font-size="12.5">
+      <g transform="translate(432, 200)" font-family="'JetBrains Mono', monospace" font-size="14">
         <!-- Tag 1 -->
-        <rect x="0" y="0" width="98" height="30" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
-        <text x="27" y="19" text-anchor="middle" fill="#38edf8" font-weight="600">&lt;1s</text>
-        <text x="68" y="19" text-anchor="middle" fill="#cbd5e1">boot</text>
+        <rect x="0" y="0" width="110" height="34" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
+        <text x="30" y="22" text-anchor="middle" fill="#38edf8" font-weight="600">&lt;1s</text>
+        <text x="78" y="22" text-anchor="middle" fill="#cbd5e1">boot</text>
 
         <!-- Tag 2 -->
-        <rect x="108" y="0" width="102" height="30" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
-        <text x="159" y="19" text-anchor="middle" fill="#cbd5e1">ephemeral</text>
+        <rect x="120" y="0" width="116" height="34" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
+        <text x="178" y="22" text-anchor="middle" fill="#cbd5e1">ephemeral</text>
 
         <!-- Tag 3 -->
-        <rect x="220" y="0" width="112" height="30" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
-        <text x="276" y="19" text-anchor="middle" fill="#cbd5e1">composable</text>
+        <rect x="246" y="0" width="128" height="34" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
+        <text x="310" y="22" text-anchor="middle" fill="#cbd5e1">composable</text>
 
         <!-- Tag 4 -->
-        <rect x="342" y="0" width="92" height="30" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
-        <text x="388" y="19" text-anchor="middle" fill="#cbd5e1">rootless</text>
+        <rect x="384" y="0" width="108" height="34" rx="8" fill="#1b202e" stroke="#2c344a" stroke-width="1" />
+        <text x="438" y="22" text-anchor="middle" fill="#cbd5e1">rootless</text>
       </g>
 
       <!-- Separator Line -->
-      <line x1="432" y1="242" x2="1140" y2="242" stroke="#232a3d" stroke-width="1" />
+      <line x1="432" y1="252" x2="1140" y2="252" stroke="#232a3d" stroke-width="1" />
 
       <!-- Footer: Works With + Colored Logos -->
-      <g transform="translate(432, 275)">
-        <text x="0" y="0" font-size="10.5" font-weight="700" letter-spacing="2" fill="#64748b">WORKS WITH</text>
+      <g transform="translate(432, 282)">
+        <text x="0" y="0" font-size="12" font-weight="700" letter-spacing="2" fill="#64748b">WORKS WITH</text>
         
-        <g transform="translate(0, 26)" font-family="'JetBrains Mono', monospace" font-size="11.5" font-weight="500">
-          <g transform="translate(0,0)" color="#ff7a45"><use href="#si-amp" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">amp</text></g>
-          <g transform="translate(120,0)" color="#38edf8"><use href="#si-opencode" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">opencode</text></g>
-          <g transform="translate(240,0)" color="#d97757"><use href="#si-claude" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">claude</text></g>
-          <g transform="translate(360,0)" color="#7c83ff"><use href="#si-gemini" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">gemini</text></g>
+        <g transform="translate(0, 28)" font-family="'JetBrains Mono', monospace" font-size="13.5" font-weight="500">
+          <g transform="translate(0,0)" color="#ff7a45"><use href="#si-amp" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">amp</text></g>
+          <g transform="translate(132,0)" color="#38edf8"><use href="#si-opencode" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">opencode</text></g>
+          <g transform="translate(264,0)" color="#d97757"><use href="#si-claude" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">claude</text></g>
+          <g transform="translate(396,0)" color="#7c83ff"><use href="#si-gemini" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">gemini</text></g>
 
-          <g transform="translate(0, 27)" color="#f59e0b"><use href="#si-pi" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">pi</text></g>
-          <g transform="translate(120, 27)" color="#f472b6"><use href="#si-qwen" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">qwen</text></g>
-          <g transform="translate(240, 27)" color="#ffffff"><use href="#si-copilot" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">copilot</text></g>
-          <g transform="translate(360, 27)" color="#2496ed"><use href="#si-docker" width="14" height="14" x="0" y="-7" /><text x="20" y="4" fill="#cbd5e1">docker</text></g>
+          <g transform="translate(0, 30)" color="#f59e0b"><use href="#si-pi" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">pi</text></g>
+          <g transform="translate(132, 30)" color="#f472b6"><use href="#si-qwen" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">qwen</text></g>
+          <g transform="translate(264, 30)" color="#ffffff"><use href="#si-copilot" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">copilot</text></g>
+          <g transform="translate(396, 30)" color="#2496ed"><use href="#si-docker" width="16" height="16" x="0" y="-8" /><text x="24" y="5" fill="#cbd5e1">docker</text></g>
         </g>
       </g>
     </g>

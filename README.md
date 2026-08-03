@@ -160,7 +160,6 @@ Every launchable profile needs `version`, `image`, and `command`. Fragments only
 - **Maps:** merged key-by-key; set a key to `null` to delete an inherited entry.
 - **`command`:** replaced, not concatenated.
 - **`packages`:** additive with dedup; `packages: null` clears the inherited list.
-- **`image`:** single slot; the child image replaces the inherited image.
 
 ### System packages (`packages:`)
 
