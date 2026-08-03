@@ -22,6 +22,13 @@ var reservedNames = map[string]bool{
 	"init":       true,
 }
 
+var (
+	envKeyRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	toolNameRe  = regexp.MustCompile(`^[A-Za-z0-9_@./:-]+$`)
+	hexSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	networkRe   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+)
+
 func validate(rc RawProfile) error {
 	if rc.Version == 0 {
 		return ProfileError{Path: rc.Path, Message: "missing required field: version"}
@@ -48,6 +55,15 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateFiles(rc); err != nil {
+		return err
+	}
+	if err := validateTools(rc); err != nil {
+		return err
+	}
+	if err := validateEnv(rc); err != nil {
+		return err
+	}
+	if err := validateNetwork(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -171,6 +187,40 @@ func validateFiles(rc RawProfile) error {
 		}
 	}
 	return nil
+}
+
+func validateTools(rc RawProfile) error {
+	for name, tool := range rc.Tools {
+		if !toolNameRe.MatchString(name) || containsControl(name) || containsControl(tool.Version) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("tools: invalid tool name/version %q", name)}
+		}
+	}
+	return nil
+}
+
+func validateEnv(rc RawProfile) error {
+	for key, value := range rc.Env {
+		if !envKeyRe.MatchString(key) || containsControl(key) || containsControl(value) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("environment: invalid key/value %q", key)}
+		}
+	}
+	return nil
+}
+
+func validateNetwork(rc RawProfile) error {
+	if rc.Network != "" && (!networkRe.MatchString(rc.Network) || containsControl(rc.Network)) {
+		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid value %q", rc.Network)}
+	}
+	return nil
+}
+
+func containsControl(s string) bool {
+	for _, r := range s {
+		if r == 0 || r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func checkPortNum(s, what, path string) error {

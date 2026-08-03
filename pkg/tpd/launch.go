@@ -62,11 +62,11 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 
 	if len(opts.ExtraTools) > 0 {
 		if cfg.Tools == nil {
-			cfg.Tools = map[string]string{}
+			cfg.Tools = map[string]profile.Tool{}
 		}
 		for _, t := range opts.ExtraTools {
 			name, ver := parseToolFlag(t)
-			cfg.Tools[name] = ver
+			cfg.Tools[name] = profile.Tool{Version: ver}
 		}
 	}
 

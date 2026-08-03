@@ -20,7 +20,7 @@ type ProgressWriter interface {
 //
 // When the user cd's into the workspace, mise's directory walk picks up any
 // project-local .tool-versions / mise.toml and overrides these defaults.
-func ActivateCommand(configDir string, tools map[string]string) string {
+func ActivateCommand(configDir string, tools map[string]Tool) string {
 	configFile := filepath.Join(configDir, "config.toml")
 
 	if len(tools) == 0 {
@@ -37,7 +37,7 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		fmt.Fprintf(&b, "%q = \"%s\"\n", name, tools[name])
+		fmt.Fprintf(&b, "%q = \"%s\"\n", name, tools[name].Version)
 	}
 	b.WriteString("' > ")
 	b.WriteString(shq(configFile))
@@ -57,9 +57,9 @@ func ActivateCommand(configDir string, tools map[string]string) string {
 // missing.
 //
 // Returns "" when no runtime is needed or already present.
-func BackendRuntimesCommand(configDir string, tools map[string]string) string {
-	needNode := tools["node"] == ""
-	needUV := tools["uv"] == "" && tools["pipx"] == ""
+func BackendRuntimesCommand(configDir string, tools map[string]Tool) string {
+	needNode := tools["node"].Version == ""
+	needUV := tools["uv"].Version == "" && tools["pipx"].Version == ""
 	if !needNode && !needUV {
 		return ""
 	}
@@ -135,7 +135,7 @@ func BackendRuntimesCommand(configDir string, tools map[string]string) string {
 // embedded mise plugin (currently the generic appimage backend). When true,
 // PluginInstallCommand must run before `mise install` so the prefixed tools
 // can resolve.
-func NeedsEmbeddedPlugin(tools map[string]string) bool {
+func NeedsEmbeddedPlugin(tools map[string]Tool) bool {
 	for name := range tools {
 		if strings.HasPrefix(name, appimageBackendPrefix) {
 			return true

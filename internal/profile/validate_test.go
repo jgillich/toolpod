@@ -252,3 +252,70 @@ func TestValidateFilesAllowsEmptyContent(t *testing.T) {
 		t.Errorf("empty content must be a valid empty file, got %v", err)
 	}
 }
+
+func TestValidateToolsNames(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := []string{"node", "npm:eslint", "appimage:pingdotgg/t3code", "rust", "python3.12"}
+	for _, name := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Tools = map[string]Tool{name: {Version: "latest"}}
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(tools[%q]) = %v, want nil", name, err)
+		}
+	}
+	invalid := []string{"", "node v20", "node\nlatest", "bad\x00name", "a;b", "x\t1"}
+	for _, name := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Tools = map[string]Tool{name: {Version: "latest"}}
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(tools[%q]) = nil, want error", name)
+		}
+	}
+}
+
+func TestValidateToolsRejectsControlInVersion(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Tools = map[string]Tool{"node": {Version: "20\n"}}
+	if err := validate(rc); err == nil {
+		t.Fatal("expected error for newline in tool version")
+	}
+}
+
+func TestValidateEnv(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := RawProfile{Profile: base}
+	valid.Env = map[string]string{"GOOD_KEY": "value", "_X": "{{ .Env.HOME }}"}
+	if err := validate(valid); err != nil {
+		t.Fatalf("valid env rejected: %v", err)
+	}
+	for _, bad := range []map[string]string{
+		{"BAD KEY": "x"},
+		{"1BAD": "x"},
+		{"GOOD": "bad\nvalue"},
+		{"GOOD": "bad\x00value"},
+	} {
+		rc := RawProfile{Profile: base}
+		rc.Env = bad
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(env=%v) = nil, want error", bad)
+		}
+	}
+}
+
+func TestValidateNetwork(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	for _, nw := range []string{"", "host", "bridge", "none", "slirp4netns", "my.net_1"} {
+		rc := RawProfile{Profile: base}
+		rc.Network = nw
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(network=%q) = %v, want nil", nw, err)
+		}
+	}
+	for _, nw := range []string{"host\n", "bad network", "net;x"} {
+		rc := RawProfile{Profile: base}
+		rc.Network = nw
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(network=%q) = nil, want error", nw)
+		}
+	}
+}

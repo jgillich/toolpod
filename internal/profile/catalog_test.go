@@ -52,8 +52,8 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 		},
 		"a":     {Profile: Profile{Env: map[string]string{"XDG_RUNTIME_DIR": "{{ .Env.XDG_RUNTIME_DIR }}"}}, Path: "builtin:a"},
 		"b":     {Profile: Profile{Mounts: map[string]Mount{"/b": {Source: "~/.b"}}}, Path: "builtin:b"},
-		"c":     {Profile: Profile{Tools: map[string]string{"c": "latest"}}, Path: "builtin:c"},
-		"extra": {Profile: Profile{Tools: map[string]string{"extra": "1"}}, Path: "builtin:extra"},
+		"c":     {Profile: Profile{Tools: map[string]Tool{"c": {Version: "latest"}}}, Path: "builtin:c"},
+		"extra": {Profile: Profile{Tools: map[string]Tool{"extra": {Version: "1"}}}, Path: "builtin:extra"},
 	}
 	gui := RawProfile{
 		Profile: Profile{Env: map[string]string{"WAYLAND_DISPLAY": "{{ .Env.WAYLAND_DISPLAY }}"}},
@@ -89,10 +89,10 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 	if _, ok := merged.Mounts["/b"]; !ok {
 		t.Error("missing mount from builtin parent 'b'")
 	}
-	if merged.Tools["c"] != "latest" {
+	if merged.Tools["c"].Version != "latest" {
 		t.Error("missing tool from builtin parent 'c'")
 	}
-	if merged.Tools["extra"] != "1" {
+	if merged.Tools["extra"].Version != "1" {
 		t.Error("missing tool from second extends entry 'extra'")
 	}
 }
@@ -176,8 +176,8 @@ func TestResolveBuzzProfile(t *testing.T) {
 	if len(cfg.Command) != 1 || cfg.Command[0] != "buzz" {
 		t.Errorf("command = %v, want [buzz]", cfg.Command)
 	}
-	if cfg.Tools["appimage:block/buzz"] != "latest" {
-		t.Errorf("tools = %v, want appimage:block/buzz=latest", cfg.Tools)
+	if cfg.Tools["appimage:block/buzz"].Version != "latest" {
+		t.Errorf("tools[appimage:block/buzz].Version = %q, want latest", cfg.Tools["appimage:block/buzz"].Version)
 	}
 	if _, ok := cfg.Mounts["~/.local/share/xyz.block.buzz.app"]; !ok {
 		t.Error("missing app data mount ~/.local/share/xyz.block.buzz.app")

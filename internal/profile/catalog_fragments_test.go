@@ -97,10 +97,10 @@ func TestFragmentExtendsFragment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveProfile: %v", err)
 	}
-	if resolved.Tools["base-tool"] != "latest" {
+	if resolved.Tools["base-tool"].Version != "latest" {
 		t.Error("missing base-tool from basefrag")
 	}
-	if resolved.Tools["child-tool"] != "latest" {
+	if resolved.Tools["child-tool"].Version != "latest" {
 		t.Error("missing child-tool from childfrag")
 	}
 }

@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -206,6 +207,88 @@ dbus:
 	}
 	if cfg.Dbus.Own["xyz.block.buzz.app"] == nil {
 		t.Error("dbus.own from base should survive talk: null")
+	}
+}
+
+func TestToolDecodeScalar(t *testing.T) {
+	var tool Tool
+	if err := yaml.Unmarshal([]byte(`latest`), &tool); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if tool.Version != "latest" {
+		t.Errorf("Version = %q, want latest", tool.Version)
+	}
+	if tool.SHA256 != "" || len(tool.SHA256ByArch) != 0 {
+		t.Errorf("unexpected checksum metadata: %+v", tool)
+	}
+}
+
+func TestToolDecodeMapScalarDigest(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	var tool Tool
+	body := fmt.Sprintf("{version: v1, sha256: %s}", digest)
+	if err := yaml.Unmarshal([]byte(body), &tool); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if tool.Version != "v1" || tool.SHA256 != digest {
+		t.Errorf("Tool = %+v, want version=v1 sha256=%s", tool, digest)
+	}
+}
+
+func TestToolDecodeMapPerArchDigests(t *testing.T) {
+	amd64 := strings.Repeat("ab", 32)
+	aarch64 := strings.Repeat("cd", 32)
+	var tool Tool
+	body := fmt.Sprintf("{version: v1, sha256: {amd64: %s, aarch64: %s}}", amd64, aarch64)
+	if err := yaml.Unmarshal([]byte(body), &tool); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if tool.Version != "v1" {
+		t.Errorf("Version = %q, want v1", tool.Version)
+	}
+	if tool.SHA256 != "" {
+		t.Errorf("SHA256 = %q, want empty (per-arch form)", tool.SHA256)
+	}
+	if tool.SHA256ByArch["amd64"] != amd64 || tool.SHA256ByArch["aarch64"] != aarch64 {
+		t.Errorf("SHA256ByArch = %v, want amd64=%s aarch64=%s", tool.SHA256ByArch, amd64, aarch64)
+	}
+}
+
+func TestToolMarshalScalarWhenNoChecksum(t *testing.T) {
+	tool := Tool{Version: "latest"}
+	data, err := yaml.Marshal(tool)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "latest" {
+		t.Errorf("marshaled = %q, want scalar latest", got)
+	}
+}
+
+func TestToolMarshalMapWithDigest(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	tool := Tool{Version: "v1", SHA256: digest}
+	data, err := yaml.Marshal(tool)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := "version: v1\nsha256: " + digest + "\n"
+	if string(data) != want {
+		t.Errorf("marshaled = %q, want %q", string(data), want)
+	}
+}
+
+func TestToolMarshalPerArchDigests(t *testing.T) {
+	amd64 := strings.Repeat("ab", 32)
+	aarch64 := strings.Repeat("cd", 32)
+	tool := Tool{Version: "v1", SHA256ByArch: map[string]string{"amd64": amd64, "aarch64": aarch64}}
+	data, err := yaml.Marshal(tool)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "version: v1") || !strings.Contains(out, "amd64: "+amd64) || !strings.Contains(out, "aarch64: "+aarch64) {
+		t.Errorf("marshaled = %q, want version + per-arch sha256 map", out)
 	}
 }
 

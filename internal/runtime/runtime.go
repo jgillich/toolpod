@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
+	"github.com/jgillich/tpd/internal/mise"
 	"github.com/jgillich/tpd/internal/workspace"
 )
 
@@ -27,7 +28,7 @@ type Spec struct {
 	PortSpecs   []PortSpec
 	DeviceSpecs []DeviceSpec
 	Env         map[string]string
-	Tools       map[string]string
+	Tools       map[string]mise.Tool
 	Caches      []CacheSpec
 	Network     string
 	Labels      map[string]string

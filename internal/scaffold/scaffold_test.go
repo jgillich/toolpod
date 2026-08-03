@@ -130,14 +130,14 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 		t.Errorf("Command = %v, want [opencode] inherited from built-in", cfg.Command)
 	}
 	// Fragments install mise tools alongside their caches
-	if cfg.Tools["node"] != "latest" {
-		t.Errorf("Tools[node] = %q, want latest (from javascript fragment)", cfg.Tools["node"])
+	if cfg.Tools["node"].Version != "latest" {
+		t.Errorf("Tools[node].Version = %q, want latest (from javascript fragment)", cfg.Tools["node"].Version)
 	}
-	if cfg.Tools["go"] != "latest" {
-		t.Errorf("Tools[go] = %q, want latest (from go fragment)", cfg.Tools["go"])
+	if cfg.Tools["go"].Version != "latest" {
+		t.Errorf("Tools[go].Version = %q, want latest (from go fragment)", cfg.Tools["go"].Version)
 	}
-	if cfg.Tools["opencode"] != "latest" {
-		t.Errorf("Tools[opencode] = %q, want latest (inherited from built-in)", cfg.Tools["opencode"])
+	if cfg.Tools["opencode"].Version != "latest" {
+		t.Errorf("Tools[opencode].Version = %q, want latest (inherited from built-in)", cfg.Tools["opencode"].Version)
 	}
 }
 

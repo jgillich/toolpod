@@ -124,7 +124,7 @@ func TestBuildSpecBasic(t *testing.T) {
 		Version: 1,
 		Image:   "myimage:latest",
 		Command: []string{"opencode"},
-		Tools:   map[string]string{"opencode": "latest", "node": "20"},
+		Tools:   map[string]profile.Tool{"opencode": {Version: "latest"}, "node": {Version: "20"}},
 		Mounts: map[string]profile.Mount{
 			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
 		},
@@ -155,8 +155,8 @@ func TestBuildSpecBasic(t *testing.T) {
 	if spec.Workspace.Mode != workspace.ModeRootless {
 		t.Errorf("workspace mode = %s, want rootless", spec.Workspace.Mode)
 	}
-	if spec.Tools["opencode"] != "latest" {
-		t.Errorf("tools[opencode] = %q", spec.Tools["opencode"])
+	if spec.Tools["opencode"].Version != "latest" {
+		t.Errorf("tools[opencode].Version = %q", spec.Tools["opencode"].Version)
 	}
 	if len(spec.Caches) != 1 || spec.Caches[0].Name != "tpd-cache-npm" {
 		t.Errorf("Caches = %+v, want one entry tpd-cache-npm", spec.Caches)

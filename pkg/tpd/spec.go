@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/jgillich/tpd/internal/mise"
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/workspace"
@@ -67,9 +68,9 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Target < files[j].Target })
 
-	tools := cfg.Tools
-	if tools == nil {
-		tools = map[string]string{}
+	tools := make(map[string]mise.Tool, len(cfg.Tools))
+	for name, t := range cfg.Tools {
+		tools[name] = mise.Tool{Version: t.Version, SHA256: t.SHA256, SHA256ByArch: t.SHA256ByArch}
 	}
 
 	env := cfg.Env

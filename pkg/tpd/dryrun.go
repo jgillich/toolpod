@@ -62,7 +62,7 @@ func RenderSpec(w io.Writer, spec Spec) error {
 		}
 		sort.Strings(toolNames)
 		for _, name := range toolNames {
-			_, err = fmt.Fprintf(w, "  %s: %s\n", name, spec.Tools[name])
+			_, err = fmt.Fprintf(w, "  %s: %s\n", name, spec.Tools[name].Version)
 			if err != nil {
 				return err
 			}

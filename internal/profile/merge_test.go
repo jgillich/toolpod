@@ -46,11 +46,32 @@ func TestResolveMapMergeAndNullDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if cfg.Tools["node"] != "22" {
-		t.Errorf("node = %q, want 22 (overridden)", cfg.Tools["node"])
+	if cfg.Tools["node"].Version != "22" {
+		t.Errorf("node = %q, want 22 (overridden)", cfg.Tools["node"].Version)
 	}
 	if _, exists := cfg.Tools["rust"]; exists {
 		t.Error("rust should be deleted by null-to-delete rule")
+	}
+}
+
+func TestMergeToolsChildWinsAndNullDelete(t *testing.T) {
+	parent := RawProfile{Profile: Profile{Tools: map[string]Tool{
+		"node": {Version: "20"},
+		"rust": {Version: "1.74"},
+	}}}
+	child := RawProfile{
+		Profile: Profile{Tools: map[string]Tool{
+			"node": {},
+			"rust": {Version: "1.75"},
+		}},
+		NullKeys: map[string]map[string]bool{"tools": {"node": true}},
+	}
+	merged := MergeProfiles(parent, child)
+	if merged.Tools["rust"].Version != "1.75" {
+		t.Errorf("rust = %q, want 1.75 (child wins per key)", merged.Tools["rust"].Version)
+	}
+	if _, ok := merged.Tools["node"]; ok {
+		t.Error("tools: {node: ~} should drop the inherited node")
 	}
 }
 
