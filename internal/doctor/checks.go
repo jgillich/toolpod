@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
+	"golang.org/x/sys/unix"
 )
 
 func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
@@ -27,6 +30,7 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 	checks = append(checks, checkMiseBaseImage(ctx, rt))
 	checks = append(checks, checkDerivedImages(ctx, rt))
 	checks = append(checks, checkVolumes(ctx, rt))
+	checks = append(checks, checkUnlabeledLegacyResources(ctx, rt))
 	checks = append(checks, checkPermissions(ctx, rt))
 
 	userDir := opts.ProfileDir
@@ -155,22 +159,94 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 }
 
 func checkPermissions(ctx context.Context, rt *dockerRT) Check {
-	_, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: "tpd-perm-test"})
-	if err != nil {
+	probe := "tpd-diag-" + randomSuffix(8)
+	if _, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: probe}); err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create volumes: " + err.Error()}
 	}
-	_ = rt.cli.VolumeRemove(ctx, "tpd-perm-test", true)
+	if err := rt.cli.VolumeRemove(ctx, probe, true); err != nil {
+		return Check{Name: "permissions", Status: Warn, Message: "created probe volume but could not remove " + probe + " (remove manually): " + err.Error()}
+	}
 
-	resp, err := rt.cli.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{"echo", "ok"},
-	}, nil, nil, nil, "")
+	images, err := rt.cli.ImageList(ctx, image.ListOptions{})
+	if err != nil {
+		return Check{Name: "permissions", Status: Fail, Message: "cannot list images: " + err.Error()}
+	}
+	ref := firstRunableImage(images) // first image with a non-empty ID
+	if ref == "" {
+		return Check{Name: "permissions", Status: Info, Message: "volume creation OK; container-creation probe skipped (no local image)"}
+	}
+	resp, err := rt.cli.ContainerCreate(ctx, &container.Config{Image: ref, Cmd: []string{"true"}}, nil, nil, nil, "")
 	if err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create containers: " + err.Error()}
 	}
-	_ = rt.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
+	if err := rt.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
+		return Check{Name: "permissions", Status: Warn, Message: "created container but could not remove probe: " + err.Error()}
+	}
 	return Check{Name: "permissions", Status: Pass, Message: "can create containers and volumes"}
+}
+
+// firstRunableImage returns a create-time reference for the first image with
+// an ID; image IDs work as an image reference without any tag.
+func firstRunableImage(images []image.Summary) string {
+	for _, img := range images {
+		if img.ID != "" {
+			return img.ID
+		}
+	}
+	return ""
+}
+
+func randomSuffix(n int) string {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(buf)
+}
+
+func checkUnlabeledLegacyResources(ctx context.Context, rt *dockerRT) Check {
+	var unlabeled []string
+
+	volumes, err := rt.cli.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		return Check{Name: "legacy resources", Status: Warn, Message: err.Error()}
+	}
+	for _, v := range volumes.Volumes {
+		if strings.HasPrefix(v.Name, "tpd-") && !strings.HasPrefix(v.Name, "tpd-diag-") && v.Labels[runtime.OwnershipLabel] != "true" {
+			unlabeled = append(unlabeled, v.Name)
+		}
+	}
+
+	f := filters.NewArgs()
+	f.Add("reference", "tpd/packages")
+	images, err := rt.cli.ImageList(ctx, image.ListOptions{Filters: f})
+	if err != nil {
+		return Check{Name: "legacy resources", Status: Warn, Message: err.Error()}
+	}
+	for _, img := range images {
+		if img.Labels[runtime.OwnershipLabel] == "true" {
+			continue
+		}
+		ref := ""
+		for _, t := range img.RepoTags {
+			if d := runtime.DerivedRef(t); d != "" {
+				ref = d
+				break
+			}
+		}
+		if ref == "" && len(img.RepoTags) == 0 {
+			ref = img.ID
+		}
+		if ref != "" {
+			unlabeled = append(unlabeled, ref)
+		}
+	}
+
+	if len(unlabeled) == 0 {
+		return Check{Name: "legacy resources", Status: Pass, Message: "none (all tpd resources carry the ownership label)"}
+	}
+	sort.Strings(unlabeled)
+	return Check{Name: "legacy resources", Status: Info, Message: "may not be tpd-owned; not pruned automatically: " + strings.Join(unlabeled, ", ")}
 }
 
 func checkProfileValidity(userDir string) Check {
@@ -269,11 +345,13 @@ func checkProjectTools(ctx context.Context, workspace string) Check {
 }
 
 func checkWorkspaceWritable(ctx context.Context, workspace string) Check {
-	testFile := filepath.Join(workspace, ".tpd-write-test")
-	if err := os.WriteFile(testFile, []byte("x"), 0o644); err != nil {
-		return Check{Name: "workspace", Status: Fail, Message: workspace + " is not writable"}
+	probe := filepath.Join(workspace, ".tpd-write-test-"+randomSuffix(4))
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW|os.O_WRONLY, 0o644)
+	if err != nil {
+		return Check{Name: "workspace", Status: Fail, Message: workspace + " is not writable: " + err.Error()}
 	}
-	os.Remove(testFile)
+	f.Close()
+	os.Remove(probe)
 	return Check{Name: "workspace", Status: Pass, Message: workspace + " is writable"}
 }
 
