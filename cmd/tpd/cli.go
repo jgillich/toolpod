@@ -281,7 +281,7 @@ func (c *ProfileEditCmd) Run() error {
 	if err != nil {
 		return fmt.Errorf("marshaling resolved %s: %w", c.Name, err)
 	}
-	data := builtinEditSeed(kind, c.Name, resolvedYAML)
+	data := builtinEditSeed(kind, key, resolvedYAML)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
