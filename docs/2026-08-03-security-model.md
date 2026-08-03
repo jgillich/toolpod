@@ -34,10 +34,18 @@ table would go stale, and the review explicitly declined it.
 
 ## Ownership labels and what `prune` removes
 
-Every volume, derived image, and container tpd creates carries
+Every volume, derived image, and launched container tpd creates carries
 `tpd.managed=true` (`runtime.OwnershipLabel`, `internal/runtime/labels.go`).
 Derived images additionally carry `tpd.build=1` build provenance
 (`internal/runtime/docker_build.go`).
+
+Three transient helper containers are deliberately unlabeled: the cache
+subpath helper (`ensureCacheSubpaths`, `internal/runtime/docker_prepare.go`),
+the image-file probe (`readImageFile`, `internal/runtime/extrepo.go`), and the
+doctor container probe (`internal/doctor/checks.go`). Each is created and
+removed synchronously, so a leftover one is only a failed-cleanup straggler.
+Because prune's running-container protection and doctor's leaked-container
+check are label-filtered, neither sees a stray helper.
 
 `tpd prune` removes **only labeled resources**. `listTpdVolumes` and
 `listTpdImages` in `internal/prune/prune.go` require the label; an unlabeled
@@ -50,6 +58,17 @@ Prune also never removes a resource referenced by a running container: before
 any removal it lists tpd-labeled containers (`runningContainerRefs`) and skips
 volumes/images they reference, and the engine independently refuses
 force-removal of an image a running container uses.
+
+## Cleanup: one bounded attempt, no retry (L-03)
+
+The review's recommendation to retry bounded container cleanup was declined.
+Cleanup already runs once, inside a 10s bounded background context, for the
+launched container and every transient helper (`docker_run.go:127-131`,
+`docker_prepare.go:111-115`). Retrying inside that window adds latency without
+meaningful success — the engine state that broke a removal rarely clears in
+10s. The underlying concern is handled another way: cleanup errors are surfaced
+to stderr as a `tpd: warning: remove ...` line, and doctor gained
+leaked-container and stale-dbus-socket checks.
 
 ## AppImage policy: `latest` with install-time digest verification
 
