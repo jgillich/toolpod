@@ -224,7 +224,7 @@ func checkUserOverrides(userDir string) []Check {
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(rc.Path, "built-in:") || catMerged.IsFragment(name) {
+		if rc.Namespace == "core" || catMerged.IsFragment(name) {
 			continue
 		}
 		userFileCount++
