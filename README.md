@@ -43,6 +43,8 @@ $ tpd shell        # a disposable shell with the right tools on PATH
 
 The first launch pulls the base image, builds the profile's derived image (system packages), and installs tools (slow). Subsequent launches reuse them (instant).
 
+`tpd launch --pull <profile>` re-pulls the base image even when it is already present locally, refreshing mutable tags (`latest`); the derived image is rebuilt automatically when the new base's ID changes its content hash.
+
 ### `tpd init`
 
 `tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches):
@@ -117,13 +119,13 @@ Every field is optional except `version`, `image`, and `command`.
 | `command` | string[] | Command to run. User args on the CLI replace the default args. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true`), `optional`, `create`. `~` in `source` → host `$HOME`; `~` as key → runtime home. |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
-| `tools` | map | mise-managed tools, keyed by name; value is the version. |
+| `tools` | map | mise-managed tools, keyed by name; value is the version. `appimage:` tools stay on `latest` and are digest-verified at install (against GitHub's per-asset digest or a checksum sidecar); an explicit `sha256` or per-arch `sha256: {amd64, aarch64}` is optional. |
 | `environment` | map | Env vars. Forward a host variable with `'{{ .Env.FOO }}'`. |
 | `ports` | map | Publish container ports to the host. Key is the container port; `host` optional (`0` = random). Allocated host ports are available to templates via `.Ports`. |
 | `devices` | map | Attach host device nodes (e.g. `/dev/fuse`). Optional `permissions` (`r`/`rw`/`rwm`) and `cgroup`. |
 | `labels` | map | Container labels (`profile` is set automatically). |
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
-| `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
+| `resources` | object | Optional limits: `{ memory, cpus }`, enforced as container resource limits (Docker `--memory`/`--cpus` semantics). |
 | `tty` | string | `auto` (default), `true`, or `false`. |
 | `dbus` | object | Session-bus allowlist: `talk` / `own`, each a map of bus names. |
 
@@ -162,6 +164,8 @@ $ tpd edit myagent          # open in $EDITOR
 
 Fragments are small, composable building blocks — a tool's cache, a host config mount, a credential set. `tpd init` merges selected fragments into a user profile. Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning. Fragments may extend other fragments but never profiles.
 
+GUI support is split into two fragments: `gui` mounts the display, `/dev/dri`, and the specific Wayland socket, while `gui-runtime` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `gui` alone unless the app needs the runtime dir.
+
 ## Runtime modes
 
 tpd talks to any Docker-API-compatible engine via `DOCKER_HOST`:
@@ -170,6 +174,10 @@ tpd talks to any Docker-API-compatible engine via `DOCKER_HOST`:
 - **Docker / rootful Podman:** workspace at `/workspace`, agent runs as root. Files are root-owned — use `sudo chown` or switch to rootless Podman.
 
 `tpd doctor` reports which mode is active.
+
+## Security
+
+Profiles are trusted configuration and can access whatever they are mounted — see [the security model](docs/2026-08-03-security-model.md) for the trust model, ownership labels and prune semantics, the AppImage digest-verification policy, and the accepted trade-offs (extrepo TLS trust anchor, SELinux `label=disable`, setpriv-absent root fallback, host-port allocation).
 
 ## License
 
