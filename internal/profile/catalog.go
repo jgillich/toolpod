@@ -25,6 +25,11 @@ func (c Catalog) IsFragment(name string) bool {
 	return c.fragments[name]
 }
 
+// Namespaces returns the registered namespace set (for CLI ref parsing).
+func (c Catalog) Namespaces() map[string]bool {
+	return c.namespaces
+}
+
 func (c Catalog) Get(name string) (RawProfile, bool) {
 	rc, ok := c.entries[name]
 	return rc, ok

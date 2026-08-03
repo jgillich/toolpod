@@ -213,7 +213,16 @@ func (c *ProfileShowCmd) Run() error {
 	}
 	if c.Resolved {
 		if cat.IsFragment(key) {
-			return fmt.Errorf("%s is a fragment, not a profile (use 'show %s' without --resolved to view it)", c.Name, c.Name)
+			resolved, err := profile.ResolveFragment(cat, key)
+			if err != nil {
+				return err
+			}
+			out, err := yaml.Marshal(resolved)
+			if err != nil {
+				return err
+			}
+			fmt.Print(string(out))
+			return nil
 		}
 		resolved, err := profile.ResolveProfile(cat, key)
 		if err != nil {
@@ -248,9 +257,14 @@ func (c *ProfileEditCmd) Run() error {
 	if !ok {
 		return fmt.Errorf("profile not found: %s", c.Name)
 	}
-	targetPath := filepath.Join(userDir, c.Name+".yaml")
+	// The file/display name is the local segment (no namespace prefix).
+	displayName := key
+	if i := strings.LastIndex(key, "/"); i >= 0 {
+		displayName = key[i+1:]
+	}
+	targetPath := filepath.Join(userDir, displayName+".yaml")
 	if cat.IsFragment(key) {
-		targetPath = filepath.Join(profile.DefaultFragmentDir(), c.Name+".yaml")
+		targetPath = filepath.Join(profile.DefaultFragmentDir(), displayName+".yaml")
 	}
 	if _, err := os.Stat(targetPath); err == nil {
 		return openEditor(targetPath)
@@ -264,22 +278,22 @@ func (c *ProfileEditCmd) Run() error {
 		fsys, root = catalog.Fragments, "fragments"
 		kind = "fragment"
 	}
-	if _, err := fsys.ReadFile(root + "/" + c.Name + ".yaml"); err != nil {
-		return fmt.Errorf("reading built-in %s: %w", c.Name, err)
+	if _, err := fsys.ReadFile(root + "/" + displayName + ".yaml"); err != nil {
+		return fmt.Errorf("reading built-in %s: %w", displayName, err)
 	}
 	var resolved profile.Profile
 	var resolveErr error
 	if kind == "fragment" {
-		resolved, resolveErr = profile.ResolveFragment(cat, c.Name)
+		resolved, resolveErr = profile.ResolveFragment(cat, key)
 	} else {
-		resolved, resolveErr = profile.ResolveProfile(cat, c.Name)
+		resolved, resolveErr = profile.ResolveProfile(cat, key)
 	}
 	if resolveErr != nil {
-		return fmt.Errorf("resolving %s: %w", c.Name, resolveErr)
+		return fmt.Errorf("resolving %s: %w", displayName, resolveErr)
 	}
 	resolvedYAML, err := yaml.Marshal(resolved)
 	if err != nil {
-		return fmt.Errorf("marshaling resolved %s: %w", c.Name, err)
+		return fmt.Errorf("marshaling resolved %s: %w", displayName, err)
 	}
 	data := builtinEditSeed(kind, key, resolvedYAML)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
@@ -312,15 +326,15 @@ func (c *ProfileEditCmd) Run() error {
 // builtinEditSeed renders the file seeded when editing a built-in that has no
 // user file yet: a shadow extending the built-in, then the resolved (merged)
 // profile as a reference comment.
-func builtinEditSeed(kind, name string, resolved []byte) []byte {
+func builtinEditSeed(kind, canonicalKey string, resolved []byte) []byte {
 	const rule = "# ──────────────────────────────────────────────────────────────────\n"
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", name, kind)
+	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", canonicalKey, kind)
 	b.WriteString("# top of the built-in, so only change what you need.\n\n")
-	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", name)
+	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", canonicalKey)
 	b.WriteString(rule)
 	fmt.Fprintf(&b, "# Resolved %s (reference) — snapshot from when this file was created;\n", kind)
-	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", name)
+	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", canonicalKey)
 	fmt.Fprintf(&b, "# for the current resolved %s.\n", kind)
 	b.WriteString(rule)
 	b.WriteString("\n")
@@ -358,19 +372,14 @@ func (c *ProfileListCmd) Run() error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tKIND\tSOURCE")
-	for _, name := range cat.Names() {
-		rc, _ := cat.Get(name)
-		kind, source := "profile", "built-in"
-		if cat.IsFragment(name) {
+	for _, dn := range cat.DisplayNames() {
+		kind := "profile"
+		if _, ok := cat.Get("core/" + dn); ok && cat.IsFragment("core/"+dn) {
+			kind = "fragment"
+		} else if _, ok := cat.Get(dn); ok && cat.IsFragment(dn) {
 			kind = "fragment"
 		}
-		if rc.Namespace == "" {
-			source = "user"
-			if _, ok := cat.Get("core/" + name); ok {
-				source = "user shadow"
-			}
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", name, kind, source)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", dn, kind, cat.Source(dn))
 	}
 	w.Flush()
 	return nil
