@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/jgillich/tpd/internal/profile"
 )
 
@@ -28,11 +27,10 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bare tpd should show help and exit 0, got err: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Usage: tpd") {
-		t.Errorf("expected help text, got:\n%s", out)
-	}
-	if !strings.Contains(string(out), "profile-and-args") {
-		t.Errorf("expected help to mention profile-and-args, got:\n%s", out)
+	for _, c := range []string{"Usage:", "launch", "show", "profile"} {
+		if !strings.Contains(string(out), c) {
+			t.Errorf("expected bare tpd help to mention %q, got:\n%s", c, out)
+		}
 	}
 }
 
@@ -50,15 +48,30 @@ func TestBareHelpShowsAllCommands(t *testing.T) {
 	}
 }
 
-func TestLaunchPullFlagBinds(t *testing.T) {
-	// --pull must bind to LaunchCmd.Pull so Run can pass it to LaunchOpts.
-	var cli CLI
-	parser := kong.Must(&cli, kong.Name("tpd"))
-	if _, err := parser.Parse([]string{"launch", "--pull", "shell"}); err != nil {
-		t.Fatalf("parse launch --pull: %v", err)
+func TestLaunchFlagsBind(t *testing.T) {
+	o := &launchFlags{}
+	cmd := newLaunchCommand(o)
+	if err := cmd.Flags().Parse([]string{"--pull", "--dry-run", "--verbose", "--command", "ls", "--workspace", "/tmp"}); err != nil {
+		t.Fatalf("parse launch flags: %v", err)
 	}
-	if !cli.Launch.Pull {
-		t.Error("launch --pull did not set LaunchCmd.Pull")
+	if !o.Pull || !o.DryRun || !o.Verbose || o.Command != "ls" || o.Workspace != "/tmp" {
+		t.Errorf("launch flags not bound: %+v", o)
+	}
+}
+
+func TestLaunchPassthroughAfterProfile(t *testing.T) {
+	// kong's passthrough:partial contract: everything from the profile name
+	// onward reaches the profile verbatim, even tokens that look like flags.
+	o := &launchFlags{}
+	cmd := newLaunchCommand(o)
+	if err := cmd.Flags().Parse([]string{"shell", "--model", "foo", "-c", "ls"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := cmd.Flags().Args(); fmt.Sprint(got) != "[shell --model foo -c ls]" {
+		t.Errorf("passthrough args = %v, want [shell --model foo -c ls]", got)
+	}
+	if o.Command != "" {
+		t.Errorf("-c after profile must not bind to the launch flag, got %q", o.Command)
 	}
 }
 
