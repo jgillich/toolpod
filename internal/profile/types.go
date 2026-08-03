@@ -2,6 +2,24 @@ package profile
 
 import "gopkg.in/yaml.v3"
 
+// Ref is a parsed-but-not-yet-resolved reference to a profile or fragment.
+// Namespace == "" means unqualified (resolve via user-first-then-core fallback);
+// any other value ("core", a future remote namespace) means qualified (direct
+// lookup, no fallback).
+type Ref struct {
+	Namespace string
+	Name      string
+}
+
+// FullName returns the canonical string form: "ns/name", or the bare name
+// when Namespace is "".
+func (r Ref) FullName() string {
+	if r.Namespace == "" {
+		return r.Name
+	}
+	return r.Namespace + "/" + r.Name
+}
+
 // ExtendsList is a list of profile/fragment names to extend.
 // It unmarshals from both a string ("extends: foo") and a list
 // ("extends: [foo, bar]"). A single string is normalized to a
@@ -181,6 +199,8 @@ type Resources struct {
 // It carries the source file path for error reporting.
 type RawProfile struct {
 	Profile
-	Path     string                     `yaml:"-"` // file path for error reporting
-	NullKeys map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+	Namespace string                     `yaml:"-"` // source identity: "core" for built-ins, "" for user files (stamped by loaders)
+	Name      string                     `yaml:"-"`
+	Path      string                     `yaml:"-"` // file path for error reporting
+	NullKeys  map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
 }

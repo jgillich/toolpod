@@ -15,9 +15,10 @@ import (
 
 // Catalog is the merged set of built-in + user raw profiles and fragments, keyed by name.
 type Catalog struct {
-	entries   map[string]RawProfile // merged view: user shadows built-in
-	builtins  map[string]RawProfile // built-in profiles only, for extends-self
-	fragments map[string]bool       // names that are fragments (not profiles)
+	entries    map[string]RawProfile // merged view: user shadows built-in
+	builtins   map[string]RawProfile // built-in profiles only, for extends-self
+	namespaces map[string]bool       // registered prefixes: "core", "", future remotes
+	fragments  map[string]bool       // names that are fragments (not profiles)
 }
 
 func (c Catalog) IsFragment(name string) bool {
