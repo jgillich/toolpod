@@ -33,6 +33,12 @@ sboms:
 
 changelog:
   use: git
+  filters:
+    exclude:
+      - "^chore:"
+      - "^test:"
+      - "^docs:"
+      - "^refactor:"
 
 release:
   github:
