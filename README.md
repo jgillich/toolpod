@@ -1,10 +1,10 @@
 # tpd
 
-> **Beta.** tpd is early and currently only supports **Podman on Linux**. Docker and other platforms may work but are untested during this phase.
+> **Beta.** tpd is early and currently targets **Linux**. Rootless Podman is the primary runtime; Docker and rootful Podman are supported on a best-effort basis.
 
 Disposable container environments driven by composable profiles: declare tools, mounts, and caches once, then `tpd <profile>` spawns the container, runs your command, and removes it on exit — with a persistent [mise](https://mise.jdx.dev/) toolchain shared across runs.
 
-`tpd opencode` spins up a container, mounts your current directory, runs the agent, and removes the container on exit. The next run is instant — mise, your tools, and your caches are already warm in shared volumes.
+`tpd opencode` resolves the profile, prepares its image and mise-managed tools, mounts your current directory and any configured credentials or caches, then runs the agent in a disposable container that is removed on exit. Subsequent runs reuse the local image, mise installs, and shared caches when they are available.
 
 ![](./assets/tpd-banner.svg)
 
@@ -30,25 +30,32 @@ Or build from source (requires Go):
 go install github.com/jgillich/tpd/cmd/tpd@latest
 ```
 
-Point `DOCKER_HOST` at a **rootless Podman** socket for the best experience (correct file ownership and host-path parity); Docker and rootful Podman also work but mount the workspace at `/workspace` as root — see [Runtime modes](#runtime-modes).
+tpd uses the Docker API, so configure `DOCKER_HOST` for the engine you want to use. For the recommended rootless Podman setup, start the user socket and point the client at it:
+
+```sh
+systemctl --user enable --now podman.socket
+export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
+```
+
+See [Runtime modes](#runtime-modes) for the differences between rootless and rootful engines.
 
 ## Basic usage
 
-tpd-owned flags come **before** the profile name; everything after is passed verbatim to the profile's command.
+tpd-owned flags come **before** the profile name; everything after is passed verbatim to the profile's command. Use `tpd --help` for the complete CLI reference.
 
 ```sh
 $ tpd opencode     # run the opencode agent, then remove the container
 $ tpd shell        # a disposable shell with the right tools on PATH
 ```
 
-The first launch pulls the base image, builds the profile's derived image (system packages), and installs tools (slow). Subsequent launches reuse them (instant).
+The first launch pulls the base image, builds the profile's derived image when system packages are declared, and installs tools (slow). Subsequent launches reuse these resources when possible.
 
 ### `tpd init`
 
-`tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches):
+`tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches). With a terminal it starts an interactive wizard; explicit arguments are useful for scripts:
 
 ```sh
-$ tpd init opencode
+$ tpd init opencode --extends=javascript,gitconfig,ssh
 ```
 
 ### Other commands
@@ -66,7 +73,7 @@ A profile is a YAML file. Built-ins are embedded in the binary; user profiles li
 # ~/.config/tpd/profiles/myagent.yaml
 version: 1
 extends: opencode          # inherit everything, then override below
-command: ["myagent", "--serve"]   # replaces the inherited command
+command: ["opencode", "--verbose"] # replaces the inherited command
 tools:
   opencode: "0.11.2"       # pin a version (overrides inherited "latest")
   node: "22"
@@ -89,6 +96,7 @@ If a project has its own `mise.toml`, tpd's shell picks it up as an override; ot
 | Profile | What it is |
 | --- | --- |
 | [`mise`](internal/catalog/profiles/mise.yaml) | Shared base profile: installs the mise toolchain plus common CLI tools (bat, fzf, jq, ripgrep…). Everything else extends it. |
+| [`amp`](internal/catalog/profiles/amp.yaml) | Sourcegraph Amp coding agent |
 | [`opencode`](internal/catalog/profiles/opencode.yaml) | The opencode AI agent |
 | [`codex`](internal/catalog/profiles/codex.yaml) | OpenAI Codex CLI |
 | [`claude`](internal/catalog/profiles/claude.yaml) | Anthropic Claude Code |
@@ -96,15 +104,16 @@ If a project has its own `mise.toml`, tpd's shell picks it up as an override; ot
 | [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent (earendil-works) |
 | [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
 | [`qwen`](internal/catalog/profiles/qwen.yaml) | Qwen Code CLI (Alibaba) |
+| [`copilot`](internal/catalog/profiles/copilot.yaml) | GitHub Copilot CLI |
 | [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
 | [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
 | [`shell`](internal/catalog/profiles/shell.yaml) | Disposable shell. |
 
-All built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry.
+Most agent built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry. `mise` is the shared base and `shell` is the general-purpose shell profile.
 
 ### Schema reference
 
-Every field is optional except `version`, `image`, and `command`.
+Every launchable profile needs `version`, `image`, and `command`. Fragments only need `version` and may omit the profile identity fields.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -112,7 +121,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `extends` | string \| list | Inherit from another profile or fragment, then deep-merge. Cycles are rejected; fragments may only extend fragments. |
 | `image` | string | Container image. |
 | `packages` | string[] | Apt packages installed in a derived image, built on first use and reused. |
-| `repos` | map | Extra apt sources (`extrepo: <name>`), resolved at build time for the base image's Debian version. |
+| `repos` | map | Extra apt sources (`extrepo: <name>`), resolved at build time for the base image's Debian version. v1 supports extrepo entries; custom URL repositories are not yet buildable. |
 | `files` | map | Files written into the container at launch, keyed by target path. Each entry: `content` (inline, `{{ }}` templates), `mode` (default `0644`). |
 | `command` | string[] | Command to run. User args on the CLI replace the default args. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true`), `optional`, `create`. `~` in `source` → host `$HOME`; `~` as key → runtime home. |
@@ -123,7 +132,7 @@ Every field is optional except `version`, `image`, and `command`.
 | `devices` | map | Attach host device nodes (e.g. `/dev/fuse`). Optional `permissions` (`r`/`rw`/`rwm`) and `cgroup`. |
 | `labels` | map | Container labels (`profile` is set automatically). |
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
-| `resources` | object | Optional hints: `{ memory, cpus }`. Best-effort. |
+| `resources` | object | Optional resource limits: `{ memory, cpus }`. |
 | `tty` | string | `auto` (default), `true`, or `false`. |
 | `dbus` | object | Session-bus allowlist: `talk` / `own`, each a map of bus names. |
 
@@ -133,18 +142,26 @@ Every field is optional except `version`, `image`, and `command`.
 - **Maps:** merged key-by-key; set a key to `null` to delete an inherited entry.
 - **`command`:** replaced, not concatenated.
 - **`packages`:** additive with dedup; `packages: null` clears the inherited list.
-- **`image`:** single slot; setting it clears the other.
+- **`image`:** single slot; the child image replaces the inherited image.
 
 ### System packages (`packages:`)
 
-The base image ships the bare OS. Per-profile system libraries are installed into a **derived image** (base + the profile's package list) that tpd builds on first use and reuses; profiles with identical lists share one image. Packages outside Debian's archive need a `repos:` entry:
+The base image ships the bare OS. Per-profile system libraries are installed into a **derived image** (base + the profile's package list) that tpd builds on first use and reuses; profiles with identical lists share one image. Packages outside Debian's archive need a supported `repos:` entry:
 
 ```yaml
 repos:
   mise: { extrepo: mise }   # enables https://mise.jdx.dev/deb
 ```
 
-If your engine can't build images, use a custom `image:` that already includes your packages and omit `packages:`.
+Custom URL repositories are schema-ready but currently rejected during image preparation.
+
+If your engine can't build images, use a custom `image:` that already includes mise and the required packages, and clear inherited package/repository declarations:
+
+```yaml
+image: my-image:latest
+packages: null
+repos: null
+```
 
 ### Writing files at launch (`files:`)
 
@@ -153,23 +170,33 @@ If your engine can't build images, use a custom `image:` that already includes y
 ### Inspecting profiles
 
 ```sh
-$ tpd show shell            # raw on-disk profile
+$ tpd show shell            # profile definition before resolving extends
 $ tpd list                  # every profile and fragment
 $ tpd edit myagent          # open in $EDITOR
 ```
 
 ## Fragments
 
-Fragments are small, composable building blocks — a tool's cache, a host config mount, a credential set. `tpd init` merges selected fragments into a user profile. Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning. Fragments may extend other fragments but never profiles.
+Fragments are small, composable building blocks — a tool's cache, a host config mount, or a credential set. `tpd init` merges selected fragments into a user profile. Built-in fragment mounts are `optional: true`, so missing host paths are skipped with a warning. Fragments may extend other fragments but never profiles.
+
+User configuration lives below `$XDG_CONFIG_HOME/tpd/` (normally `~/.config/tpd/`): profiles are in `profiles/` and fragments are in `fragments/`. User profiles shadow built-ins with the same name; name collisions between profiles and fragments are errors.
+
+Project-local `mise.toml` and `.tool-versions` files are discovered after tpd changes into the workspace, and override profile-level `tools:` for that launch.
+
+## Security
+
+Profiles are user-owned configuration, but they can grant substantial host access. Review mounts, forwarded environment variables, credential files, devices, published ports, GUI/D-Bus access, and container sockets before launching a profile. `files:` writes only into the ephemeral container; bind mounts and named caches can persist or expose host data.
 
 ## Runtime modes
 
-tpd talks to any Docker-API-compatible engine via `DOCKER_HOST`:
+tpd talks to a Docker-API-compatible engine via `DOCKER_HOST`:
 
-- **Rootless Podman (recommended):** workspace at its host absolute path, agent runs as your host user. Paths and file ownership match exactly.
-- **Docker / rootful Podman:** workspace at `/workspace`, agent runs as root. Files are root-owned — use `sudo chown` or switch to rootless Podman.
+- **Rootless Podman (recommended):** workspace is mounted at its host absolute path and the command runs as your host user. Paths and file ownership match exactly.
+- **Docker / rootful Podman:** workspace is mounted at `/workspace`; tpd drops to the host UID when the image provides `setpriv`, with a root fallback when it does not. This mode cannot provide the same host-path parity as rootless Podman.
 
 `tpd doctor` reports which mode is active.
+
+Named caches are stored in engine-managed volumes and shared across profiles by cache name. On engines without volume-subpath support, tpd uses a separate fallback volume for each cache path.
 
 ## License
 

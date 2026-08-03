@@ -1,3 +1,4 @@
 [tools]
+go = "latest"
 svu = "latest"
 tssh = "latest"
