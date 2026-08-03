@@ -2,6 +2,7 @@ version: 1
 extends:
   - mise
   - gui
+  - gui-runtime
   - opencode
   - claude
   - codex

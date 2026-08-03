@@ -47,11 +47,10 @@ mounts:
   /tmp/.X11-unix:
     source: /tmp/.X11-unix
     optional: true
-  '{{ .Env.XDG_RUNTIME_DIR }}':
-    source: '{{ .Env.XDG_RUNTIME_DIR }}'
+  '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}':
+    source: '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}'
     optional: true
 environment:
-  XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'
   WAYLAND_DISPLAY: '{{ .Env.WAYLAND_DISPLAY }}'
   DISPLAY: '{{ .Env.DISPLAY }}'
 dbus:

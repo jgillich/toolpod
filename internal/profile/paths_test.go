@@ -242,6 +242,56 @@ func TestResolveTildesEmptyMountSourceSkippedWhenOptional(t *testing.T) {
 	}
 }
 
+// guardedWaylandMount is the gui fragment's wayland-socket mount. The bare
+// {{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }} form is a footgun: a
+// missing variable leaves a dangling "/" (or "/" itself when both are unset),
+// which exists and would bind the host root. The {{ if and ... }} guard
+// renders empty when either variable is missing, and ResolveTildes drops
+// empty optional mounts.
+const guardedWaylandMount = `{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}`
+
+func TestResolveTildesGuardedWaylandMount(t *testing.T) {
+	cases := []struct {
+		name       string
+		runtimeDir string
+		display    string
+		want       string
+	}{
+		{"both unset", "", "", ""},
+		{"both set", "/run/user/1000", "wayland-1", "/run/user/1000/wayland-1"},
+		{"display set, runtime dir unset", "", "wayland-1", ""},
+		{"runtime dir set, display unset", "/run/user/1000", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_RUNTIME_DIR", tc.runtimeDir)
+			t.Setenv("WAYLAND_DISPLAY", tc.display)
+			cfg := Profile{
+				Mounts: map[string]Mount{
+					guardedWaylandMount: {Source: guardedWaylandMount, Optional: true},
+				},
+			}
+			out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" {
+				if len(out.Mounts) != 0 {
+					t.Errorf("wayland mount should be dropped when a variable is unset, got %v", out.Mounts)
+				}
+				return
+			}
+			m, exists := out.Mounts[tc.want]
+			if !exists {
+				t.Fatalf("mount at %q missing; got %v", tc.want, out.Mounts)
+			}
+			if m.Source != tc.want {
+				t.Errorf("source = %q, want %q", m.Source, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveTildesEmptyCacheTargetErrors(t *testing.T) {
 	os.Unsetenv("TPD_UNSET_VAR")
 	cfg := Profile{

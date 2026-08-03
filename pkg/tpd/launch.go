@@ -120,7 +120,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
 		}
-		cleanupProxy, busAddr := startBusProxy(cfg)
+		cleanupProxy, busAddr, err := startBusProxy(cfg)
+		if err != nil {
+			return Result{ExitCode: 3, Err: fmt.Errorf("dbus: %w", err)}
+		}
 		if cleanupProxy != nil {
 			defer cleanupProxy()
 		}

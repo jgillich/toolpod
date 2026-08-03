@@ -2,10 +2,13 @@ version: 1
 extends:
   - mise
   - gui
+  - gui-runtime
   - codex
   - claude
 command: ["buzz"]
-network: host # fixme callback url on random port
+# Host networking is required: buzz's auth flow opens a callback URL on a
+# random host port that a published port cannot predict or map.
+network: host
 tools:
   "appimage:block/buzz": latest
 mounts:
