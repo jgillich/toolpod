@@ -2,11 +2,13 @@
 
 > **Beta.** tpd is early and currently targets **Linux**. Rootless Podman is the primary runtime; Docker and rootful Podman are supported on a best-effort basis.
 
-Disposable container environments driven by composable profiles: declare tools, mounts, and caches once, then `tpd <profile>` spawns the container, runs your command, and removes it on exit — with a persistent [mise](https://mise.jdx.dev/) toolchain shared across runs.
+Composable profiles declare tools, mounts, and caches once. `tpd opencode` then mounts your current directory and any configured credentials, runs the command in a fresh container, and removes it on exit. A persistent [mise](https://mise.jdx.dev/) toolchain and shared volumes keep installs and caches warm across runs.
 
-`tpd opencode` resolves the profile, prepares its image and mise-managed tools, mounts your current directory and any configured credentials or caches, then runs the agent in a disposable container that is removed on exit. Subsequent runs reuse the local image, mise installs, and shared caches when they are available.
-
-![](./assets/tpd-banner.svg)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="./assets/tpd-banner-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/tpd-banner.svg">
+  <img alt="tpd disposable, reproducible development environments" src="./assets/tpd-banner.svg">
+</picture>
 
 ## Why
 
@@ -20,7 +22,15 @@ Unlike [devcontainers](https://containers.dev/) (project-owned, checked into the
 
 ## Install
 
+tpd is distributed as a [mise](https://mise.jdx.dev/) plugin, so install mise first:
+
+```sh
+curl https://mise.jdx.dev/install.sh | sh
 ```
+
+This installs mise to `~/.local/bin` and wires up shell activation; restart your shell (or see the [installation docs](https://mise.jdx.dev/installing-mise.html)). Then install tpd:
+
+```sh
 mise use -g github:jgillich/tpd
 ```
 
@@ -28,6 +38,12 @@ Or build from source (requires Go):
 
 ```
 go install github.com/jgillich/tpd/cmd/tpd@latest
+```
+
+Enable shell completions:
+
+```sh
+echo 'source <(tpd completion bash)' >> ~/.bashrc && source ~/.bashrc
 ```
 
 tpd uses the Docker API, so configure `DOCKER_HOST` for the engine you want to use. For the recommended rootless Podman setup, start the user socket and point the client at it:
