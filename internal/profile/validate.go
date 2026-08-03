@@ -284,7 +284,9 @@ func ParseNanoCPUs(s string) (int64, error) {
 		return 0, fmt.Errorf("invalid cpu count %q", s)
 	}
 	n := f * 1e9
-	if n > math.MaxInt64 {
+	// float64(math.MaxInt64) rounds to 2^63, so `>` would let an exact 2^63
+	// through and int64() wrap it negative; `>=` rejects the wrap boundary.
+	if n >= math.MaxInt64 {
 		return 0, fmt.Errorf("cpu count %q out of range", s)
 	}
 	return int64(n), nil

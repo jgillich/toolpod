@@ -396,6 +396,34 @@ func TestValidateResources(t *testing.T) {
 	}
 }
 
+func TestParseNanoCPUs(t *testing.T) {
+	valid := []struct {
+		in   string
+		want int64
+	}{
+		{"2", 2000000000},
+		{"1.5", 1500000000},
+		{"0.5", 500000000},
+		{"9223372036.854775", 9223372036854774784},
+	}
+	for _, tt := range valid {
+		got, err := ParseNanoCPUs(tt.in)
+		if err != nil {
+			t.Errorf("ParseNanoCPUs(%q) = _, %v, want %d", tt.in, err, tt.want)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseNanoCPUs(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+	invalid := []string{"", "abc", "NaN", "Inf", "-1", "0", "1e10", "9223372036.854776"}
+	for _, in := range invalid {
+		if _, err := ParseNanoCPUs(in); err == nil {
+			t.Errorf("ParseNanoCPUs(%q) = nil, want error", in)
+		}
+	}
+}
+
 func TestValidateNetwork(t *testing.T) {
 	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
 	for _, nw := range []string{"", "host", "bridge", "none", "slirp4netns", "my.net_1"} {
