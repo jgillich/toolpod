@@ -29,7 +29,7 @@ sboms:
     documents:
       - "${artifact}.sbom"
     cmd: syft
-    args: ["$artifact", "--file", "$document"]
+    args: ["$artifact", "--output", "spdx-json=$document", "--enrich", "all"]
 
 changelog:
   use: git
