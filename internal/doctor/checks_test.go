@@ -14,7 +14,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -24,9 +26,10 @@ import (
 var probeVolumeRe = regexp.MustCompile(`^tpd-diag-[0-9a-f]{16}$`)
 
 type fakeDocker struct {
-	t     *testing.T
-	srv   *httptest.Server
-	images []image.Summary
+	t         *testing.T
+	srv       *httptest.Server
+	images    []image.Summary
+	containers []types.Container
 
 	mu             sync.Mutex
 	volumes        []*volume.Volume
@@ -85,6 +88,33 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(f.images); err != nil {
 			f.t.Errorf("encode images: %v", err)
+		}
+
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
+		out := f.containers
+		if fs := r.URL.Query().Get("filters"); fs != "" {
+			args, err := filters.FromJSON(fs)
+			if err != nil {
+				f.t.Errorf("parse container filters: %v", err)
+			}
+			var filtered []types.Container
+			for _, c := range out {
+				keep := true
+				for _, v := range args.Get("label") {
+					k, val, _ := strings.Cut(v, "=")
+					if c.Labels[k] != val {
+						keep = false
+					}
+				}
+				if keep {
+					filtered = append(filtered, c)
+				}
+			}
+			out = filtered
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(out); err != nil {
+			f.t.Errorf("encode containers: %v", err)
 		}
 
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create"):
@@ -410,5 +440,72 @@ func TestCheckUserOverridesNoUserFiles(t *testing.T) {
 	}
 	if checks[0].Status != Info {
 		t.Errorf("Status = %v, want Info (migration notice for no user overrides)", checks[0].Status)
+	}
+}
+
+func TestCheckLeakedContainersWarnsOnLabeled(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{ID: "abc123", Names: []string{"/tpd-node"}, Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	for _, want := range []string{"tpd-node", "docker rm -f"} {
+		if !strings.Contains(c.Message, want) {
+			t.Errorf("message should contain %q; got %q", want, c.Message)
+		}
+	}
+}
+
+func TestCheckLeakedContainersPassWhenNone(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckLeakedContainersIgnoresUnlabeled(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{ID: "unlabeled", Names: []string{"/nginx"}},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass (unlabeled container filtered out): %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckStaleBusSocketsWarns(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "tpd-bus-123.sock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := checkStaleBusSockets()
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "tpd-bus-123.sock") {
+		t.Errorf("message should name the stale socket; got %q", c.Message)
+	}
+}
+
+func TestCheckStaleBusSocketsPass(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+
+	c := checkStaleBusSockets()
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
 	}
 }

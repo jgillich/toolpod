@@ -103,18 +103,30 @@ func startBusProxy(cfg profile.Profile) (func(), string) {
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-			_ = os.Remove(sockPath)
+			if err := cmd.Process.Kill(); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+			}
+			if _, err := cmd.Process.Wait(); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+			}
+			if err := os.Remove(sockPath); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+			}
 			fmt.Fprintln(os.Stderr, "tpd: warning: xdg-dbus-proxy did not start; container D-Bus disabled")
 			return nil, ""
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	cleanup := func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		_ = os.Remove(sockPath)
+		if err := cmd.Process.Kill(); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+		}
+		if _, err := cmd.Process.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+		}
+		if err := os.Remove(sockPath); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+		}
 	}
 	return cleanup, "unix:path=" + sockPath
 }

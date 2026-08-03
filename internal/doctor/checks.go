@@ -32,6 +32,8 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 	checks = append(checks, checkVolumes(ctx, rt))
 	checks = append(checks, checkUnlabeledLegacyResources(ctx, rt))
 	checks = append(checks, checkPermissions(ctx, rt))
+	checks = append(checks, checkLeakedContainers(ctx, rt))
+	checks = append(checks, checkStaleBusSockets())
 
 	userDir := opts.ProfileDir
 	if userDir == "" {
@@ -247,6 +249,36 @@ func checkUnlabeledLegacyResources(ctx context.Context, rt *dockerRT) Check {
 	}
 	sort.Strings(unlabeled)
 	return Check{Name: "legacy resources", Status: Info, Message: "may not be tpd-owned; not pruned automatically: " + strings.Join(unlabeled, ", ")}
+}
+
+func checkStaleBusSockets() Check {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return Check{Name: "stale dbus sockets", Status: Pass, Message: "no XDG_RUNTIME_DIR"}
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "tpd-bus-*.sock"))
+	if len(matches) == 0 {
+		return Check{Name: "stale dbus sockets", Status: Pass, Message: "none"}
+	}
+	return Check{Name: "stale dbus sockets", Status: Warn, Message: strings.Join(matches, ", ")}
+}
+
+func checkLeakedContainers(ctx context.Context, rt *dockerRT) Check {
+	f := filters.NewArgs()
+	f.Add("label", runtime.OwnershipLabel+"=true")
+	containers, err := rt.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return Check{Name: "leaked containers", Status: Warn, Message: err.Error()}
+	}
+	var leaked []string
+	for _, c := range containers {
+		leaked = append(leaked, strings.Join(c.Names, ","))
+	}
+	sort.Strings(leaked)
+	if len(leaked) == 0 {
+		return Check{Name: "leaked containers", Status: Pass, Message: "none"}
+	}
+	return Check{Name: "leaked containers", Status: Warn, Message: strings.Join(leaked, ", ") + " (remove with: docker rm -f ...)"}
 }
 
 func checkProfileValidity(userDir string) Check {
