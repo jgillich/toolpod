@@ -85,31 +85,47 @@ by whether a body is present beyond `enabled:`/`extends:`:
   disk/embed at resolution time, not at catalog load. Validation of the
   standalone is deferred to when it is actually enabled.
 - **Definition** (body present): `fragments: bashrc: { enabled: true,
-  mounts: ... }` is a local fragment. The body is the fragment content.
+  mounts: ... }` is a local fragment. The body is the fragment content. The
+  name is a **local label** for toggling within this profile, not a
+  reference to a catalog entry.
 
-**If a definition's name matches a standalone fragment, the definition's
-body is merged onto the standalone (k8s-style, same semantics as all other
-fields: scalars child-wins, maps key-by-key with null-to-delete, packages
-append+dedup, `command`/`image`/`version` rejected).** A definition never
-*replaces* a standalone — it only adds to or overrides it. This keeps the
-merge uniform across the whole profile (one merge rule for every field,
-which the codebase already enforces elsewhere).
+**An inline definition's name MUST NOT match any known standalone fragment
+name (core or user).** A matching name is a schema error at validation
+time. This eliminates two silent failure modes that implicit name-based
+coupling would introduce:
 
-A definition with `extends:` additionally pulls in the listed fragments
-first, then merges the standalone (if name matches), then merges the inline
-body on top. Merge order for an inline fragment named `X` with
-`extends: [A, B]` (this is the fragment's *internal* resolution, before it
-is merged into the profile):
+1. *Accidental override:* a user writes `fragments: ssh: { enabled: true,
+   packages: [foo] }` intending to add `foo` to ssh, but silently replaces
+   it (loses `openssh-client` and the `~/.ssh` mounts) because the name is
+   local, not a reference.
+2. *Silent upstream coupling:* tpd ships a core `foo-config` and every
+   user profile with a local inline `foo-config` silently grows new
+   mounts/tools it never asked for.
 
+To customize a standalone, the user picks a distinct local name and
+extends the standalone explicitly:
+
+```yaml
+fragments:
+  my-ssh:
+    enabled: true
+    extends: ssh        # pulls standalone ssh, then merges the body below
+    packages: [foo]     # appends to ssh's openssh-client (packages merge additively)
 ```
-merge(merge(merge(A, B), standalone_X), inline_body)
-```
 
-i.e. within the fragment, the inline body wins over the standalone, which
-wins over the fragment's own extends chain — body-wins-last, same as
-profile resolution. The fully resolved fragment is then merged into the
-profile body as described in the resolution algorithm below (where the
-profile body still wins last over all its fragments).
+A definition with `extends:` resolves the listed fragments first
+(depth-first, left-to-right), then merges the inline body on top —
+body-wins-last, same as profile resolution. The fully resolved fragment
+is then merged into the profile body (see resolution algorithm below).
+
+This rule is consistent with the catalog's existing cross-namespace
+display-name uniqueness: a name is either a standalone (reference target)
+or a local inline label, never both. The collision is loud (schema error
+at launch, clear message naming both the inline fragment and the
+conflicting standalone), not silent — and it's the same break that
+already exists today if a user standalone and a core standalone share a
+name. We control the core catalog and avoid names likely to collide
+with common local labels.
 
 ### `extends:` is profiles-only
 
@@ -178,10 +194,11 @@ f3: {enabled: true, ...} }`:
    - If `enabled: true`:
      - If it is a **reference** (no body): resolve the standalone fragment
        of that name (lazy-load, resolve *its* extends chain, merge).
-     - If it is a **definition** (body present): if the name matches a
-       standalone, resolve the standalone first; then merge the inline body
-       on top (and the inline's own `extends:` first, before the
-       standalone).
+     - If it is a **definition** (body present): reject if its name
+       matches a known standalone fragment (schema error). Otherwise
+       resolve *its* `extends:` chain (fragments only), then merge the
+       inline body on top. If `extends:` is absent, the fragment is
+       just its inline body.
 3. Merge each enabled fragment into `merged_body` in declaration order,
    as if they were additional `extends` entries appended after the
    profile's declared extends. The profile's own body is merged *last*,
@@ -260,10 +277,12 @@ language fragments (`go`, `python`, `rust`, `java`, `javascript`,
   Extend `collectNullKeys` to track nulls inside inline fragment bodies.
 - `internal/profile/validate.go`: forbid fragments in profile `extends`;
   enforce no-duplicate-names within a `fragments:` block; reject
-  `image`/`command`/`version` in inline fragment bodies.
+  `image`/`command`/`version` in inline fragment bodies; **reject an
+  inline definition whose name matches a known standalone fragment name
+  (core or user)**.
 - `internal/profile/merge.go`: integrate inline fragment resolution into
-  `resolveChain`; lazy-load standalones on enable; merge definitions onto
-  standalones.
+  `resolveChain`; lazy-load standalones on enable; resolve inline
+  definitions (with their own `extends:`) into merged bodies.
 - `internal/profile/catalog.go`: split fragment loading into a name index
   (built at `LoadProfiles`) and content parsing (on demand). Keep the
   cross-type display-name collision check, run against the name index.
@@ -275,8 +294,9 @@ language fragments (`go`, `python`, `rust`, `java`, `javascript`,
   `fragments: <name>: { enabled: true }`.
 - `internal/doctor/`: add "validate all known fragments" check.
 - Tests across `internal/profile/` and `pkg/tpd/` for the new merge cases
-  (reference, definition, definition-onto-standalone, transitive
-  fragment-extends, no-duplicate-names, fragments-in-extends-rejected).
+  (reference, definition, definition-with-extends, transitive
+  fragment-extends, no-duplicate-names, fragments-in-extends-rejected,
+  inline-name-matches-standalone-rejected).
 
 ### Out of scope
 
