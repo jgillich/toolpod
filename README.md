@@ -1,14 +1,12 @@
-# tpd
-
-> **Beta.** tpd is early and currently targets **rootless** containers on **Linux**. Rootful containers are supported on a best-effort basis.
-
-tpd is a CLI that runs your tools inside disposable containers. You define a profile — the tools, mounts, and caches you need — once. Each launch creates a fresh container, mounts your current directory, runs the profile's command, and removes the container when it exits. Tools are installed with [mise](https://mise.jdx.dev/) and stored in shared volumes, so installs and caches persist between runs.
-
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
   <source media="(prefers-color-scheme: dark)" srcset="./assets/banner-dark.svg">
   <img alt="tpd disposable, reproducible development environments" src="./assets/banner-dark.svg">
 </picture>
+
+tpd is a CLI that runs your tools inside disposable containers. You define a profile — the tools, mounts, and caches you need — once. Each launch creates a fresh container, mounts your current directory, runs the profile's command, and removes the container when it exits. Tools are installed with [mise](https://mise.jdx.dev/) and stored in shared volumes, so installs and caches persist between runs.
+
+> **Beta.** tpd is early and currently targets **rootless** containers on **Linux**. Rootful containers are supported on a best-effort basis.
 
 ## Why
 
