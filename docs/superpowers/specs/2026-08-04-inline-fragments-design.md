@@ -37,31 +37,44 @@ cheap and the end state (one way to do each thing) is worth it.
 
 ## Design
 
-### `@name` qualified reference syntax
+### `@name` reference syntax
 
-A new uniform syntax for explicitly referencing a core-namespace entry,
-usable in both profile `extends:` and fragment `extends:`. `@bash` is
-shorthand for `core/bash`: a direct core lookup with no user-first
-fallback. This replaces the `core/<name>` form in built-in files, which
-is verbose and inconsistent with the bare unqualified names used
-elsewhere.
+A new uniform syntax for explicitly referencing another entry by its
+display name, usable in both profile `extends:` and fragment `extends:`.
+`@bash` means "the entry named `bash` that isn't this file" — it resolves
+through the same user-first-then-core fallback as a bare unqualified
+name, but **excludes self-reference**: a user profile `bash.yaml` writing
+`extends: @bash` resolves to `core/bash` (not itself), while a core
+profile writing `extends: @bash` would be a self-reference error. This
+replaces the `core/<name>` form in built-in source files, which is
+verbose and hardcodes the namespace.
 
 ```yaml
 # in a user profile bash.yaml that shadows core/bash:
-extends: @bash        # explicitly extend core/bash, not itself
+extends: @bash        # resolves to core/bash (skips this file itself)
 
 # in a fragment:
 fragments:
   bashrc:
     enabled: true
-    extends: @bashrc   # inherit the core/bashrc standalone, then merge body
+    extends: @bashrc   # resolves user bashrc if present, else core/bashrc
     mounts: { ... }
 ```
 
-The bare unqualified name (user-first-then-core fallback) remains valid
-for profile `extends:`. For fragments, the bare name in a fragment
-`extends:` is also valid (resolves user-first-then-core). `@name` is the
-explicit core-qualified form for both.
+`@name` and a bare unqualified name share the same resolution rule
+(user-first-then-core); the difference is that `@` explicitly signals
+"reference another entry of this name" and excludes the referencing file
+itself, while a bare name in a user profile is the same fallback without
+the self-exclusion. In a user profile, `extends: bash` and
+`extends: @bash` both resolve to `core/bash` (the user file is the
+referencing file, excluded by `@`); in a core profile, `extends: @bash`
+is a self-reference error (there's no other `bash` to resolve to).
+
+Future namespaces (remote catalogs) plug into the same fallback: `@foo`
+resolves user-first, then core, then any registered remote namespace
+that has a `foo`. The `core/<name>` qualified form remains valid for
+direct core-only lookup (no fallback) where that's needed; `@` is the
+ergonomic general form.
 
 The one existing qualified built-in ref (`typescript extends
 core/javascript`) migrates to `extends: @javascript`.
@@ -94,7 +107,7 @@ Each entry is an `InlineFragment`:
 type InlineFragment struct {
     Enabled bool        `yaml:"enabled"`
     ExtendsList         // fragment-only extends; resolves to fragments
-    Profile             // the fragment body: mounts/caches/tools/env/packages/repos/files/labels/ports/devices/dbus — NOT image/command/version
+    Profile             // the fragment body: mounts/caches/tools/env/packages/repos/files/labels/ports/devices/dbus — NOT image/command/version/fragments
 }
 ```
 
@@ -104,6 +117,19 @@ other profiles. There is no global uniqueness constraint on inline
 fragment names across profiles — `claude` and `opencode` may both define
 a local `config` fragment. Two inline fragments in the same `fragments:`
 block MUST NOT share a name (schema error).
+
+**`enabled:` is required.** A `fragments:` entry without an `enabled:` key
+is a schema error. (The Go zero-value would decode a missing key to
+`false`, silently deadening the fragment; requiring the key makes the
+intent explicit and catches the mistake.)
+
+**Nested `fragments:` inside an inline fragment body are rejected.** The
+`InlineFragment` embeds `Profile`, which will carry the `Fragments` field
+for top-level profiles; a custom `UnmarshalYAML` (or a validation pass)
+must reject any `fragments:` key inside an inline fragment body. The
+allowed body fields are exactly the fragment-legal set
+(mounts/caches/tools/env/packages/repos/files/labels/ports/devices/dbus)
+plus `enabled:` and `extends:`.
 
 ### `fragments:` entry shapes
 
@@ -115,14 +141,14 @@ true, extends: @bashrc }` or inline the content directly).
 
 The shapes:
 
-- **`{ enabled: true, extends: @bashrc }`** — inherit the core `bashrc`
-  standalone, no local additions. (A user file `~/.config/tpd/fragments/
-  bashrc.yaml` shadows core `bashrc` via the user-first-then-core
-  fallback; `extends: bashrc` (no `@`) would pick up the user file if
-  present.)
+- **`{ enabled: true, extends: @bashrc }`** — inherit the `bashrc`
+  standalone (user file if present, else core), no local additions.
+  `@` resolves user-first-then-core but excludes self-reference, so this
+  always picks up an external `bashrc`, not the inline entry itself.
 - **`{ enabled: true, extends: @bashrc, mounts: { ... } }`** — inherit
-  the core `bashrc` standalone, merge the inline body on top (body wins
-  on conflicts). This is "customize the shared bundle locally."
+  the `bashrc` standalone (user-first-then-core), merge the inline body
+  on top (body wins on conflicts). This is "customize the shared bundle
+  locally."
 - **`{ enabled: true, mounts: { ... } }`** (no `extends`) — **local
   definition; shadows any same-named standalone entirely.** The
   standalone of that name is not loaded for this profile. Replace
@@ -136,15 +162,17 @@ The shapes:
   merged, not shown. The body and `extends:` are still parsed for
   validation. This lets a child profile override a parent's `enabled:
   true` without re-declaring the body: the child just sets `fragments:
-  bashrc: { enabled: false }`.
+  bashrc: { enabled: false }`. (See Resolution algorithm for how this
+  works — `fragments` is a mergeable field carried through the extends
+  chain.)
 
 The merge rule is uniform: `extends:` resolves first (depth-first,
 left-to-right), then the inline body merges on top (body-wins-last) —
 identical to profile resolution. A body without `extends:` is just its
 own content (replace). No implicit name-based coupling between an inline
 definition and a same-named standalone; the only way to pull a
-standalone is an explicit `extends:` (with `@name` for core or a bare
-name for user-first-then-core).
+standalone is an explicit `extends:` (with `@name` for a self-excluding
+reference or a bare name for the standard user-first-then-core fallback).
 
 This eliminates the two silent failure modes that implicit coupling
 would introduce:
@@ -186,8 +214,8 @@ one existing case (`typescript extends @javascript`, migrated from
 
 An inline fragment's `extends:` resolves against the fragment catalog
 and follows the same depth-first, left-to-right, body-wins-last merge as
-today. `@name` in a fragment `extends:` is a direct core lookup; a bare
-name is user-first-then-core.
+today. `@name` and a bare name both resolve user-first-then-core; `@`
+additionally excludes self-reference (the file containing the `extends:`).
 
 ### Standalone fragments are lazy-loaded
 
@@ -202,54 +230,138 @@ on demand:
   shell completion of `tpd init` prompts and for validating that an
   `extends:` reference points at a known fragment.
 - **Content (parsed on demand):** a standalone fragment file is read
-  and parsed only when some profile's enabled inline fragment `extends:`
-  it (directly, or transitively via another fragment's `extends:`).
-  Disabled fragments and fragments whose inline definitions don't
-  `extends:` them are never parsed, never validated, never shown.
+  and parsed only when an enabled inline fragment `extends:` it
+  (directly, or transitively via another fragment's `extends:`), or
+  when `tpd show` / `tpd edit` reads a fragment by name. Disabled
+  fragments and fragments whose inline definitions don't `extends:`
+  them are never parsed, never validated, never shown.
+
+**Operations that trigger parsing:** (1) resolution of an enabled
+inline fragment's `extends:` chain; (2) `tpd show <fragment-name>` (raw
+display); (3) `tpd show <profile> --resolved` (inlines enabled
+fragments); (4) `tpd edit <fragment-name>` (seeds from built-in). Any
+code path that reads a fragment by catalog key (`cat.Get`) must go
+through the lazy loader, not assume pre-parsed entries.
 
 Shadowing works as today: a user file
 `~/.config/tpd/fragments/bashrc.yaml` shadows core `bashrc` — but only
-evaluated when some enabled fragment `extends: bashrc` (or
-`extends: @bashrc` is bypassed in favor of the bare form). The
-global-unique-name rule (a display name is either a profile or a
-fragment across namespaces, never both) is unchanged; it is enforced at
-load time against the name index, before any content is parsed.
+evaluated when some enabled fragment `extends: bashrc` or
+`extends: @bashrc` (both resolve user-first-then-core; `@` excludes
+self-reference, so a user `bashrc` standalone writing `extends: @bashrc`
+would resolve to `core/bashrc`, not itself). The global-unique-name rule
+(a display name is either a profile or a fragment across namespaces,
+never both) is unchanged; it is enforced at load time against the name
+index, before any content is parsed.
 
-A malformed user fragment therefore only fails when it is `extends`-ed,
-not at catalog load. `tpd doctor` grows a "validate all known fragments"
-check so users can spot a broken one before they need it.
+A malformed user fragment therefore only fails when it is `extends`-ed
+or read by `show`/`edit`, not at catalog load. `tpd doctor` grows a
+"validate all known fragments" check so users can spot a broken one
+before they need it.
+
+**Eager vs. lazy validation split:** disabled inline fragments are
+validated at load time (their body is in the profile file, already
+parsed, so checking `enabled:`/rejecting `image`/`command`/`version`/
+nested `fragments:` is cheap and catches errors early). Standalone
+fragments are validated lazily (only when `extends:`-ed or read), since
+parsing them eagerly would defeat the lazy-load goal. This split is
+intentional: inline bodies are already in memory; standalones are not.
 
 ### Resolution algorithm
 
-For a profile `P` with top-level `extends: [B1, B2]` (profiles) and
-`fragments: { f1: {enabled: true, ...}, f2: {enabled: false, ...},
-f3: {enabled: true, ...} }`:
+`fragments` is a **first-class mergeable field** carried through the
+extends chain, not something baked into each base's body during
+`resolveChain`. This is the key design decision that makes child-disable,
+replace semantics, and `extends: bash` inheritance all work consistently.
 
-1. Resolve `P`'s top-level `extends` chain as today (profiles only),
-   merging left-to-right, body-wins-last. Produces `merged_body`.
-2. For each entry in `P.fragments` in declaration order:
+**Merge semantics for `fragments`:** `MergeProfiles` treats `Fragments`
+as a key-by-key map merge (child wins per key), identical to `mounts` or
+`tools`. A child profile's `fragments: bashrc: { enabled: false }`
+overrides a parent's `fragments: bashrc: { enabled: true, ... }` entry;
+the child's entry replaces the parent's entirely for that key (the
+parent's body/extends for that fragment are dropped). `null` deletes an
+inherited fragment key (consistent with the existing null-to-delete
+convention).
+
+**Two-phase resolution:** `resolveChain` resolves the `extends` chain
+(merging profiles and their `fragments` maps) but does **not** inline
+enabled fragments into the body. Inlining happens once, after the chain
+is fully merged, at the top-level entry points (`ResolveProfile` /
+`ResolveFragment`).
+
+For a profile `P` with top-level `extends: [B1, B2]` (profiles) and
+`fragments: { f1: {enabled: true, ...}, f2: {enabled: false, ...}, ... }`:
+
+1. **Chain resolution** (`resolveChain`, unchanged structure): resolve
+   `P`'s top-level `extends` chain as today (profiles only), merging
+   left-to-right, body-wins-last. `MergeProfiles` now also merges the
+   `Fragments` map key-by-key (child wins per key). The result is a
+   `RawProfile` with a combined `Fragments` map containing entries from
+   `P` and all its bases — base entries inherited, `P`'s entries
+   overriding same-named base entries. Produces `merged` (body + merged
+   `Fragments` map, **enabled fragments not yet inlined**).
+
+2. **Fragment inlining** (new, at `ResolveProfile`/`ResolveFragment`
+   only): for each entry in `merged.Fragments` in **declaration order**
+   (see Ordering below):
    - If `enabled: false`, skip entirely. The entry is not loaded, not
-     merged, not shown.
+     merged, not shown. This is how a child disables a parent's
+     fragment: the child's `fragments: f1: { enabled: false }` replaces
+     the parent's `f1` entry in the merged map (step 1), and step 2
+     skips it.
    - If `enabled: true`:
      - Resolve the entry's `extends:` chain (fragments only,
        lazy-loading standalones, depth-first, left-to-right).
-     - Merge the inline body on top of the extends result (body-wins-last).
-       If `extends:` is absent, the fragment is just its inline body
-       (a local definition that shadows any same-named standalone — the
-       standalone is not loaded).
-3. Merge each enabled fragment into `merged_body` in declaration order,
-   as if they were additional `extends` entries appended after the
-   profile's declared extends. The profile's own body is merged *last*,
-   winning over both its extends and its enabled fragments — exactly as
-   today, where `merge(extends..., body)` makes the body win. So an
-   enabled fragment can add keys the body doesn't touch, but a key the
-   body declares explicitly is never overridden by a fragment. The
-   sandbox use case works because the migration *moves* the config
-   mounts out of the body and into the fragment (not duplicated): the
-   body no longer declares them, so the fragment is the sole source,
-   and disabling it removes them.
+     - Merge the inline body on top of the extends result
+       (body-wins-last). If `extends:` is absent, the fragment is just
+       its inline body (a local definition that shadows any same-named
+       standalone — the standalone is not loaded).
+     - Merge the resolved fragment into `merged.Profile` (the body),
+       as if it were an additional `extends` entry. The profile's own
+       body (already in `merged`) is **not** re-merged after fragments —
+       **fragments merge onto the body, so a fragment can override a
+       key the body declares.** This is a deliberate choice: the
+       migration moves config mounts *out of* the body and *into* the
+       fragment, so the fragment is the sole source and there is no
+       body-vs-fragment conflict for the toggleable keys. A profile
+       that declares a mount in its body *and* in an enabled fragment
+       will see the fragment's value win; this is documented behavior,
+       not a bug. (If a profile author wants the body to win, they
+       don't duplicate the key into a fragment.)
 
-The result is then validated as today.
+3. The result is validated as today.
+
+**Why fragments win over the body (the ordering decision):** the
+sandbox use case is "disable the fragment → the mounts disappear." That
+requires the fragment to be the source of the mounts, not the body. If
+the body won over fragments, disabling a fragment would leave the body's
+copy of the mounts in place — defeating the toggle. So fragments must
+win. The migration ensures there is no body/fragment duplication for
+toggleable keys; the rule only bites a profile author who deliberately
+declares the same key in both places, and "fragment wins" is the sane
+default for that case (the fragment is the toggleable unit).
+
+**Why `fragments` must travel through the chain (not bake in):** if
+`resolveChain` inlined enabled fragments into each base's body before
+returning, a child's `fragments: f1: { enabled: false }` would have
+nothing to act on — the base's `f1` content would already be in the
+inherited body, and "skip the disabled entry" would leave it there. The
+child-disable claim requires `fragments` to be a mergeable map that
+travels intact through the chain, with inlining deferred to the
+top-level entry point. This is why `Fragments` is a field on
+`RawProfile` merged by `MergeProfiles`, and inlining is a separate
+phase.
+
+### Ordering: preserving declaration order
+
+Go's `map[string]InlineFragment` loses YAML key order, but the design
+relies on declaration order (step 2 processes fragments in order, and
+`packages` append+dedup is order-sensitive). The `Fragments` field
+therefore uses a **custom `UnmarshalYAML`** that decodes into an ordered
+slice of `{key, InlineFragment}` pairs internally, exposed as a map-like
+type that preserves insertion order. The existing `NullKeys` tracking
+already does a parallel `yaml.Node` walk; the ordered-fragments decoder
+follows the same pattern. This mirrors how `command` (a list, not a map)
+preserves order today.
 
 ### `tpd init` simplification
 
@@ -257,9 +369,14 @@ The result is then validated as today.
 the only form: interactive prompts (existing wizard in
 `internal/scaffold/`). The `--extends`, `--force`, and `--dry-run` flags
 are removed. The wizard's fragment-selection step writes `fragments:
-<name>: { enabled: true, extends: @<name> }` entries into the generated
-file for any standalone fragments the user selects. A user who wants a
-sandboxed variant edits the file and flips `enabled: false`.
+<name>: { enabled: true, extends: <name> }` entries using the bare name
+(standard user-first-then-core fallback). `@<name>` would work equally
+well here (same resolution, and the generated profile won't share a name
+with a fragment); the bare form is chosen for simplicity in generated
+output.
+
+A user who wants a sandboxed variant edits the file and flips `enabled:
+false`.
 
 ### Built-in migrations
 
@@ -288,12 +405,10 @@ sandboxed variant edits the file and flips `enabled: false`.
   extending `bash` inherits the bashrc mounts as part of bash's
   resolved body (fragments merge into the body; `extends: bash` gets
   everything bash resolves to). A user who wants to customize bashrc
-  for their own profile writes `fragments: bashrc: { enabled: true,
-  extends: @bashrc, mounts: { ... } }` — but since `core/bashrc` is
-  deleted, `@bashrc` won't resolve; the user instead inlines the
-  content themselves or keeps a user standalone `bashrc.yaml`. (This
-  is the co-location trade-off: bash owns its bashrc content; users
-  wanting a different bashrc write their own.)
+  for their own profile inlines the content themselves or keeps a user
+  standalone `bashrc.yaml`. (This is the co-location trade-off: bash
+  owns its bashrc content; users wanting a different bashrc write their
+  own.)
 
 - Each agent profile's config mounts become an inline fragment in that
   profile, named `<agent>-config` to avoid cross-profile name clashes
@@ -302,6 +417,11 @@ sandboxed variant edits the file and flips `enabled: false`.
     {~/.claude, ~/.cache/claude-code} }`
   - `opencode`: `fragments: opencode-config: { enabled: true, mounts:
     {~/.config/opencode, ~/.cache/opencode, ~/.local/share/opencode} }`
+  - `opencode-desktop`: same `opencode-config` fragment as `opencode`
+    (the config mounts are identical), plus a `desktop-config` fragment
+    for its GUI-specific mount `~/.config/ai.opencode.desktop`. The
+    desktop profile is the more likely sandbox target, so its config
+    mounts must be toggleable too.
   - `gemini`, `codex`, `copilot`, `amp`, `crush`, `qwen`, `pi`: each
     gets a `<agent>-config` inline fragment for its config dir.
   - `powershell`: `fragments: powershell-config: { enabled: true,
@@ -314,6 +434,14 @@ sandboxed variant edits the file and flips `enabled: false`.
   multiple agents (e.g. `buzz` extends `codex`+`claude`); without the
   prefix, two `config` fragments would clash once composed.
 
+  Note: `opencode-desktop` sharing the `opencode-config` fragment name
+  with `opencode` is fine — inline fragments are local to their
+  defining profile, so there is no cross-profile name clash. If
+  `opencode-desktop` extends `opencode`, the `Fragments` map merge
+  means `opencode-desktop`'s `opencode-config` entry replaces
+  `opencode`'s; the desktop profile re-declares it with the same
+  content (or adds the desktop-specific mount to it).
+
 **Rewrite `extends` (fragments move out):**
 
 - `buzz`: `extends: [mise, gui, gui-runtime, codex, claude]` →
@@ -325,7 +453,12 @@ sandboxed variant edits the file and flips `enabled: false`.
   true, extends: @gui }, gui-runtime: { enabled: true, extends:
   @gui-runtime } }`.
 - `opencode-desktop`: `extends: [mise, gui]` → `extends: mise` +
-  `fragments: { gui: { enabled: true, extends: @gui } }`.
+  `fragments: { gui: { enabled: true, extends: @gui } }`. (Its
+  `extends: mise` — it no longer extends `opencode`; it's a standalone
+  profile that happens to share the opencode config-mount shape via its
+  own `opencode-config` fragment. If it should extend `opencode` to
+  inherit the opencode tool/mise setup, that's a separate decision;
+  today it extends `mise`+`gui` only, not `opencode`.)
 
 **Qualified ref migration:** `internal/catalog/fragments/typescript.yaml`
 `extends: core/javascript` → `extends: @javascript`.
@@ -339,25 +472,32 @@ sandboxed variant edits the file and flips `enabled: false`.
 
 ### Files
 
-- `internal/profile/ref.go`: accept `@<name>` as a core-qualified ref
-  (equivalent to `core/<name>`) in `ParseRef`. Both profile and
-  fragment `extends:` use it.
-- `internal/profile/types.go`: add `InlineFragment` type and
-  `Fragments map[string]InlineFragment` field on
-  `Profile`/`RawProfile`. Extend `collectNullKeys` to track nulls
-  inside inline fragment bodies.
+- `internal/profile/ref.go`: accept `@<name>` as a self-excluding
+  reference in `ParseRef`: resolves user-first-then-core (and future
+  namespaces), but skips the referencing file itself (the parser knows
+  the source identity from `RawProfile.Namespace`/`Name`). Both profile
+  and fragment `extends:` use it. `Ref` still carries the resolved
+  namespace; `Ref.FullName()` marshals the canonical form for output.
+- `internal/profile/types.go`: add `InlineFragment` type and an ordered
+  `Fragments` field on `Profile`/`RawProfile` (custom `UnmarshalYAML`
+  preserving declaration order; see Ordering). Extend `collectNullKeys`
+  to track nulls inside inline fragment bodies and top-level
+  `fragments:` keys.
 - `internal/profile/validate.go`: forbid fragments in profile
   `extends`; enforce no-duplicate-names within a `fragments:` block;
   reject `image`/`command`/`version` in inline fragment bodies; reject
-  a `fragments:` entry that is a bare boolean (must be a map with
-  `enabled:`).
-- `internal/profile/merge.go`: integrate inline fragment resolution
-  into `resolveChain`; lazy-load standalones on `extends:`; resolve
-  inline definitions (with their own `extends:`) into merged bodies.
+  nested `fragments:` inside an inline fragment body; reject a
+  `fragments:` entry that is a bare boolean (must be a map); require
+  `enabled:` key in every `fragments:` entry.
+- `internal/profile/merge.go`: add `Fragments` to `MergeProfiles`
+  (key-by-key map merge, child wins per key, `null` deletes). Move
+  enabled-fragment inlining out of `resolveChain` into
+  `ResolveProfile`/`ResolveFragment` (new two-phase resolution).
 - `internal/profile/catalog.go`: split fragment loading into a name
-  index (built at `LoadProfiles`) and content parsing (on demand).
-  Keep the cross-type display-name collision check, run against the
-  name index.
+  index (built at `LoadProfiles`) and content parsing (on demand, via a
+  lazy loader invoked by `resolveChain`'s fragment-extends resolution,
+  `tpd show`, and `tpd edit`). Keep the cross-type display-name
+  collision check, run against the name index.
 - `internal/catalog/profiles/*.yaml`: rewrite per the migration above.
 - `internal/catalog/fragments/bashrc.yaml`: delete.
 - `internal/catalog/fragments/typescript.yaml`: `core/javascript` →
@@ -365,13 +505,17 @@ sandboxed variant edits the file and flips `enabled: false`.
 - `cmd/tpd/cli.go`: remove `init` non-interactive flags (`--extends`,
   `--force`, `--dry-run`); keep `tpd init` interactive-only.
 - `internal/scaffold/`: fragment selection in the wizard writes
-  `fragments: <name>: { enabled: true, extends: @<name> }`.
+  `fragments: <name>: { enabled: true, extends: <name> }` (bare name
+  form).
 - `internal/doctor/`: add "validate all known fragments" check.
+- `README.md`: update the `tpd init opencode --extends=javascript,...`
+  example (line ~76) to the interactive `tpd init` flow.
 - Tests across `internal/profile/` and `pkg/tpd/` for the new merge
   cases (local-definition-replaces, definition-with-extends-merges,
-  transitive fragment-extends, no-duplicate-names,
-  fragments-in-extends-rejected, bare-boolean-rejected, `@name`
-  parsing).
+  transitive fragment-extends, child-disables-parent-fragment,
+  no-duplicate-names, fragments-in-extends-rejected,
+  bare-boolean-rejected, missing-enabled-rejected,
+  nested-fragments-rejected, `@name` parsing, ordered-fragments).
 
 ### Out of scope
 
