@@ -1,8 +1,12 @@
+# tpd
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
   <source media="(prefers-color-scheme: dark)" srcset="./assets/banner-dark.svg">
   <img alt="tpd disposable, reproducible development environments" src="./assets/banner-dark.svg">
 </picture>
+
+<br>
 
 tpd is a CLI that runs your tools inside disposable containers. You define a profile — the tools, mounts, and caches you need — once. Each launch creates a fresh container, mounts your current directory, runs the profile's command, and removes the container when it exits. Tools are installed with [mise](https://mise.jdx.dev/) and stored in shared volumes, so installs and caches persist between runs.
 

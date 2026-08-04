@@ -1,0 +1,11 @@
+version: 1
+caches:
+  trivy: ~/.cache/trivy
+mounts:
+  ~/.config/trivy:
+    source: ~/.config/trivy
+    create: true
+    read_only: false
+    optional: true
+tools:
+  trivy: latest

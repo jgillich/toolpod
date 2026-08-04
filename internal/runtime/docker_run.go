@@ -190,6 +190,25 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		}
 	}()
 
+	// Raw mode disables ISIG, so Ctrl+Z reaches the pump as a byte (see the
+	// stdin pump); catch SIGTSTP too so suspend works however the signal
+	// arrives. Without it, a TUI in the container that stops itself on
+	// Ctrl+Z (opencode's suspend keybind) leaves this process holding a raw
+	// terminal the shell can never regain.
+	if oldState != nil {
+		stopCh := make(chan os.Signal, 1)
+		signal.Notify(stopCh, syscall.SIGTSTP)
+		defer func() {
+			signal.Stop(stopCh)
+			close(stopCh)
+		}()
+		go func() {
+			for range stopCh {
+				d.suspendSession(ctx, resp.ID, oldState)
+			}
+		}()
+	}
+
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return 3, fmt.Errorf("start container: %w", err)
 	}
@@ -222,8 +241,20 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// it guards writes with a mutex so that shutdown can close the
 	// connection without the goroutine writing to a closed socket (which
 	// produces "broken pipe" / "use of closed network connection" errors).
+	// In raw mode Ctrl+Z is a plain 0x1A byte, so the pump intercepts it and
+	// suspends the whole session; forwarding it would let a TUI that stops
+	// itself on Ctrl+Z hang the terminal.
 	var connMu sync.Mutex
 	connClosed := false
+	writeConn := func(b []byte) bool {
+		connMu.Lock()
+		defer connMu.Unlock()
+		if connClosed {
+			return false
+		}
+		_, err := hijacked.Conn.Write(b)
+		return err == nil
+	}
 	stdinDone := make(chan struct{})
 	go func() {
 		defer close(stdinDone)
@@ -231,15 +262,22 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		for {
 			n, readErr := os.Stdin.Read(buf)
 			if n > 0 {
-				connMu.Lock()
-				if connClosed {
-					connMu.Unlock()
-					return
-				}
-				_, writeErr := hijacked.Conn.Write(buf[:n])
-				connMu.Unlock()
-				if writeErr != nil {
-					return
+				rest := buf[:n]
+				for {
+					i := bytes.IndexByte(rest, ctrlZ)
+					if i < 0 {
+						if !writeConn(rest) {
+							return
+						}
+						break
+					}
+					if i > 0 && !writeConn(rest[:i]) {
+						return
+					}
+					if oldState != nil {
+						d.suspendSession(ctx, resp.ID, oldState)
+					}
+					rest = rest[i+1:]
 				}
 			}
 			if readErr != nil {
@@ -267,6 +305,35 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		<-pumpDone
 		closeConn()
 		return int(status.StatusCode), nil
+	}
+}
+
+// ctrlZ is the raw-mode byte produced by Ctrl+Z; with ISIG off the kernel
+// does not turn it into SIGTSTP.
+const ctrlZ = 0x1A
+
+// suspendSession hands the terminal back to the shell and stops this process
+// (and the container command) so the session can be backgrounded with Ctrl+Z
+// and resumed with fg. Without it, a TUI in the container that stops itself
+// on Ctrl+Z (opencode's suspend keybind) leaves tpd holding a raw terminal
+// with nothing to wake it. The terminal is restored before stopping so the
+// shell can repaint; on resume we re-enter raw mode and continue the
+// container.
+func (d *DockerRuntime) suspendSession(ctx context.Context, containerID string, oldState *term.State) {
+	if oldState == nil {
+		return
+	}
+	_ = term.Restore(int(os.Stdin.Fd()), oldState)
+	// Pause the container command too (tini forwards SIGTSTP); best effort,
+	// the container may already have exited.
+	_ = d.cli.ContainerKill(ctx, containerID, strconv.Itoa(int(syscall.SIGTSTP)))
+	// SIGSTOP cannot be caught, so fg resumes us right after this call.
+	_ = unix.Kill(unix.Getpid(), unix.SIGSTOP)
+	_, _ = term.MakeRaw(int(os.Stdin.Fd()))
+	_ = d.cli.ContainerKill(ctx, containerID, strconv.Itoa(int(syscall.SIGCONT)))
+	rows, cols := terminalSize()
+	if rows > 0 && cols > 0 {
+		_ = d.cli.ContainerResize(ctx, containerID, container.ResizeOptions{Height: rows, Width: cols})
 	}
 }
 
