@@ -165,7 +165,10 @@ optional body (the fragment content) and an optional `extends:` that
 inherits a standalone before merging the body on top. There is **no
 boolean-reference form** (`bashrc: true` is a schema error — it would
 do nothing useful; the user must write `bashrc: { enabled: true,
-extends: @bashrc }` or inline the content directly). An entry with
+extends: @bashrc }` or inline the content directly). **An enabled
+entry with no body and no `extends:` is also a schema error** —
+`{ enabled: true }` alone does nothing (no content to merge, nothing to
+inherit); it must carry a body, an `extends:`, or both. An entry with
 `enabled: false` and no body/extends is the legal disable shape (it
 toggles off a parent's entry without re-declaring content).
 
@@ -194,22 +197,10 @@ The shapes:
   true` without re-declaring the body: the child just sets `fragments:
   bashrc: { enabled: false }`. (See Resolution algorithm for how this
   works — `fragments` is a mergeable field carried through the extends
-  chain.)
-
-  **Limitation — the child-disable replaces the parent's entry
-  wholesale.** A child's `fragments: bashrc: { enabled: false }` drops
-  the parent's body/extends for `bashrc`, so a grandchild can't cleanly
-  re-enable it (it would see the child's empty entry, not the parent's
-  original body). And there is no "same as parent but one key changed"
-  expression — the child must re-declare the full body to tweak a single
-  mount while keeping the fragment enabled. This is the flip side of the
-  replace-semantics decision: the map merge is per-entry (child wins
-  the whole entry), not per-field within an entry. It is accepted
-  because the direct-child toggle (the sandbox use case) is the common
-  path, and per-field fragment merge would require a nested merge
-  semantics that conflicts with "the child entry replaces." A grandchild
-  that wants to re-enable re-declares the body (or extends the
-  standalone).
+  chain.) To re-enable, a grandchild must re-declare the body or
+  `extends:` (an enabled entry with neither is a schema error); this
+  is consistent with the no-empty-enabled rule, not a special
+  limitation.
 
 The merge rule is uniform: `extends:` resolves first (depth-first,
 left-to-right), then the inline body merges on top (body-wins-last) —
@@ -575,8 +566,9 @@ built-in ever needs to pin core regardless of user shadows, the
   fragment bodies; reject nested `fragments:` inside an inline fragment
   body **and inside standalone fragments** (`validateFragmentName` can't
   do this today; a new check is needed once `Fragments` exists on the
-  struct); reject a `fragments:` entry that is a bare boolean (must be a
-  map); require `enabled:` key in every `fragments:` entry.
+  struct); reject a `fragments:` entry that is a bare boolean (must be
+  a map); reject an enabled entry with no body and no `extends:` (would
+  do nothing); require `enabled:` key in every `fragments:` entry.
 - `internal/profile/merge.go`: add `Fragments` to `MergeProfiles`
   (key-by-key map merge, child wins per key, `null` deletes). Move
   enabled-fragment inlining out of `resolveChain` into
@@ -603,10 +595,10 @@ built-in ever needs to pin core regardless of user shadows, the
   example (line ~76) to the interactive `tpd init` flow.
 - Tests across `internal/profile/` and `pkg/tpd/` for the new merge
   cases (local-definition-replaces, definition-with-extends-merges,
-  transitive fragment-extends, child-disables-parent-fragment,
-  grandchild-re-enable-redeclares-body, no-duplicate-names,
+  transitive fragment-extends, child-disables-parent-fragment, no-duplicate-names,
   fragments-in-extends-rejected, bare-boolean-rejected,
-  missing-enabled-rejected, nested-fragments-rejected-inline,
+  enabled-with-no-body-no-extends-rejected, missing-enabled-rejected,
+  nested-fragments-rejected-inline,
   nested-fragments-rejected-standalone, identity-fields-rejected-inline,
   identity-fields-rejected-standalone, `@name` parsing,
   `@name`-self-exclusion-applied-at-resolve, `@core/foo`-rejected,
