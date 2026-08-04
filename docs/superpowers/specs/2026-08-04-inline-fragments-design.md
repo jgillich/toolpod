@@ -63,12 +63,13 @@ fragments:
 `@name` and a bare unqualified name share the same resolution rule
 (user-first-then-core); the difference is that `@` explicitly signals
 "reference another entry of this name" and excludes the referencing
-file itself, while a bare name in a user profile is the same fallback
-without the self-exclusion. In a user profile, `extends: bash` and
-`extends: @bash` both resolve to `core/bash` (the user file is the
-referencing file, excluded by `@`); in a core profile, `extends: @bash`
-is a self-reference error if no user `bash` exists, and resolves to the
-user `bash` if one does.
+file itself, while a bare name is the same fallback without the
+self-exclusion. In a user profile `bash.yaml`, `extends: @bash` skips
+the user file and resolves to `core/bash`; `extends: bash` (bare)
+resolves to the user file itself → extends-cycle error. So `@` is the
+only way for a user profile to extend its core shadow. In a core
+profile, `extends: @bash` is a self-reference error if no user `bash`
+exists, and resolves to the user `bash` if one does.
 
 Future namespaces (remote catalogs) plug into the same fallback: `@foo`
 resolves user-first, then core, then any registered remote namespace
@@ -131,10 +132,11 @@ fragment names across profiles — `claude` and `opencode` may both define
 a local `config` fragment. Two inline fragments in the same `fragments:`
 block MUST NOT share a name (schema error).
 
-**`enabled:` is required.** A `fragments:` entry without an `enabled:` key
-is a schema error. (The Go zero-value would decode a missing key to
-`false`, silently deadening the fragment; requiring the key makes the
-intent explicit and catches the mistake.)
+**`enabled:` is required.** A `fragments:` entry without an `enabled:`
+key is a schema error. (The Go `bool` zero-value decodes a missing key
+to `false`, silently deadening the fragment; the required-key check
+must run in the custom ordered-map decoder by inspecting the YAML node
+for an `enabled:` key, not by checking the decoded `bool` value.)
 
 **Nested `fragments:` inside an inline fragment body are rejected.** The
 `InlineFragment` embeds `Profile`, which will carry the `Fragments` field
@@ -251,7 +253,14 @@ one existing case (`typescript extends @javascript`, migrated from
 An inline fragment's `extends:` resolves against the fragment catalog
 and follows the same depth-first, left-to-right, body-wins-last merge as
 today. `@name` and a bare name both resolve user-first-then-core; `@`
-additionally excludes self-reference (the file containing the `extends:`).
+additionally excludes self-reference (the file containing the
+`extends:`). Note: for an inline fragment, "self" is the *profile file*
+containing the `fragments:` block, not the inline fragment's name — so
+`extends: @bashrc` inside an inline `bashrc:` entry behaves identically
+to bare `bashrc` unless the profile itself is named `bashrc`. `@` is
+meaningful for profile-level `extends:` (a user profile shadowing a core
+profile) and for standalone fragments (a user fragment shadowing a core
+fragment); for inline fragments it's harmless but usually a no-op.
 
 ### Standalone fragments: built-ins eager, user files lazy
 
@@ -339,8 +348,9 @@ convention).
 **Two-phase resolution:** `resolveChain` resolves the `extends` chain
 (merging profiles and their `fragments` maps) but does **not** inline
 enabled fragments into the body. Inlining happens once, after the chain
-is fully merged, at the top-level entry points (`ResolveProfile` /
-`ResolveFragment`).
+is fully merged, at `ResolveProfile` (`ResolveFragment` doesn't inline
+— standalone fragments can't contain `fragments:`, so there's nothing
+to inline).
 
 For a profile `P` with top-level `extends: [B1, B2]` (profiles) and
 `fragments: { f1: {enabled: true, ...}, f2: {enabled: false, ...}, ... }`:
@@ -354,9 +364,9 @@ For a profile `P` with top-level `extends: [B1, B2]` (profiles) and
    overriding same-named base entries. Produces `merged` (body + merged
    `Fragments` map, **enabled fragments not yet inlined**).
 
-2. **Fragment inlining** (new, at `ResolveProfile`/`ResolveFragment`
-   only): for each entry in `merged.Fragments` in **declaration order**
-   (see Ordering below):
+2. **Fragment inlining** (new, at `ResolveProfile` only): for each
+   entry in `merged.Fragments` in **declaration order** (see Ordering
+   below):
    - If `enabled: false`, skip entirely. The entry is not loaded, not
      merged, not shown. This is how a child disables a parent's
      fragment: the child's `fragments: f1: { enabled: false }` replaces
@@ -425,12 +435,22 @@ into `extends:` (profiles only) and `fragments:` entries, and the
 non-interactive path would need to classify each name and emit both
 forms — a special-case parser for a flow we're discouraging. The
 interactive wizard already handles this cleanly (separate profile and
-fragment selection steps), so `tpd init` without args becomes the only
-form. `--force` and `--dry-run` are orthogonal to inline fragments and
-**remain**; they serve the scripting path (`tpd init myprofile --force`
-to overwrite, `--dry-run` to preview), which is unaffected by this
-design. README and doctor messages referencing `--extends`/`--fragments`
-are updated.
+fragment selection steps). `--force` and `--dry-run` are orthogonal to
+inline fragments and **remain**; they serve the scripting path (`tpd
+init myprofile --force` to overwrite, `--dry-run` to preview), which is
+unaffected by this design. README and doctor messages referencing
+`--extends`/`--fragments` are updated.
+
+**Non-TTY behavior change:** the wizard's non-interactive fallback
+(`promptFragments`, scaffold.go:180) is reached today when `--extends`
+is omitted on a non-TTY stdin. With `--extends` removed, the wizard
+always prompts for fragments interactively; a non-TTY stdin with no
+`--extends` can't pick fragments and falls back to the default base
+only. This is an acknowledged behavior change: scripted init no longer
+adds fragments via the wizard. A scripted user who wants fragments
+edits the generated file (or a future `--enable-fragment` flag, out of
+scope here). The non-TTY path is simplified, not removed — it still
+produces a working default profile.
 
 The wizard's fragment-selection step writes `fragments:
 <name>: { enabled: true, extends: <name> }` entries using the bare name
@@ -489,7 +509,8 @@ false`.
   - `gemini`, `codex`, `copilot`, `amp`, `crush`, `qwen`, `pi`: each
     gets a `<agent>-config` inline fragment for its config dir.
   - `powershell`: `fragments: powershell-config: { enabled: true,
-    mounts: {~/.config/powershell} }`
+    mounts: {~/.config/powershell, ~/.local/share/powershell} }`
+    (both mounts from the current profile move into the fragment).
   - `bash`: its `files:` (`/etc/profile.d/mise.sh`) stays in the body
     (not a toggleable concern; the bashrc mounts are the toggleable
     part).
@@ -512,10 +533,10 @@ false`.
   `extends: [mise, codex, claude]` + `fragments: { gui: { enabled:
   true, extends: @gui }, gui-runtime: { enabled: true, extends:
   @gui-runtime } }`.
-- `t3code`: `extends: [mise, gui, gui-runtime, opencode, claude]` →
-  `extends: [mise, opencode, claude]` + `fragments: { gui: { enabled:
-  true, extends: @gui }, gui-runtime: { enabled: true, extends:
-  @gui-runtime } }`.
+- `t3code`: `extends: [mise, gui, gui-runtime, opencode, claude, codex]`
+  → `extends: [mise, opencode, claude, codex]` + `fragments: { gui:
+  { enabled: true, extends: @gui }, gui-runtime: { enabled: true,
+  extends: @gui-runtime } }`.
 - `opencode-desktop`: `extends: [mise, gui]` → `extends: mise` +
   `fragments: { gui: { enabled: true, extends: @gui } }`. (Its
   `extends: mise` — it no longer extends `opencode`; it's a standalone
@@ -572,7 +593,8 @@ built-in ever needs to pin core regardless of user shadows, the
 - `internal/profile/merge.go`: add `Fragments` to `MergeProfiles`
   (key-by-key map merge, child wins per key, `null` deletes). Move
   enabled-fragment inlining out of `resolveChain` into
-  `ResolveProfile`/`ResolveFragment` (new two-phase resolution).
+  `ResolveProfile` (new two-phase resolution; `ResolveFragment`
+  unchanged — standalone fragments can't carry `fragments:`).
 - `internal/profile/catalog.go`: keep `loadBuiltinFragments` eager
   (embedded files, validated at load). Split user fragment loading into
   a name index (built at `LoadProfiles`) and content parsing (on demand,
@@ -583,8 +605,11 @@ built-in ever needs to pin core regardless of user shadows, the
 - `internal/catalog/fragments/bashrc.yaml`: delete.
 - `internal/catalog/fragments/typescript.yaml`: `core/javascript` →
   `@javascript`.
-- `cmd/tpd/cli.go`: remove `init` non-interactive flags (`--extends`,
-  `--force`, `--dry-run`); keep `tpd init` interactive-only.
+- `cmd/tpd/cli.go`: remove `init`'s `--extends` flag only; keep
+  `--force`/`--dry-run` (orthogonal, scripting path). Update the
+  non-interactive fallback in `internal/scaffold/scaffold.go` (the
+  `promptFragments` path at line 180 is no longer reachable from the
+  CLI; simplify it or gate it on `opts.Extends` for future use).
 - `internal/scaffold/`: fragment selection in the wizard writes
   `fragments: <name>: { enabled: true, extends: <name> }` (bare name
   form).
@@ -631,11 +656,13 @@ built-in ever needs to pin core regardless of user shadows, the
    exact rendering (list vs map, enabled marker) is left to
    implementation review.
 
-2. **`tpd show` output shape.** A profile's `fragments:` block should
-   be visible in `tpd show <name>` (raw form) and `tpd show <name>
-   --resolved` (enabled fragments inlined, disabled omitted). The
-   exact rendering (list vs map, enabled marker) is left to
-   implementation review.
+2. **Merged fragments map ordering.** Per-file declaration order is
+   preserved, but when a child overrides a parent's key or adds new
+   ones, the merged map's iteration order is undefined by the
+   key-by-key merge. Since `packages` append+dedup is order-sensitive
+   across fragments, the merge needs an explicit rule: e.g. parent
+   order first, child overrides keep the parent's position, new keys
+   appended in child declaration order. Decide during implementation.
 
 3. **`bashrc` reusability after inlining.** Once `core/bashrc.yaml` is
    deleted, another profile can't get bashrc's content via
