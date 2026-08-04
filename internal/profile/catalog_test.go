@@ -43,7 +43,7 @@ func TestLoadProfilesStampsCoreNamespace(t *testing.T) {
 
 func TestLoadProfilesUserEntryStampsEmptyNamespace(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: bash\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)
@@ -64,7 +64,7 @@ func TestLoadProfilesUserEntryStampsEmptyNamespace(t *testing.T) {
 
 func TestLoadProfilesUserShadowsCoreCoexist(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)
@@ -72,32 +72,32 @@ func TestLoadProfilesUserShadowsCoreCoexist(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Both must coexist under distinct FullNames.
-	if rc, ok := cat.Get("shell"); !ok || rc.Namespace != "" {
-		t.Errorf("user shell = {%q, %q}, want {\"\", shell}", rc.Namespace, rc.Name)
+	if rc, ok := cat.Get("bash"); !ok || rc.Namespace != "" {
+		t.Errorf("user bash = {%q, %q}, want {\"\", bash}", rc.Namespace, rc.Name)
 	}
-	if rc, ok := cat.Get("core/shell"); !ok || rc.Namespace != "core" {
-		t.Errorf("core/shell = {%q, %q}, want {core, shell}", rc.Namespace, rc.Name)
+	if rc, ok := cat.Get("core/bash"); !ok || rc.Namespace != "core" {
+		t.Errorf("core/bash = {%q, %q}, want {core, bash}", rc.Namespace, rc.Name)
 	}
 }
 
 func TestLoadProfilesRejectsCrossTypeDisplayNameCollision(t *testing.T) {
-	// A user fragment named "shell" and core/shell (profile) share the display
-	// name "shell"; unqualified resolution and ProfileDisplayNames can't
+	// A user fragment named "bash" and core/bash (profile) share the display
+	// name "bash"; unqualified resolution and ProfileDisplayNames can't
 	// disambiguate. This must be a hard error.
 	dir := t.TempDir()
 	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fragDir, "shell.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(fragDir, "bash.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected cross-type display-name collision error, got nil")
 	}
-	if !strings.Contains(err.Error(), "shell") || !strings.Contains(err.Error(), "fragment") {
-		t.Errorf("error should name shell and fragment, got: %v", err)
+	if !strings.Contains(err.Error(), "bash") || !strings.Contains(err.Error(), "fragment") {
+		t.Errorf("error should name bash and fragment, got: %v", err)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestLoadProfilesBuiltinsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProfiles(\"\"): %v", err)
 	}
-	for _, name := range []string{"core/opencode", "core/codex", "core/shell"} {
+	for _, name := range []string{"core/opencode", "core/codex", "core/bash"} {
 		if _, ok := cat.Get(name); !ok {
 			t.Errorf("built-in %q missing from catalog", name)
 		}
@@ -141,7 +141,7 @@ func TestLoadProfilesBuiltinsOnly(t *testing.T) {
 
 func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644)
+	err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +149,9 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProfiles(%q): %v", dir, err)
 	}
-	rc, ok := cat.Get("shell")
+	rc, ok := cat.Get("bash")
 	if !ok {
-		t.Fatal("user shadow for shell not found under bare FullName")
+		t.Fatal("user shadow for bash not found under bare FullName")
 	}
 	if rc.Image != "my/custom:latest" {
 		t.Errorf("shadow image = %q, want my/custom:latest", rc.Image)
@@ -159,8 +159,8 @@ func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	if rc.Path == "" {
 		t.Error("shadow RawProfile has empty Path (should point to user file)")
 	}
-	if rc, ok := cat.Get("core/shell"); !ok || rc.Namespace != "core" {
-		t.Errorf("built-in core/shell = {%q, %q}, want {core, shell}", rc.Namespace, rc.Name)
+	if rc, ok := cat.Get("core/bash"); !ok || rc.Namespace != "core" {
+		t.Errorf("built-in core/bash = {%q, %q}, want {core, bash}", rc.Namespace, rc.Name)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 
 func TestLoadProfilesUserAddsProfile(t *testing.T) {
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644)
+	err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: bash\ntools:\n  rust: \"1.74\"\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func containsPkg(pkgs []string, want string) bool {
 
 func TestDisplayNamesDedupsUserShadow(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)
@@ -490,18 +490,18 @@ func TestDisplayNamesDedupsUserShadow(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := cat.DisplayNames()
-	if !contains(names, "shell") {
-		t.Errorf("DisplayNames missing shell; got %v", names)
+	if !contains(names, "bash") {
+		t.Errorf("DisplayNames missing bash; got %v", names)
 	}
-	// "shell" appears once (user shadows core), not twice.
+	// "bash" appears once (user shadows core), not twice.
 	count := 0
 	for _, n := range names {
-		if n == "shell" {
+		if n == "bash" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("shell appears %d times in DisplayNames, want 1", count)
+		t.Errorf("bash appears %d times in DisplayNames, want 1", count)
 	}
 }
 
@@ -535,15 +535,15 @@ func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
 
 func TestSourceUserShadow(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "shell.yaml"), []byte("version: 1\nimage: x\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: x\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cat.Source("shell"); got != "user shadow" {
-		t.Errorf("Source(shell) = %q, want \"user shadow\"", got)
+	if got := cat.Source("bash"); got != "user shadow" {
+		t.Errorf("Source(bash) = %q, want \"user shadow\"", got)
 	}
 	if got := cat.Source("mise"); got != "core" {
 		t.Errorf("Source(mise) = %q, want \"core\"", got)
@@ -552,7 +552,7 @@ func TestSourceUserShadow(t *testing.T) {
 
 func TestSourceUserOnly(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: shell\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rustdev.yaml"), []byte("version: 1\nextends: bash\ntools:\n  rust: \"1.74\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := LoadProfiles(dir)

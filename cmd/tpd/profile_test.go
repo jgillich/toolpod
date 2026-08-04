@@ -31,22 +31,22 @@ func writeEditor(t *testing.T, dir, name, body string) string {
 }
 
 func TestProfileShowBuiltIn(t *testing.T) {
-	out, err := runTpd(t, "show", "shell")
+	out, err := runTpd(t, "show", "bash")
 	if err != nil {
-		t.Fatalf("profile show shell: %v\n%s", err, out)
+		t.Fatalf("profile show bash: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "command:") {
-		t.Errorf("expected raw shell profile to declare command, got:\n%s", out)
+		t.Errorf("expected raw bash profile to declare command, got:\n%s", out)
 	}
 }
 
 func TestProfileShowResolved(t *testing.T) {
-	out, err := runTpd(t, "show", "--resolved", "shell")
+	out, err := runTpd(t, "show", "--resolved", "bash")
 	if err != nil {
-		t.Fatalf("profile show --resolved shell: %v\n%s", err, out)
+		t.Fatalf("profile show --resolved bash: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "image:") {
-		t.Errorf("expected resolved shell to inherit image from mise, got:\n%s", out)
+		t.Errorf("expected resolved bash to inherit image from mise, got:\n%s", out)
 	}
 }
 
@@ -65,11 +65,11 @@ func TestProfileList(t *testing.T) {
 	}
 	s := string(out)
 	// Task 5 restores bare display names (no core/ keys) with core source.
-	if strings.Contains(s, "core/shell") {
+	if strings.Contains(s, "core/bash") {
 		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
 	}
-	if !strings.Contains(s, "shell") {
-		t.Errorf("expected profile list to contain 'shell', got:\n%s", s)
+	if !strings.Contains(s, "bash") {
+		t.Errorf("expected profile list to contain 'bash', got:\n%s", s)
 	}
 	if !strings.Contains(s, "core") {
 		t.Errorf("expected profile list to label core entries, got:\n%s", s)
@@ -95,7 +95,7 @@ func TestProfileList(t *testing.T) {
 
 func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
 	cfg := t.TempDir()
-	userProfile := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
+	userProfile := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
 	if err := os.MkdirAll(filepath.Dir(userProfile), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -107,26 +107,30 @@ func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
 	s := string(out)
-	if strings.Contains(s, "core/shell") {
+	if strings.Contains(s, "core/bash") {
 		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
 	}
-	shellRow, dockerRow := false, false
+	bashRow, dockerRow := false, false
 	for _, line := range strings.Split(s, "\n") {
-		switch {
-		case strings.HasPrefix(line, "shell"):
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "bash":
 			if !strings.Contains(line, "profile") || !strings.Contains(line, "user shadow") {
-				t.Errorf("shell row should be 'profile' 'user shadow', got: %q", line)
+				t.Errorf("bash row should be 'profile' 'user shadow', got: %q", line)
 			}
-			shellRow = true
-		case strings.HasPrefix(line, "docker"):
+			bashRow = true
+		case "docker":
 			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
 				t.Errorf("docker row should be 'fragment' 'core', got: %q", line)
 			}
 			dockerRow = true
 		}
 	}
-	if !shellRow {
-		t.Errorf("expected profile list to contain the shell row")
+	if !bashRow {
+		t.Errorf("expected profile list to contain the bash row")
 	}
 	if !dockerRow {
 		t.Errorf("expected profile list to contain the docker fragment row")
@@ -139,11 +143,11 @@ func TestProfileEditBuiltInNoSaveRemovesSeed(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "bash")
 	if err != nil {
-		t.Fatalf("edit shell (no save): %v\n%s", err, out)
+		t.Fatalf("edit bash (no save): %v\n%s", err, out)
 	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpd", "profiles", "shell.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg, "tpd", "profiles", "bash.yaml")); !os.IsNotExist(err) {
 		t.Errorf("expected no user profile after quitting without saving, stat err: %v", err)
 	}
 }
@@ -154,26 +158,26 @@ func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "bash")
 	if err != nil {
-		t.Fatalf("edit shell (save): %v\n%s", err, out)
+		t.Fatalf("edit bash (save): %v\n%s", err, out)
 	}
-	target := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("expected user override to be created on save: %v", err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "extends: core/shell") {
+	if !strings.Contains(s, "extends: core/bash") {
 		t.Errorf("seed must extend the built-in itself, got:\n%s", s)
 	}
-	if !strings.Contains(s, `shadows the built-in "core/shell"`) {
+	if !strings.Contains(s, `shadows the built-in "core/bash"`) {
 		t.Errorf("seed must explain the shadow/merge, got:\n%s", s)
 	}
 	if !strings.Contains(s, "Resolved profile (reference)") {
 		t.Errorf("seed must carry a resolved-reference banner, got:\n%s", s)
 	}
-	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved core/shell`) {
+	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved core/bash`) {
 		t.Errorf("seed must note the resolved block is a stale snapshot and how to refresh it, got:\n%s", s)
 	}
 	if !strings.Contains(s, "# image: debian:13-slim") {
@@ -228,7 +232,7 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 
 func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 	cfg := t.TempDir()
-	target := filepath.Join(cfg, "tpd", "profiles", "shell.yaml")
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +244,7 @@ func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "shell")
+	out, err := runTpdEnv(t, env, "edit", "bash")
 	if err != nil {
 		t.Fatalf("edit existing user file: %v\n%s", err, out)
 	}

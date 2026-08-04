@@ -58,26 +58,26 @@ func containsAll(t *testing.T, got []string, want ...string) {
 func TestCompletionTopLevel(t *testing.T) {
 	isolateConfig(t)
 	names := runCompletion(t, "")
-	containsAll(t, names, "shell", "launch", "show") // built-in profile + commands
+	containsAll(t, names, "bash", "launch", "show") // built-in profile + commands
 }
 
 func TestCompletionProfilePrefix(t *testing.T) {
 	isolateConfig(t)
-	names := runCompletion(t, "shel")
-	if len(names) != 1 || names[0] != "shell" {
-		t.Errorf("expected only 'shell', got %v", names)
+	names := runCompletion(t, "ba")
+	if len(names) != 1 || names[0] != "bash" {
+		t.Errorf("expected only 'bash', got %v", names)
 	}
 }
 
 func TestCompletionLaunch(t *testing.T) {
 	isolateConfig(t)
-	containsAll(t, runCompletion(t, "launch", ""), "shell")
+	containsAll(t, runCompletion(t, "launch", ""), "bash")
 }
 
 func TestCompletionShow(t *testing.T) {
 	isolateConfig(t)
 	// show accepts profiles and fragments.
-	containsAll(t, runCompletion(t, "show", ""), "shell", "docker")
+	containsAll(t, runCompletion(t, "show", ""), "bash", "docker")
 }
 
 func TestCompletionShowPrefix(t *testing.T) {
@@ -89,14 +89,14 @@ func TestCompletionShowPrefix(t *testing.T) {
 func TestCompletionPassthroughAfterProfile(t *testing.T) {
 	isolateConfig(t)
 	// Everything after the profile name is passthrough: nothing to complete.
-	if names := runCompletion(t, "shell", ""); len(names) != 0 {
+	if names := runCompletion(t, "bash", ""); len(names) != 0 {
 		t.Errorf("expected no completions after profile name, got %v", names)
 	}
 }
 
 func TestCompletionInitExtends(t *testing.T) {
 	isolateConfig(t)
-	containsAll(t, runCompletion(t, "init", "--extends", ""), "shell", "docker")
+	containsAll(t, runCompletion(t, "init", "--extends", ""), "bash", "docker")
 }
 
 func TestCompletionTolerantLoad(t *testing.T) {
@@ -108,19 +108,19 @@ func TestCompletionTolerantLoad(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(profilesDir, "broken.yaml"), []byte("version: [not valid\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	containsAll(t, runCompletion(t, ""), "shell")
+	containsAll(t, runCompletion(t, ""), "bash")
 }
 
 func TestCompletionShowAfterPositional(t *testing.T) {
 	isolateConfig(t)
-	if names := runCompletion(t, "show", "shell", ""); len(names) != 0 {
+	if names := runCompletion(t, "show", "bash", ""); len(names) != 0 {
 		t.Errorf("expected no completions after show's name is given, got %v", names)
 	}
 }
 
 func TestCompletionLaunchPassthrough(t *testing.T) {
 	isolateConfig(t)
-	if names := runCompletion(t, "launch", "shell", ""); len(names) != 0 {
+	if names := runCompletion(t, "launch", "bash", ""); len(names) != 0 {
 		t.Errorf("expected no completions after launch profile name, got %v", names)
 	}
 }

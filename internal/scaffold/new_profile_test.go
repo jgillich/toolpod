@@ -252,11 +252,11 @@ func TestGenerateEmitsCoreQualifiedBuiltinBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := generate("myagent", []string{"core/shell"}, cat)
+	content, err := generate("myagent", []string{"core/bash"}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "- core/shell") {
+	if !strings.Contains(content, "- core/bash") {
 		t.Errorf("generated content should contain a core/-qualified base, got:\n%s", content)
 	}
 }

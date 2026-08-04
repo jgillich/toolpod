@@ -75,7 +75,7 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 func newLaunchCommand(o *launchFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "launch <profile> [args...]",
-		Short:             "Launch a profile (e.g. \"shell\").",
+		Short:             "Launch a profile (e.g. \"bash\").",
 		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeProfileNames,
 		RunE: func(c *cobra.Command, args []string) error {

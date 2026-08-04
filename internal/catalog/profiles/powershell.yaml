@@ -1,4 +1,6 @@
 version: 1
+extends: mise
+command: ["pwsh"]
 mounts:
   ~/.config/powershell:
     source: ~/.config/powershell

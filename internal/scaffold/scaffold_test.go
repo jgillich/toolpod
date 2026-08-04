@@ -375,19 +375,19 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
-		Name:       "shell",
+		Name:       "bash",
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "shell.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "bash.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/shell") {
-		t.Errorf("should contain extends list with core/shell, got:\n%s", output)
+	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/bash") {
+		t.Errorf("should contain extends list with core/bash, got:\n%s", output)
 	}
 	if strings.Contains(output, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)

@@ -22,7 +22,7 @@ func TestAdvisory(t *testing.T) {
 			t.Errorf("Advisory(%q) should be non-empty", name)
 		}
 	}
-	for _, name := range []string{"javascript", "go", "gitconfig", "shell", "mise", ""} {
+	for _, name := range []string{"javascript", "go", "gitconfig", "bash", "mise", ""} {
 		if got := catalog.Advisory(name); got != "" {
 			t.Errorf("Advisory(%q) = %q, want empty", name, got)
 		}

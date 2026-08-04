@@ -67,11 +67,11 @@ func TestLaunchPassthroughAfterProfile(t *testing.T) {
 	// onward reaches the profile verbatim, even tokens that look like flags.
 	o := &launchFlags{}
 	cmd := newLaunchCommand(o)
-	if err := cmd.Flags().Parse([]string{"shell", "--model", "foo", "-c", "ls"}); err != nil {
+	if err := cmd.Flags().Parse([]string{"bash", "--model", "foo", "-c", "ls"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got := cmd.Flags().Args(); fmt.Sprint(got) != "[shell --model foo -c ls]" {
-		t.Errorf("passthrough args = %v, want [shell --model foo -c ls]", got)
+	if got := cmd.Flags().Args(); fmt.Sprint(got) != "[bash --model foo -c ls]" {
+		t.Errorf("passthrough args = %v, want [bash --model foo -c ls]", got)
 	}
 	if o.Command != "" {
 		t.Errorf("-c after profile must not bind to the launch flag, got %q", o.Command)
@@ -80,7 +80,7 @@ func TestLaunchPassthroughAfterProfile(t *testing.T) {
 
 func TestRootLaunchPassthrough(t *testing.T) {
 	root := newRootCommand()
-	target, args, err := root.Find([]string{"--dry-run", "shell", "--model", "foo"})
+	target, args, err := root.Find([]string{"--dry-run", "bash", "--model", "foo"})
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}
@@ -90,8 +90,8 @@ func TestRootLaunchPassthrough(t *testing.T) {
 	if err := target.ParseFlags(args); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
-	if got := target.Flags().Args(); fmt.Sprint(got) != "[shell --model foo]" {
-		t.Errorf("passthrough args = %v, want [shell --model foo]", got)
+	if got := target.Flags().Args(); fmt.Sprint(got) != "[bash --model foo]" {
+		t.Errorf("passthrough args = %v, want [bash --model foo]", got)
 	}
 	if !target.Flags().Changed("dry-run") {
 		t.Error("--dry-run before the profile name must bind to the root launch flags")

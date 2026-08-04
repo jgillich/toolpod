@@ -107,7 +107,7 @@ environment:
   OPENAI_API_KEY: '{{ .Env.OPENAI_API_KEY }}'   # forward a host variable
 ```
 
-If a project has its own `mise.toml`, tpd's shell picks it up as an override; otherwise the profile's `tools:` map stands alone.
+If a project has its own `mise.toml`, tpd's bash profile picks it up as an override; otherwise the profile's `tools:` map stands alone.
 
 ### Built-in profiles
 
@@ -125,9 +125,9 @@ If a project has its own `mise.toml`, tpd's shell picks it up as an override; ot
 | [`copilot`](internal/catalog/profiles/copilot.yaml) | GitHub Copilot CLI |
 | [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
 | [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
-| [`shell`](internal/catalog/profiles/shell.yaml) | Disposable shell. |
+| [`bash`](internal/catalog/profiles/bash.yaml) | Disposable bash shell. |
 
-Most agent built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry. `mise` is the shared base and `shell` is the general-purpose shell profile.
+Most agent built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry. `mise` is the shared base and `bash` is the general-purpose shell profile.
 
 ### Schema reference
 
@@ -187,7 +187,7 @@ repos: null
 ### Inspecting profiles
 
 ```sh
-$ tpd show shell            # profile definition before resolving extends
+$ tpd show bash            # profile definition before resolving extends
 $ tpd list                  # every profile and fragment
 $ tpd edit myagent          # open in $EDITOR
 ```
