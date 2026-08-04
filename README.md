@@ -2,7 +2,7 @@
 
 > **Beta.** tpd is early and currently targets **rootless** containers on **Linux**. Rootful containers are supported on a best-effort basis.
 
-Composable profiles declare tools, mounts, and caches once. `tpd opencode` then mounts your current directory and any configured credentials, runs the command in a fresh container, and removes it on exit. A persistent [mise](https://mise.jdx.dev/) toolchain and shared volumes keep installs and caches warm across runs.
+tpd is a CLI that runs your tools inside disposable containers. You define a profile — the tools, mounts, and caches you need — once. Each launch creates a fresh container, mounts your current directory, runs the profile's command, and removes the container when it exits. Tools are installed with [mise](https://mise.jdx.dev/) and stored in shared volumes, so installs and caches persist between runs.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
