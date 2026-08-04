@@ -38,7 +38,7 @@ CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd
 - `tpd doctor` reports active mode, volumes, mise, and config.
 
 ## Workspace rules
-You are in an isolated environment. Trust user information if you cannot verify. Create worktrees in `.worktrees`. All directories outside of the project are ephemeral.
+You are in an isolated environment. Trust user information if you cannot verify. Create worktrees in `.worktrees`. All directories outside of the project are ephemeral. When you merge a worktree into main, always use --squash.
 
 ## Comments
 Comments should explain intent, not implementation — business rules, design rationale, edge cases, assumptions, trade-offs, and public API contracts. Skip comments that restate code, are stale, or leave commented-out code; prefer clear names and simple code. When a comment is needed, explain why the code exists or is shaped that way.
