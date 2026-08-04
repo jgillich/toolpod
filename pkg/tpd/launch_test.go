@@ -60,6 +60,43 @@ func TestLaunchProfileNotFound(t *testing.T) {
 	}
 }
 
+// writeBuiltinFragment writes a user fragment next to a user profile dir and
+// returns the profile dir. User fragments load from the sibling fragments/ dir
+// of the profile dir (see LoadProfiles).
+func writeBuiltinFragment(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "pow.yaml"), []byte("version: 1\ntools:\n  powershell-core: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestLaunchFragmentRejected(t *testing.T) {
+	dir := writeBuiltinFragment(t)
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "pow",
+		DryRun:      true,
+		ProfileDir:  dir,
+	}, &strings.Builder{})
+	if res.Err == nil {
+		t.Fatal("expected error launching a fragment")
+	}
+	if res.ExitCode != 2 {
+		t.Errorf("ExitCode = %d, want 2 (profile error)", res.ExitCode)
+	}
+	if !strings.Contains(res.Err.Error(), "fragment") {
+		t.Errorf("error should explain fragments can't be launched, got: %v", res.Err)
+	}
+	if !strings.Contains(res.Err.Error(), "tpd init") {
+		t.Errorf("error should point to the init path, got: %v", res.Err)
+	}
+}
+
 func TestLaunchWithFakeRuntime(t *testing.T) {
 	dir := writeBuiltinShell(t)
 	fr := &runtime.FakeRuntime{ExitCode: 0}

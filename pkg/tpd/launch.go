@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
@@ -54,6 +55,19 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	cat, err := profile.LoadProfiles(userDir)
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
+	}
+	// Fragments are composition-only: they carry no image or command, so
+	// launching one is impossible. ResolveProfile would fail with a confusing
+	// "missing required field: command" pointing at the fragment file; reject
+	// here with the composition path instead.
+	if ref, err := cat.ParseRefForCatalog(opts.ProfileName); err == nil {
+		if key, ok := cat.ResolveRef(ref); ok && cat.IsFragment(key) {
+			name := key
+			if i := strings.LastIndex(name, "/"); i >= 0 {
+				name = name[i+1:]
+			}
+			return Result{ExitCode: 2, Err: fmt.Errorf("fragment %q cannot be launched: fragments carry no image or command. Create a profile that extends it: tpd init myprofile --extends %s", name, name)}
+		}
 	}
 	cfg, err := profile.ResolveProfile(cat, opts.ProfileName)
 	if err != nil {
