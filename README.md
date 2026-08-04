@@ -76,6 +76,10 @@ The first launch pulls the base image, builds the profile's derived image when s
 $ tpd init opencode --extends=javascript,gitconfig,ssh
 ```
 
+### `tpd edit`
+
+`tpd edit <name>` opens the user file for a profile or fragment in `$EDITOR` (default `vi`). If no user file exists yet, tpd seeds one in `profiles/` (or `fragments/`): a stub that `extends:` the built-in, with the resolved definition below as a commented reference. Settings you write are merged on top of the built-in per the [merge semantics](#merge-semantics), so change only what you need. Closing without saving removes the seed, leaving no shadow file behind.
+
 ### Other commands
 
 ```sh
