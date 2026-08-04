@@ -1,18 +1,18 @@
 # tpd
 
-> **Beta.** tpd is early and currently targets **Linux**. Rootless Podman is the primary runtime; Docker and rootful Podman are supported on a best-effort basis.
+> **Beta.** tpd is early and currently targets **rootless** containers on **Linux**. Rootful containers are supported on a best-effort basis.
 
 Composable profiles declare tools, mounts, and caches once. `tpd opencode` then mounts your current directory and any configured credentials, runs the command in a fresh container, and removes it on exit. A persistent [mise](https://mise.jdx.dev/) toolchain and shared volumes keep installs and caches warm across runs.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="./assets/tpd-banner-light.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/tpd-banner.svg">
-  <img alt="tpd disposable, reproducible development environments" src="./assets/tpd-banner.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/banner-dark.svg">
+  <img alt="tpd disposable, reproducible development environments" src="./assets/banner-dark.svg">
 </picture>
 
 ## Why
 
-Every developer eventually writes scripts that launch containers with the right mounts, SSH keys, caches, tool versions, and AI agents. tpd replaces them with **user-owned, reusable profiles** that follow you to every project without repo changes.
+Every developer eventually writes scripts that launch containers with the right mounts, config files, caches, tool versions, and AI agents. tpd replaces them with **user-owned, reusable profiles** that follow you to every project without repo changes.
 
 Unlike [devcontainers](https://containers.dev/) (project-owned, checked into the repo), tpd profiles are user-owned:
 
@@ -22,7 +22,7 @@ Unlike [devcontainers](https://containers.dev/) (project-owned, checked into the
 
 ## Install
 
-tpd is distributed as a [mise](https://mise.jdx.dev/) plugin, so install mise first:
+tpd is installed through [mise](https://mise.jdx.dev/), so install mise first:
 
 ```sh
 curl https://mise.jdx.dev/install.sh | sh
@@ -61,7 +61,7 @@ tpd-owned flags come **before** the profile name; everything after is passed ver
 
 ```sh
 $ tpd opencode     # run the opencode agent, then remove the container
-$ tpd shell        # a disposable shell with the right tools on PATH
+$ tpd bash         # a disposable bash shell with the right tools on PATH
 ```
 
 The first launch pulls the base image, builds the profile's derived image when system packages are declared, and installs tools (slow). Subsequent launches reuse these resources when possible.
@@ -167,7 +167,8 @@ The base image ships the bare OS. Per-profile system libraries are installed int
 
 ```yaml
 repos:
-  mise: { extrepo: mise }   # enables https://mise.jdx.dev/deb
+  mise:
+    extrepo: mise # enables https://mise.jdx.dev/deb
 ```
 
 Custom URL repositories are schema-ready but currently rejected during image preparation.

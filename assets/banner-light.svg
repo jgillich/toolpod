@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="100%" height="100%" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
+  <defs>
+    <!-- Background Gradient (Light Theme) -->
+    <linearGradient id="bg-light" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="50%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#F1F5F9"/>
+    </linearGradient>
+
+    <!-- Brand Accent Gradients -->
+    <linearGradient id="cyan-violet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7"/>
+      <stop offset="50%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#DB2777"/>
+    </linearGradient>
+
+    <linearGradient id="bottom-border" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7"/>
+      <stop offset="50%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#DB2777"/>
+    </linearGradient>
+
+    <!-- Light Theme Grid Background -->
+    <pattern id="grid-light" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#E2E8F0" stroke-width="0.75" stroke-opacity="0.8"/>
+    </pattern>
+
+    <!-- Soft Ambient Background Glows -->
+    <filter id="glow-light" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="90" result="blur"/>
+    </filter>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="400" fill="url(#bg-light)"/>
+
+  <!-- Technical Grid Overlay -->
+  <rect width="1200" height="400" fill="url(#grid-light)" opacity="0.9"/>
+
+  <!-- Ambient Glow Elements -->
+  <circle cx="220" cy="180" r="180" fill="#0EA5E9" opacity="0.08" filter="url(#glow-light)"/>
+  <circle cx="950" cy="220" r="220" fill="#8B5CF6" opacity="0.07" filter="url(#glow-light)"/>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <g transform="translate(90, 0)">
+    
+    <!-- Title / Brand Header -->
+    <g transform="translate(0, 135)">
+      <text x="0" y="0" fill="#0F172A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="108" font-weight="900" letter-spacing="-3.5">tpd</text>
+      <!-- Gradient Decorative Dot -->
+      <circle cx="182" cy="-14" r="12" fill="url(#cyan-violet)"/>
+    </g>
+
+    <!-- Tagline -->
+    <text x="0" y="196" fill="#0F172A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="-0.9">
+      Isolated workspaces for the AI agent era.
+    </text>
+
+    <!-- Secondary Description -->
+    <text x="0" y="244" fill="#475569" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="400" letter-spacing="-0.4">
+      Composable, user-owned profiles powered by mise and rootless containers.
+    </text>
+
+    <!-- Profile Pills (Light Theme Styling) -->
+    <g transform="translate(0, 292)">
+      <!-- Pill 1: opencode -->
+      <g transform="translate(0, 0)">
+        <rect width="142" height="42" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <circle cx="22" cy="21" r="5.5" fill="#0284C7"/>
+        <text x="38" y="27" fill="#1E293B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="17" font-weight="600">opencode</text>
+      </g>
+
+      <!-- Pill 2: claude -->
+      <g transform="translate(158, 0)">
+        <rect width="120" height="42" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <circle cx="22" cy="21" r="5.5" fill="#D97706"/>
+        <text x="38" y="27" fill="#1E293B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="17" font-weight="600">claude</text>
+      </g>
+
+      <!-- Pill 3: codex -->
+      <g transform="translate(294, 0)">
+        <rect width="112" height="42" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <circle cx="22" cy="21" r="5.5" fill="#059669"/>
+        <text x="38" y="27" fill="#1E293B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="17" font-weight="600">codex</text>
+      </g>
+
+      <!-- Pill 4: gemini -->
+      <g transform="translate(422, 0)">
+        <rect width="120" height="42" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <circle cx="22" cy="21" r="5.5" fill="#2563EB"/>
+        <text x="38" y="27" fill="#1E293B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="17" font-weight="600">gemini</text>
+      </g>
+
+      <!-- Pill 5: copilot -->
+      <g transform="translate(558, 0)">
+        <rect width="122" height="42" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <circle cx="22" cy="21" r="5.5" fill="#7C3AED"/>
+        <text x="38" y="27" fill="#1E293B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="17" font-weight="600">copilot</text>
+      </g>
+    </g>
+
+  </g>
+
+  <!-- Accent Line Along Bottom -->
+  <rect x="0" y="394" width="1200" height="6" fill="url(#bottom-border)"/>
+</svg>
