@@ -70,11 +70,13 @@ The first launch pulls the base image, builds the profile's derived image when s
 
 ### `tpd init`
 
-`tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches). With a terminal it starts an interactive wizard; explicit arguments are useful for scripts:
+`tpd init` generates a user profile that merges a base profile and selected **fragments** (SSH keys, git config, package caches).
 
-```sh
-$ tpd init opencode --extends=javascript,gitconfig,ssh
-```
+![](assets/init.gif)
+
+
+
+The generated file extends the chosen bases live and embeds the fully resolved profile below as a commented reference, so you can see exactly what the container will get (like `tpd edit` seeds).
 
 ### `tpd edit`
 
