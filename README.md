@@ -66,7 +66,7 @@ $ tpd bash         # a disposable bash shell with the right tools on PATH
 
 The first launch pulls the base image, builds the profile's derived image when system packages are declared, and installs tools (slow). Subsequent launches reuse these resources when possible.
 
-`tpd launch --pull <profile>` re-pulls the base image even when it is already present locally, refreshing mutable tags (`latest`); the derived image is rebuilt automatically when the new base's ID changes its content hash.
+`tpd run --pull <profile>` re-pulls the base image even when it is already present locally, refreshing mutable tags (`latest`); the derived image is rebuilt automatically when the new base's ID changes its content hash.
 
 ### `tpd init`
 

@@ -130,7 +130,7 @@ The cost: a derived image does not automatically pick up newer apt versions of
 the same requested packages.
 
 Mutable base tags (`latest` and friends) are pulled on first use and reused on
-later launches. `tpd launch --pull <profile>` re-pulls the base image even when
+later launches. `tpd run --pull <profile>` re-pulls the base image even when
 it is already present locally, refreshing mutable tags. Because the derived
 tag hashes the local base image ID, pulling a new base version changes the
 derived tag and the next launch rebuilds the derived image automatically.
@@ -174,7 +174,7 @@ engine binds at start regardless). The residual race is accepted.
 
 There is no host-level lock between `prune` and `launch` (single-user rootless
 mode; a user does not meaningfully run them concurrently). Guidance: do not run
-`tpd prune --all --force` concurrently with a `tpd launch`. The practical
+`tpd prune --all --force` concurrently with a `tpd run`. The practical
 defenses remain: prune skips resources referenced by running containers, and
 the engine refuses force-removal of in-use resources, so a concurrent launch
 that has already created its container wins the race.

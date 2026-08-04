@@ -23,7 +23,7 @@ import (
 )
 
 // launchFlags holds the tpd-owned launch flags shared by the default launch
-// command and the explicit `tpd launch` command.
+// command and the explicit `tpd run` command.
 type launchFlags struct {
 	Command   string
 	Workspace string
@@ -72,10 +72,10 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 	return nil
 }
 
-func newLaunchCommand(o *launchFlags) *cobra.Command {
+func newRunCommand(o *launchFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "launch <profile> [args...]",
-		Short:             "Launch a profile (e.g. \"bash\").",
+		Use:               "run <profile> [args...]",
+		Short:             "Run a profile (e.g. \"bash\").",
 		Args:              cobra.ArbitraryArgs,
 		ValidArgsFunction: completeProfileNames,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -494,7 +494,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	addLaunchFlags(root, o)
-	root.AddCommand(newLaunchCommand(o))
+	root.AddCommand(newRunCommand(o))
 	root.AddCommand(newShowCommand())
 	root.AddCommand(newEditCommand())
 	root.AddCommand(newListCommand())

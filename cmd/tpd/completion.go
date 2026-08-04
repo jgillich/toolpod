@@ -14,7 +14,8 @@ func loadCatalog() (profile.Catalog, error) {
 	return profile.LoadProfilesTolerant(profile.DefaultProfileDir(), func(string) {})
 }
 
-// completeProfileNames completes profile names for the launch commands. Once
+// completeProfileNames completes profile names for the launch commands (bare
+// form and `tpd run`). Once
 // the profile name is given, everything after it is passthrough to the
 // profile's command, so there is nothing left for tpd to complete.
 func completeProfileNames(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

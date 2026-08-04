@@ -58,7 +58,7 @@ func containsAll(t *testing.T, got []string, want ...string) {
 func TestCompletionTopLevel(t *testing.T) {
 	isolateConfig(t)
 	names := runCompletion(t, "")
-	containsAll(t, names, "bash", "launch", "show") // built-in profile + commands
+	containsAll(t, names, "bash", "run", "show") // built-in profile + commands
 }
 
 func TestCompletionProfilePrefix(t *testing.T) {
@@ -69,9 +69,9 @@ func TestCompletionProfilePrefix(t *testing.T) {
 	}
 }
 
-func TestCompletionLaunch(t *testing.T) {
+func TestCompletionRun(t *testing.T) {
 	isolateConfig(t)
-	containsAll(t, runCompletion(t, "launch", ""), "bash")
+	containsAll(t, runCompletion(t, "run", ""), "bash")
 }
 
 func TestCompletionShow(t *testing.T) {
@@ -118,9 +118,9 @@ func TestCompletionShowAfterPositional(t *testing.T) {
 	}
 }
 
-func TestCompletionLaunchPassthrough(t *testing.T) {
+func TestCompletionRunPassthrough(t *testing.T) {
 	isolateConfig(t)
-	if names := runCompletion(t, "launch", "bash", ""); len(names) != 0 {
-		t.Errorf("expected no completions after launch profile name, got %v", names)
+	if names := runCompletion(t, "run", "bash", ""); len(names) != 0 {
+		t.Errorf("expected no completions after run profile name, got %v", names)
 	}
 }

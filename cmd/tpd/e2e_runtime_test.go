@@ -69,10 +69,10 @@ func TestE2EBashLaunch(t *testing.T) {
 	}
 	out, err := runTpd(t, "-c", "echo hello-from-tpd", "bash")
 	if err != nil {
-		t.Fatalf("bash launch: %v\n%s", err, out)
+		t.Fatalf("bash run: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "hello-from-tpd") {
-		t.Errorf("bash launch output missing echo; got:\n%s", out)
+		t.Errorf("bash run output missing echo; got:\n%s", out)
 	}
 }
 

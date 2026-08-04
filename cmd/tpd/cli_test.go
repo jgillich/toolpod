@@ -27,7 +27,7 @@ func TestLaunchBareShowsHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bare tpd should show help and exit 0, got err: %v\n%s", err, out)
 	}
-	for _, c := range []string{"Usage:", "launch", "show", "profile"} {
+	for _, c := range []string{"Usage:", "run", "show", "profile"} {
 		if !strings.Contains(string(out), c) {
 			t.Errorf("expected bare tpd help to mention %q, got:\n%s", c, out)
 		}
@@ -44,7 +44,7 @@ func TestBareHelpShowsAllCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bare tpd should show help and exit 0, got err: %v\n%s", err, out)
 	}
-	for _, c := range []string{"launch", "init", "profile", "doctor", "prune"} {
+	for _, c := range []string{"run", "init", "profile", "doctor", "prune"} {
 		if !strings.Contains(string(out), c) {
 			t.Errorf("expected bare tpd help to mention %q, got:\n%s", c, out)
 		}
@@ -53,7 +53,7 @@ func TestBareHelpShowsAllCommands(t *testing.T) {
 
 func TestLaunchFlagsBind(t *testing.T) {
 	o := &launchFlags{}
-	cmd := newLaunchCommand(o)
+	cmd := newRunCommand(o)
 	if err := cmd.Flags().Parse([]string{"--pull", "--dry-run", "--verbose", "--command", "ls", "--workspace", "/tmp"}); err != nil {
 		t.Fatalf("parse launch flags: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestLaunchPassthroughAfterProfile(t *testing.T) {
 	// kong's passthrough:partial contract: everything from the profile name
 	// onward reaches the profile verbatim, even tokens that look like flags.
 	o := &launchFlags{}
-	cmd := newLaunchCommand(o)
+	cmd := newRunCommand(o)
 	if err := cmd.Flags().Parse([]string{"bash", "--model", "foo", "-c", "ls"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}

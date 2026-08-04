@@ -7,7 +7,7 @@ Go CLI for disposable, reproducible dev environments in a Podman/Docker containe
 - `go test ./...` — full test suite (Go 1.25, CGO off in releases)
 - `go vet ./...` — lint check
 
-CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd/tpd/cli.go`. The launch command (root and `tpd launch`) disables interspersed flag parsing (`SetInterspersed(false)`), so flags parse only before the profile name and everything after it reaches the profile's command verbatim. `cmd/tpd/completion.go` provides native shell completion for profile/fragment names via `ValidArgsFunction`; `tpd completion bash|zsh|fish|powershell` prints the activation script.
+CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd/tpd/cli.go`. The launch command (root and `tpd run`) disables interspersed flag parsing (`SetInterspersed(false)`), so flags parse only before the profile name and everything after it reaches the profile's command verbatim. `cmd/tpd/completion.go` provides native shell completion for profile/fragment names via `ValidArgsFunction`; `tpd completion bash|zsh|fish|powershell` prints the activation script.
 
 ## Layout
 - `cmd/tpd/` — entrypoint and CLI (`main.go`, `cli.go`, e2e/profile/cli tests).
@@ -28,7 +28,7 @@ CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd
 - **`files:`:** inline-content files are written between ContainerCreate and ContainerStart via CopyToContainer (tar built by `tarFiles` in `docker_run.go`). `{{ }}` templates supported; targets absolute or `~`-prefixed, never `..`. Owned by the execution user; missing parents auto-created and bootstrap chown covers `$HOME` parents.
 - **Prune/doctor image matching:** engines qualify `RepoTags` with a registry (`docker.io/`, `localhost/`, …), so `listTpdImages`/`checkDerivedImages` normalize via `runtime.DerivedRef` (`github.com/distribution/reference`, matching the `tpd/packages` path) — never a bare string `HasPrefix`.
 - **Ownership labels & prune:** every volume, derived image, and launched container tpd creates for a launch carries `tpd.managed=true` (`runtime.OwnershipLabel`, `internal/runtime/labels.go`); derived images also carry `tpd.build=1` build provenance. Transient diagnostic/helper resources (the doctor's `tpd-diag-*` volume and container probes, cache-subpath helper, extrepo read) are unlabeled, so a failed-cleanup straggler is invisible to the label-filtered running-container protection and leak check. `prune` removes only labeled resources — unlabeled `tpd-*` volumes/images are reported to stderr as "not tpd-owned" and never auto-removed, and nothing referenced by a running container is removed.
-- **`--pull`:** `tpd launch --pull <profile>` re-pulls the base image even when present, refreshing mutable tags; the derived tag hashes the local base image ID, so a new base changes the derived tag and triggers a rebuild.
+- **`--pull`:** `tpd run --pull <profile>` re-pulls the base image even when present, refreshing mutable tags; the derived tag hashes the local base image ID, so a new base changes the derived tag and triggers a rebuild.
 - **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). Empty resolution leaves the var unset.
 - **Catalog is embedded:** built-in profiles/fragments ship in the binary; add YAML under `internal/catalog/` and re-build, never load from disk at runtime.
 - **No comments** unless the code doesn't make something apparent.
