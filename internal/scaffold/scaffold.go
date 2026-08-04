@@ -226,9 +226,18 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	} else {
 		printSummary(stdout, profileName, bases, resolved)
 
+		// Embed the resolved profile as a comment so the file shows the full
+		// container view, mirroring the edit command's seed.
+		content, err = appendResolvedReference(content, profileName, resolved)
+		if err != nil {
+			return fmt.Errorf("appending resolved reference: %w", err)
+		}
+
 		// If the profile grants host access (mounts or env), prompt to review.
+		// Gated on wizardUsed like the overwrite prompt so a fully-specified
+		// invocation never stops for confirmation.
 		if len(resolved.Mounts) > 0 || len(resolved.Env) > 0 {
-			if interactive {
+			if wizardUsed {
 				for {
 					choice, err := promptReviewChoice(tty, stdin, stdout, reader)
 					if err != nil {
@@ -306,6 +315,32 @@ func generate(name string, extends []string, cat profile.Catalog) (string, error
 		return "", err
 	}
 	return string(data), nil
+}
+
+// appendResolvedReference appends the fully merged profile to the generated
+// content as a commented block, mirroring the edit command's seed, so the file
+// shows the effective container view next to the live extends override.
+func appendResolvedReference(content, profileName string, resolved profile.Profile) (string, error) {
+	data, err := yaml.Marshal(resolved)
+	if err != nil {
+		return "", err
+	}
+	const rule = "# ──────────────────────────────────────────────────────────────────\n"
+	var b strings.Builder
+	b.WriteString(content)
+	b.WriteString("\n")
+	b.WriteString(rule)
+	b.WriteString("# Resolved profile (reference) — snapshot from when this file was\n")
+	b.WriteString("# generated; the built-ins may have changed since. Run\n")
+	fmt.Fprintf(&b, "# `tpd show --resolved %s` for the current resolved profile.\n", profileName)
+	b.WriteString(rule)
+	b.WriteString("\n")
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		b.WriteString("# ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
 }
 
 // basesProvideCommand reports whether any base in the extends chain provides a

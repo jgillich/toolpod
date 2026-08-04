@@ -33,6 +33,41 @@ func TestValidateFragmentRejectsIdentityFields(t *testing.T) {
 	}
 }
 
+func TestInitEmbedsResolvedProfileReference(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"javascript", "gitconfig", "ssh"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	// The override stays live-linked to extends...
+	if !strings.Contains(content, "extends:") {
+		t.Errorf("override should keep the extends list, got:\n%s", content)
+	}
+	// ...and the resolved profile is embedded as a reference comment.
+	if !strings.Contains(content, "Resolved profile (reference)") {
+		t.Errorf("file should carry a resolved-reference banner, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# image: debian:13-slim") {
+		t.Errorf("resolved reference should inline the inherited image, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# command:") {
+		t.Errorf("resolved reference should inline the inherited command, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# mounts:") {
+		t.Errorf("resolved reference should inline the merged mounts, got:\n%s", content)
+	}
+}
+
 func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
@@ -68,19 +103,21 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 		t.Errorf("missing ssh in extends list, got:\n%s", output)
 	}
 
+	override := overrideOnly(t, output)
+
 	// No command: [] (omitempty should handle this)
-	if strings.Contains(output, "command:") {
+	if strings.Contains(override, "command:") {
 		t.Errorf("should not emit command: in override, got:\n%s", output)
 	}
 
 	// Should NOT contain inlined cache/mount content (live-linked via extends)
-	if strings.Contains(output, "npm: ~/.npm") {
+	if strings.Contains(override, "npm: ~/.npm") {
 		t.Errorf("should not inline npm cache, got:\n%s", output)
 	}
-	if strings.Contains(output, "~/.gitconfig:") {
+	if strings.Contains(override, "~/.gitconfig:") {
 		t.Errorf("should not inline gitconfig mount, got:\n%s", output)
 	}
-	if strings.Contains(output, "~/.ssh:") {
+	if strings.Contains(override, "~/.ssh:") {
 		t.Errorf("should not inline ssh mount, got:\n%s", output)
 	}
 }
@@ -386,13 +423,14 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
+	override := overrideOnly(t, output)
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/bash") {
 		t.Errorf("should contain extends list with core/bash, got:\n%s", output)
 	}
-	if strings.Contains(output, "caches:") {
+	if strings.Contains(override, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
 	}
-	if strings.Contains(output, "mounts:") {
+	if strings.Contains(override, "mounts:") {
 		t.Errorf("should not contain mounts with no fragments, got:\n%s", output)
 	}
 }
@@ -438,6 +476,7 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
+	override := overrideOnly(t, content)
 	// Should contain extends list, not inlined caches/tools
 	if !strings.Contains(content, "extends:") {
 		t.Error("generated file should contain extends:")
@@ -449,11 +488,11 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 		t.Error("generated file should reference go fragment")
 	}
 	// Should NOT contain inlined cache paths from npm fragment
-	if strings.Contains(content, "~/.npm") {
+	if strings.Contains(override, "~/.npm") {
 		t.Error("generated file should not inline ~/.npm cache (should be live-linked via extends)")
 	}
 	// Should NOT contain inlined tool entries from fragments
-	if strings.Contains(content, "node: latest") {
+	if strings.Contains(override, "node: latest") {
 		t.Error("generated file should not inline node tool (should be live-linked via extends)")
 	}
 }
@@ -599,4 +638,14 @@ func TestFragmentFileExistenceWarning(t *testing.T) {
 	if strings.Contains(stderr.String(), "does not exist") {
 		t.Errorf("stderr should not contain file-existence warnings for optional mounts, got: %q", stderr.String())
 	}
+}
+
+// overrideOnly returns the active YAML before the embedded resolved-reference
+// block, for assertions that target only the generated override.
+func overrideOnly(t *testing.T, content string) string {
+	t.Helper()
+	if i := strings.Index(content, "# ─────"); i >= 0 {
+		return content[:i]
+	}
+	return content
 }

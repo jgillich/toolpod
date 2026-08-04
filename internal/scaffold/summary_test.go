@@ -48,16 +48,41 @@ func TestInitNoEditorPromptWithoutMounts(t *testing.T) {
 	}
 }
 
+func TestExplicitArgsNoReviewPrompt(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	// Fully-specified args in a TTY-like invocation (Interactive) must not
+	// prompt: print the container-access summary and write the file.
+	err := Run(context.Background(), Options{
+		Name:        "opencode",
+		Extends:     []string{"javascript", "gitconfig", "ssh"},
+		Interactive: true,
+		ProfileDir:  dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	output := stdout.String() + stderr.String()
+	if strings.Contains(output, "Proceed / View details / Abort") {
+		t.Errorf("explicit args should not show review prompt, got: %s", output)
+	}
+	if !strings.Contains(stdout.String(), "Container access") {
+		t.Errorf("summary should print container access, got: %s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); err != nil {
+		t.Error("file should be written without prompting")
+	}
+}
+
 func TestInitReviewAbort(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	// Interactive + ssh fragment (has mounts) → review prompt → "a" aborts
+	// Wizard flow (no explicit args) + ssh fragment (has mounts) → review
+	// prompt → "a" aborts.
 	err := Run(context.Background(), Options{
-		Name:        "opencode",
-		Extends:     []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("a\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nssh\na\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -72,13 +97,11 @@ func TestInitReviewAbort(t *testing.T) {
 func TestInitReviewProceed(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	// Interactive + ssh fragment → review prompt → "p" (default) proceeds
+	// Wizard flow + ssh fragment → review prompt → "p" (default) proceeds.
 	err := Run(context.Background(), Options{
-		Name:        "opencode",
-		Extends:     []string{"ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nssh\n\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
