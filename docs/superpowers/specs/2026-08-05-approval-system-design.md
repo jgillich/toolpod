@@ -32,32 +32,42 @@ The security-model doc must be updated to record this shift.
 Top-level: `mounts`, `devices`, `environment`, `ports`, `dbus`,
 `network`.
 
-`services:` are flattened: each service's sensitive sub-fields roll up
-into the same approval set, addressed as `services.<name>.<field>`. The
-service sub-fields that are gated are **only those the service schema
-actually permits** — `validateServices` (validate.go:281-301) rejects
-`network`, `tty`, `resources`, `tools`, `dbus`, `ports`, `devices`, and
-nested `services` on services, so gating them would be dead code. The
-real service sensitive set is:
+`services:` are gated **coarsely, one item per service**, addressed as
+`services.<name>`. The decision is whether *this profile uses the
+service at all*, not which sub-field of the shared daemon is trimmed:
+a service is a global singleton (`tpd-svc-<name>`, shared across all
+launches per `2026-08-04-services-design.md:127-180`), so filtering the
+daemon's definition per-profile would recreate it on every disagreement
+and churn every consumer. Instead, the approval gate controls *use*:
+the item's value renders the service's sensitive definition so the user
+sees what "use podman" entails.
 
-- `services.<name>.mounts` — same as top-level mounts.
-- `services.<name>.environment` — same as top-level env.
-- `services.<name>.privileged` — the single most consequential service
-  capability. The built-in `podman` sidecar is `privileged: true`
-  (`internal/catalog/fragments/services/podman.yaml`); a privileged
-  rootless sidecar gains `CAP_SYS_ADMIN` plus all devices inside its user
-  namespace. Gating `privileged` forces an explicit approval before that
-  capability is granted.
-- `services.<name>.exposes` — the host-adjacent sockets a service
-  publishes and the main container binds. A service that exposes a socket
-  is a service that grants the main container access to something the
-  service owns (e.g. a nested Podman engine socket). Gating `exposes`
-  makes that grant visible at approval time — and its denial cascades to
-  dependent service-socket mounts (see §3 "Dependent-mount cascade").
+The rendered definition covers the schema-valid sensitive sub-fields —
+`privileged`, `exposes`, the service's own `mounts`, and `env` (the only
+fields `validateServices` permits beyond `image`/`packages`/`command`/
+`files`/`caches`; it rejects `network`, `dbus`, `ports`, `devices` on
+services at validate.go:281-301). The render is informational — the
+approval decision is per-service (approve uses the daemon as-is; deny
+does not use it). A definition change (e.g. `privileged` flips, a new
+`exposes` socket) changes the hash and re-prompts with the prior choice
+pre-checked.
 
-`services.<name>.{devices,ports,dbus,network}` are **not** gated because
-the schema rejects them; if the schema later allows them, they join the
-gated set by the same rule as the top level.
+`services.<name>.{devices,ports,dbus,network}` never occur (the schema
+rejects them); they are not rendered or gated.
+
+### Whole-service deny (intentional outcome)
+
+Deny = this launch **does not use the service**: the service is dropped
+from `cfg.Services` and every top-level mount referencing it
+(`service: <name>`) is cascaded off. The shared daemon is **never
+filtered** — its `tpd.service-hash` never changes as a result of an
+approval decision, so no recreation churn, ever. If the daemon is
+already running for other consumers it keeps running; this profile
+simply doesn't bind its socket. A service's `image`/`packages`/
+`command` are not gated (consistent with the top-level exclusion of
+those fields), so a profile that overrides a service (replacement
+merge) makes the whole service user-trusted and ungated — see §2
+"User-wins-when-shadowing."
 
 ### Non-gated (intentionally excluded)
 
@@ -273,7 +283,7 @@ what still needs a decision:
 type SensitiveItem struct {
     Field    string // "mounts", "devices", "env", "ports",
                     // "dbus.talk", "dbus.own", "network",
-                    // "services.<name>.mounts", "services.<name>.privileged", ...
+                    // "services" (one item per service, Key = service name)
     Key      string // the map key ("" for scalar network/privileged);
                     // pre-expansion — this is the stable identity used by
                     // the hash and the store
@@ -329,27 +339,16 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
      The key's current value stays in the profile *for now*; the dialog
      returns the final allowed-set and the filter is re-run.
 6. For each key whose provenance is a **user** entry → keep, no gate.
-7. **Dependent-mount cascade:** if `services.<name>.exposes.<socket>` is
-   denied or removed, any top-level `mounts` entry with
-   `service: <name>, socket: <socket>` is also dropped — otherwise the
-   filtered profile would fail validation at service binding
-   (validate.go:374-382: the mount requires the socket to exist in
-   `svc.Exposes`). The cascaded mount is not itself a gated key; it is
-   removed as a consequence of the expose denial. A dialog that denies an
-   expose should surface the dependent mount(s) so the user sees the
-   cascade.
-8. Return the filtered `Profile` and the `PromptRequest`.
-
-### Whole-service deny (intentional outcome)
-
-Gating is per-sub-field, and a service's `image`/`packages`/`command`
-are not gated (§1). A fully-denied service therefore still **launches**
-— e.g. the podman sidecar would run unprivileged with no exposed socket
-rather than not running at all. This is intentional and safe: an
-unprivileged sidecar with nothing to bind grants the main container no
-host-adjacent capability. Suppressing the service entirely would require
-gating `image`/`command`, which the design excludes. If a user wants the
-service gone, they edit the profile to remove it.
+ 7. **Dependent-mount cascade (coarse services):** if a service is
+    denied (removed from `cfg.Services`), every top-level `mounts` entry
+    with `service: <name>` is also dropped — the main container cannot
+    bind a socket the service isn't exposing to it, and
+    `validateMountServices` (validate.go:374-382) would otherwise fail at
+    service binding (the mount requires the service to be declared). The
+    cascaded mounts are not themselves gated keys; they are removed as a
+    consequence of the service denial. A dialog that denies a service
+    should surface the dependent mount(s) so the user sees the cascade.
+ 8. Return the filtered `Profile` and the `PromptRequest`.
 
 ### Dialog return shape
 
@@ -448,10 +447,16 @@ func ComputeApprovalHash(res profile.Resolved) string
   is a per-launch runtime fact.
 - `network` is a scalar: emit `network\n<contributor>\n<value>\n` if
   non-user-contributed and non-empty.
-- Services: emit `services.<name>.<field>\n<key>\n<contributor>\n<value>\n`
-  per **schema-valid** sensitive sub-field (`mounts`, `env`, `privileged`,
-  `exposes` — see §1). The validator-rejected fields (`devices`, `ports`,
-  `dbus`, `network`) are never emitted for services.
+- Services: emit one `services\n<name>\n<contributor FullName>\n<contributor Namespace>\n<rendered-definition>\n`
+  entry per non-user-contributed service. `<rendered-definition>` is the
+  canonical pre-expansion form of the service's schema-valid sensitive
+  sub-fields (`privileged`, `exposes`, the service's own `mounts`, `env`)
+  — e.g. `privileged=true; exposes={podman:/run/podman/podman.sock};
+  mounts={...}; env={...}`. A definition change (a `privileged` flip, a
+  new `exposes` socket, a new service mount/env key) changes the
+  rendered form and therefore the hash, re-prompting with the prior
+  choice pre-checked. The validator-rejected fields (`devices`, `ports`,
+  `dbus`, `network`) never occur on services and are not rendered.
 - Return `hex.EncodeToString(sum[:])[:12]` (12 chars, same as service
   hash).
 
@@ -503,13 +508,14 @@ approved:
     talk: [org.freedesktop.portal.Desktop]
     own:              # absent key = sub-field present, all denied
   network: true       # scalar: bool, approved or not
-  services:
-    podman:
-      privileged: true
-      exposes: [registry]
-      mounts: [/var/run/podman.sock]
-      env:            # absent key = sub-field present, all denied
+  services:           # coarse: approved service names
+    - podman
 ```
+
+`services` is a plain map field (like `mounts`): `Approved["services"].Keys`
+is the list of approved service names. A service present in the profile
+but absent from the list is denied (dropped + cascaded). No per-sub-field
+service keys; the service is approved or denied as a whole.
 
 ### State semantics (three-state, round-trippable)
 
@@ -536,9 +542,10 @@ a custom `MarshalYAML`/`UnmarshalYAML` on `State` that:
    present in the `approved` map with an empty `Keys` slice (denied).
 2. Omits the field key entirely when the field is absent from the
    `approved` map (never decided).
-3. Nests `services.<name>.<field>` under a `services:` map in the YAML
-   (the Go struct is flat — `Approved["services.podman.mounts"]` — but the
-   on-disk shape is nested for human readability, as the example shows).
+3. Nests `dbus` as `dbus: {talk: [...], own: [...]}` for readability (the
+   Go struct is flat — `Approved["dbus.talk"]` — but the on-disk shape
+   is nested). All other fields, including `services`, are flat lists of
+   approved keys.
 
 The `Network` scalar uses `*bool`: `nil` omits the key (never decided),
 `true`/`false` emit the bool.
@@ -572,7 +579,7 @@ type State struct {
 // MarshalYAML/UnmarshalYAML on State — see "State semantics" above.
 type ApprovedField struct {
     Keys    []string // for map fields: mounts, devices, env, ports,
-                     // dbus.talk, dbus.own, services.<name>.<field>
+                     // dbus.talk, dbus.own, services (service names)
     Network *bool    // for the `network` scalar only; nil for map fields
 }
 ```
@@ -760,11 +767,16 @@ tpd: myagent wants the following from core/gui
   [ ] {{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}  (mount, optional, templated)
 
 tpd: myagent wants the following from core/services/podman
-  [ ] privileged: true          (service capability)
-  [ ] registry                  (service expose → /run/podman/podman.sock)
+  [ ] podman                    (service: privileged sidecar; exposes podman → /run/podman/podman.sock)
 
   <Approve>  <Abort>
 ```
+
+The service item is a single toggle per service. Its rendered value
+shows the service's sensitive definition (privileged, exposes, service
+mounts/env) so the user knows what "use podman" entails. Denying means
+this profile won't use the service (the socket mounts cascade off); the
+shared daemon is never filtered.
 
 (Exact rendering TBD at implementation; the contract is: per-item toggle,
 default off, prior-approved keys pre-checked, **pre-expansion values
@@ -853,7 +865,7 @@ Update `docs/2026-08-03-security-model.md`:
 
 - `internal/profile/merge_test.go`: assert provenance on merged results
   for each gated field; cover user-wins-when-shadowing, null-to-delete,
-  and the services flatten.
+  and the coarse `Services` provenance (one contributor per service).
 - `internal/profile/extends_test.go`: assert provenance across a
   multi-hop extends chain.
 - `internal/approval/filter_test.go`: table-driven cases for the filter:
@@ -867,19 +879,18 @@ Update `docs/2026-08-03-security-model.md`:
   - hash changed, key retained → prior choice preserved.
   - denied key dropped from filtered profile.
   - network scalar handling.
-  - services flatten with the **schema-valid** service fields only
-    (`mounts`, `env`, `privileged`, `exposes`); assert `devices`/`ports`/
-    `dbus`/`network` on a service are never gated (the validator rejects
-    them).
-  - **dependent-mount cascade:** denying `services.<name>.exposes.<sock>`
-    also drops the top-level mount with `service: <name>, socket: <sock>`;
-    the filtered profile passes `validateMountServices`.
+  - **coarse services:** approve keeps the whole service; deny drops the
+    service and cascades every top-level `service: <name>` mount off;
+    the filtered profile passes `validateMountServices`; the daemon's
+    definition is never modified by the decision.
   - **partial prompt result fails closed:** a `Prompt` returning a map
     missing an item's choice → exit 2, no `Save`.
 - `internal/approval/hash_test.go`: hash stability (same input → same
   hash), hash changes on core-field edit, hash unchanged on user-only or
   non-sensitive edit, template literal preserved, hash changes when the
-  contributor identity changes (same value, different Namespace).
+  contributor identity changes (same value, different Namespace), hash
+  changes when a service's sensitive definition changes (privileged flip,
+  new expose socket, new service mount/env key).
 - `internal/approval/store_test.go`: round-trip State through YAML; empty
   file vs missing file; atomic save (temp + rename); **per-component
   validation of FullName** rejects `..`, empty segments, and unsafe chars
@@ -894,7 +905,7 @@ Update `docs/2026-08-03-security-model.md`:
     store (denied fields removed from the printed spec, no file written).
   - **`--dry-run` without `--yes`/`--no`** and unapproved items → exit 2.
   - partial prompt → exit 2, no `Save`.
-  - dependent-mount cascade end-to-end.
+  - coarse-service cascade end-to-end (deny service → socket mounts off).
 
 ### CLI tests
 

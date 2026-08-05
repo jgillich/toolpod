@@ -18,7 +18,7 @@
 - Conventional commit format.
 - Stage individual files, never `git add -A`.
 - Sensitive fields (top-level): `mounts`, `devices`, `environment`, `ports`, `dbus`, `network`.
-- Service sensitive fields (schema-valid only): `mounts`, `env`, `privileged`, `exposes`. The validator rejects `devices`/`ports`/`dbus`/`network` on services (`internal/profile/validate.go:281-301`) — never gate them for services.
+- Services are gated **coarsely, one item per service** (field `"services"`, key = service name). The item's value renders the service's schema-valid sensitive definition (privileged, exposes, the service's own mounts, env). The validator rejects `devices`/`ports`/`dbus`/`network` on services (`internal/profile/validate.go:281-301`) — they never occur and are not rendered. Approve = keep the whole service; deny = drop it from `cfg.Services` and cascade every top-level `service: <name>` mount off. The shared daemon is never filtered.
 - Non-gated: `packages`, `tools`, `image`, `command`, `labels`, `resources`, `caches`, `files`, `repos`.
 - Hash and store key on **pre-expansion** (literal template) values. A changed host env var must not invalidate approvals.
 - State file keyed by resolved catalog `FullName`, not the display name.
@@ -805,6 +805,66 @@ func TestHashPreservesTemplateLiterals(t *testing.T) {
 		t.Error("templated mount should produce a non-empty hash")
 	}
 }
+
+func TestHashServiceDefinitionChangeRePrompts(t *testing.T) {
+	core := profile.Contributor{FullName: "core/services/podman", Namespace: "core"}
+	base := profile.Resolved{
+		Profile: profile.Profile{Services: map[string]profile.Service{
+			"podman": {
+				Image: "img", Command: []string{"run"},
+				Privileged: true,
+				Exposes:    map[string]string{"podman": "/run/podman/podman.sock"},
+			},
+		}},
+		Prov: profile.Provenance{Services: map[string]profile.Contributor{"podman": core}},
+	}
+	hBase := ComputeApprovalHash(base)
+
+	// privileged flip → different hash.
+	flip := base
+	flip.Services = map[string]profile.Service{
+		"podman": {Image: "img", Command: []string{"run"}, Exposes: map[string]string{"podman": "/run/podman/podman.sock"}},
+	}
+	if ComputeApprovalHash(flip) == hBase {
+		t.Error("hash should change when service privileged flips")
+	}
+
+	// new expose socket → different hash.
+	newExp := base
+	newExp.Services = map[string]profile.Service{
+		"podman": {Image: "img", Command: []string{"run"}, Privileged: true, Exposes: map[string]string{
+			"podman":  "/run/podman/podman.sock",
+			"registry": "/run/podman/registry.sock",
+		}},
+	}
+	if ComputeApprovalHash(newExp) == hBase {
+		t.Error("hash should change when a service expose socket is added")
+	}
+
+	// new service mount key → different hash.
+	newMnt := base
+	newMnt.Services = map[string]profile.Service{
+		"podman": {Image: "img", Command: []string{"run"}, Privileged: true,
+			Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+			Mounts:  map[string]profile.Mount{"/var/lib/containers": {Source: "/var/lib/containers"}},
+		},
+	}
+	if ComputeApprovalHash(newMnt) == hBase {
+		t.Error("hash should change when a service mount key is added")
+	}
+
+	// new service env key → different hash.
+	newEnv := base
+	newEnv.Services = map[string]profile.Service{
+		"podman": {Image: "img", Command: []string{"run"}, Privileged: true,
+			Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+			Env:     map[string]string{"PODMAN": "1"},
+		},
+	}
+	if ComputeApprovalHash(newEnv) == hBase {
+		t.Error("hash should change when a service env key is added")
+	}
+}
 ```
 
 Add a test helper at the top of the test file:
@@ -837,6 +897,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jgillich/tpd/internal/profile"
 )
@@ -888,22 +949,43 @@ func ComputeApprovalHash(res profile.Resolved) string {
 		if c.Trusted() {
 			continue
 		}
-		for _, k := range sortedKeys(svc.Mounts) {
-			m := svc.Mounts[k]
-			fmt.Fprintf(h, "services.%s.mounts\n%s\n%s\n%s\nmount %s %s %s %s %v %v %v\n", svcName, k, c.FullName, c.Namespace, k, m.Source, m.Service, m.Socket, m.ReadOnly, m.Optional, m.Create)
-		}
-		for _, k := range sortedKeys(svc.Env) {
-			fmt.Fprintf(h, "services.%s.env\n%s\n%s\n%s\nenv %s %s\n", svcName, k, c.FullName, c.Namespace, k, svc.Env[k])
-		}
-		if svc.Privileged {
-			fmt.Fprintf(h, "services.%s.privileged\n\n%s\n%s\nprivileged true\n", svcName, c.FullName, c.Namespace)
-		}
-		for _, k := range sortedKeys(svc.Exposes) {
-			fmt.Fprintf(h, "services.%s.exposes\n%s\n%s\n%s\nexpose %s %s\n", svcName, k, c.FullName, c.Namespace, k, svc.Exposes[k])
-		}
+		fmt.Fprintf(h, "services\n%s\n%s\n%s\n%s\n", svcName, c.FullName, c.Namespace, renderServiceDefinition(svc))
 	}
 	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+// renderServiceDefinition builds a deterministic, sorted canonical string of
+// the service's schema-valid sensitive sub-fields (privileged, exposes,
+// the service's own mounts, env) — the shape the user is asked to approve
+// under "use podman". A change to any of these (privileged flip, new expose
+// socket, new service mount/env key) changes the rendered form and therefore
+// the hash, re-prompting with the prior choice pre-checked. Devices, ports,
+// dbus, and network never occur on services (validateServices rejects them)
+// and are not rendered.
+func renderServiceDefinition(svc profile.Service) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "privileged=%v;", svc.Privileged)
+	exposes := sortedKeys(svc.Exposes)
+	expParts := make([]string, 0, len(exposes))
+	for _, k := range exposes {
+		expParts = append(expParts, k+"="+svc.Exposes[k])
+	}
+	fmt.Fprintf(&b, "exposes={%s};", strings.Join(expParts, ","))
+	mountKeys := sortedKeys(svc.Mounts)
+	mntParts := make([]string, 0, len(mountKeys))
+	for _, k := range mountKeys {
+		m := svc.Mounts[k]
+		mntParts = append(mntParts, k+"="+m.Source)
+	}
+	fmt.Fprintf(&b, "mounts={%s};", strings.Join(mntParts, ","))
+	envKeys := sortedKeys(svc.Env)
+	envParts := make([]string, 0, len(envKeys))
+	for _, k := range envKeys {
+		envParts = append(envParts, k+"="+svc.Env[k])
+	}
+	fmt.Fprintf(&b, "env={%s}", strings.Join(envParts, ","))
+	return b.String()
 }
 
 func sortedKeys[V any](m map[string]V) []string {
@@ -959,8 +1041,9 @@ func TestStoreRoundTrip(t *testing.T) {
 		Profile: "ssh",
 		Hash:    "abc123",
 		Approved: map[string]ApprovedField{
-			"mounts": {Keys: []string{"~/.ssh"}},
-			"network": {Network: boolPtr(true)},
+			"mounts":   {Keys: []string{"~/.ssh"}},
+			"network":  {Network: boolPtr(true)},
+			"services": {Keys: []string{"podman"}},
 		},
 	}
 	if err := s.Save("core/creds/ssh", st); err != nil {
@@ -978,6 +1061,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if got.Approved["network"].Network == nil || !*got.Approved["network"].Network {
 		t.Errorf("network should be approved")
+	}
+	if len(got.Approved["services"].Keys) != 1 || got.Approved["services"].Keys[0] != "podman" {
+		t.Errorf("services keys = %+v, want [podman]", got.Approved["services"].Keys)
 	}
 }
 
@@ -1176,16 +1262,14 @@ func TestStateMarshalDistinguishesDeniedFromAbsent(t *testing.T) {
 	}
 }
 
-func TestStateMarshalNestsDbusAndServices(t *testing.T) {
+func TestStateMarshalNestsDbusOnly(t *testing.T) {
 	yes := true
 	st := State{
 		Approved: map[string]ApprovedField{
-			"dbus.talk":            {Keys: []string{"org.freedesktop.portal.Desktop"}},
-			"dbus.own":            {Keys: nil},
-			"network":              {Network: &yes},
-			"services.podman.privileged": {Network: &yes},
-			"services.podman.exposes":    {Keys: []string{"registry"}},
-			"services.podman.mounts":     {Keys: []string{"/var/run/podman.sock"}},
+			"dbus.talk": {Keys: []string{"org.freedesktop.portal.Desktop"}},
+			"dbus.own":  {Keys: nil},
+			"network":   {Network: &yes},
+			"services":  {Keys: []string{"podman"}},
 		},
 	}
 	data, err := yaml.Marshal(st)
@@ -1193,16 +1277,19 @@ func TestStateMarshalNestsDbusAndServices(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	s := string(data)
-	for _, want := range []string{"dbus:", "talk:", "services:", "podman:", "network:"} {
+	// dbus is the only nested field.
+	for _, want := range []string{"dbus:", "talk:", "network:", "services:"} {
 		if !contains(s, want) {
-			t.Errorf("YAML should contain nested key %q:\n%s", want, s)
+			t.Errorf("YAML should contain key %q:\n%s", want, s)
 		}
 	}
-	// Flat dotted keys must NOT appear.
-	for _, bad := range []string{"dbus.talk:", "services.podman.exposes:"} {
-		if contains(s, bad) {
-			t.Errorf("YAML should not contain flat dotted key %q:\n%s", bad, s)
-		}
+	// dbus sub-fields must be nested, not flat dotted keys.
+	if contains(s, "dbus.talk:") {
+		t.Errorf("YAML should not contain flat dotted key dbus.talk:\n%s", s)
+	}
+	// services is a flat list of approved names, not a nested per-sub-field map.
+	if contains(s, "services.podman.") {
+		t.Errorf("YAML should not contain nested services.<name>.<field> keys:\n%s", s)
 	}
 	// Round-trip preserves the flat keyed State.
 	var back State
@@ -1212,14 +1299,11 @@ func TestStateMarshalNestsDbusAndServices(t *testing.T) {
 	if back.Approved["dbus.talk"].Keys[0] != "org.freedesktop.portal.Desktop" {
 		t.Errorf("dbus.talk round-trip failed: %+v", back.Approved["dbus.talk"])
 	}
-	if back.Approved["services.podman.exposes"].Keys[0] != "registry" {
-		t.Errorf("services.podman.exposes round-trip failed: %+v", back.Approved["services.podman.exposes"])
+	if back.Approved["services"].Keys[0] != "podman" {
+		t.Errorf("services round-trip failed: %+v", back.Approved["services"])
 	}
 	if back.Approved["network"].Network == nil || !*back.Approved["network"].Network {
 		t.Errorf("network round-trip failed: %+v", back.Approved["network"])
-	}
-	if back.Approved["services.podman.privileged"].Network == nil || !*back.Approved["services.podman.privileged"].Network {
-		t.Errorf("services.podman.privileged round-trip failed: %+v", back.Approved["services.podman.privileged"])
 	}
 }
 
@@ -1245,28 +1329,28 @@ Add to `internal/approval/store.go`:
 // the map means "never decided". This distinction must survive
 // round-trip, so State has custom marshal/unmarshal.
 //
-// The on-disk shape nests dbus and services sub-fields per spec §4:
+// The on-disk shape nests dbus sub-fields per spec §4:
 //   dbus: { talk: [...], own: [...] }
-//   services: { <name>: { mounts: [...], env: [...], exposes: [...], privileged: true } }
-// The Go State.Approved map stays flat (keys like "dbus.talk",
-// "services.podman.mounts"); the marshal/unmarshal translates between
-// the flat keyed map and the nested YAML.
+// services is a flat list of approved service names (coarse model: one
+// item per service, Key = service name), handled by the generic flat
+// path like mounts/env/ports. Only dbus retains nested marshaling. The
+// Go State.Approved map keys are flat (e.g. "dbus.talk", "services").
 type yamlState struct {
-	Profile  string                 `yaml:"profile,omitempty"`
-	Hash     string                 `yaml:"hash"`
-	Approved yamlApproved           `yaml:"approved,omitempty"`
+	Profile  string       `yaml:"profile,omitempty"`
+	Hash     string       `yaml:"hash"`
+	Approved yamlApproved `yaml:"approved,omitempty"`
 }
 
 // yamlApproved is the top-level "approved:" block. Top-level scalar/map
-// fields are keyed directly; dbus and services are nested sub-objects.
+// fields are keyed directly; dbus is the only nested sub-object.
 type yamlApproved struct {
-	Mounts   *yamlField             `yaml:"mounts,omitempty"`
-	Devices  *yamlField             `yaml:"devices,omitempty"`
-	Env      *yamlField             `yaml:"env,omitempty"`
-	Ports    *yamlField             `yaml:"ports,omitempty"`
-	Network  *bool                  `yaml:"network,omitempty"`
-	Dbus     *yamlDbus              `yaml:"dbus,omitempty"`
-	Services map[string]yamlService `yaml:"services,omitempty"`
+	Mounts   *yamlField `yaml:"mounts,omitempty"`
+	Devices  *yamlField `yaml:"devices,omitempty"`
+	Env      *yamlField `yaml:"env,omitempty"`
+	Ports    *yamlField `yaml:"ports,omitempty"`
+	Network  *bool      `yaml:"network,omitempty"`
+	Dbus     *yamlDbus  `yaml:"dbus,omitempty"`
+	Services *yamlField `yaml:"services,omitempty"`
 }
 
 type yamlField struct {
@@ -1276,13 +1360,6 @@ type yamlField struct {
 type yamlDbus struct {
 	Talk *yamlField `yaml:"talk,omitempty"`
 	Own  *yamlField `yaml:"own,omitempty"`
-}
-
-type yamlService struct {
-	Mounts     *yamlField `yaml:"mounts,omitempty"`
-	Env        *yamlField `yaml:"env,omitempty"`
-	Exposes    *yamlField `yaml:"exposes,omitempty"`
-	Privileged *bool      `yaml:"privileged,omitempty"`
 }
 
 // ptrField wraps a yamlField in a non-nil pointer so "present, all denied"
@@ -1306,6 +1383,8 @@ func (s State) MarshalYAML() (interface{}, error) {
 			a.Ports = ptrField(v)
 		case "network":
 			a.Network = v.Network
+		case "services":
+			a.Services = ptrField(v)
 		case "dbus.talk":
 			if a.Dbus == nil {
 				a.Dbus = &yamlDbus{}
@@ -1316,24 +1395,6 @@ func (s State) MarshalYAML() (interface{}, error) {
 				a.Dbus = &yamlDbus{}
 			}
 			a.Dbus.Own = ptrField(v)
-		default:
-			if svc, ok := parseServiceField(k); ok {
-				if a.Services == nil {
-					a.Services = map[string]yamlService{}
-				}
-				s := a.Services[svc.name]
-				switch svc.field {
-				case "mounts":
-					s.Mounts = ptrField(v)
-				case "env":
-					s.Env = ptrField(v)
-				case "exposes":
-					s.Exposes = ptrField(v)
-				case "privileged":
-					s.Privileged = v.Network
-				}
-				a.Services[svc.name] = s
-			}
 		}
 	}
 	out.Approved = a
@@ -1364,6 +1425,9 @@ func (s *State) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if a.Network != nil {
 		s.Approved["network"] = ApprovedField{Network: a.Network}
 	}
+	if a.Services != nil {
+		s.Approved["services"] = ApprovedField{Keys: a.Services.Keys}
+	}
 	if a.Dbus != nil {
 		if a.Dbus.Talk != nil {
 			s.Approved["dbus.talk"] = ApprovedField{Keys: a.Dbus.Talk.Keys}
@@ -1372,44 +1436,7 @@ func (s *State) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			s.Approved["dbus.own"] = ApprovedField{Keys: a.Dbus.Own.Keys}
 		}
 	}
-	for name, sv := range a.Services {
-		if sv.Mounts != nil {
-			s.Approved["services."+name+".mounts"] = ApprovedField{Keys: sv.Mounts.Keys}
-		}
-		if sv.Env != nil {
-			s.Approved["services."+name+".env"] = ApprovedField{Keys: sv.Env.Keys}
-		}
-		if sv.Exposes != nil {
-			s.Approved["services."+name+".exposes"] = ApprovedField{Keys: sv.Exposes.Keys}
-		}
-		if sv.Privileged != nil {
-			s.Approved["services."+name+".privileged"] = ApprovedField{Network: sv.Privileged}
-		}
-	}
 	return nil
-}
-
-type serviceFieldRef struct{ name, field string }
-
-// parseServiceField parses a "services.<name>.<field>" key. Returns ok=false
-// if the key isn't in that shape. Splits on the LAST dot so a service name
-// containing dots (profileNameRe allows them, e.g. "foo.bar") is preserved.
-func parseServiceField(k string) (serviceFieldRef, bool) {
-	const prefix = "services."
-	if len(k) <= len(prefix) || k[:len(prefix)] != prefix {
-		return serviceFieldRef{}, false
-	}
-	rest := k[len(prefix):]
-	dot := strings.LastIndex(rest, ".")
-	if dot < 0 {
-		return serviceFieldRef{}, false
-	}
-	name, field := rest[:dot], rest[dot+1:]
-	switch field {
-	case "mounts", "env", "exposes", "privileged":
-		return serviceFieldRef{name: name, field: field}, true
-	}
-	return serviceFieldRef{}, false
 }
 ```
 
@@ -1652,7 +1679,8 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 	filtered.Network, req = applyNetworkField(filtered.Network, res.Prov.Network, "network", reconciled, req)
 	filtered.Services, req = applyServicesField(filtered.Services, res.Prov.Services, reconciled, req)
 
-	// Dependent-mount cascade: drop service-socket mounts whose expose was denied.
+	// Dependent-mount cascade: drop top-level mounts whose service was
+	// denied (absent from filtered.Services).
 	filtered.Mounts = cascadeDependentMounts(filtered.Mounts, filtered.Services)
 
 	return filtered, req, nil
@@ -1660,9 +1688,9 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 
 // reconcileState drops stored keys that no longer exist in res when the
 // stored hash matches the current hash. Returns the reconciled state and
-// whether it changed. Network and services.<name>.privileged are scalars
-// stored in ApprovedField.Network; reconcileKeys skips them and they are
-// handled inline.
+// whether it changed. Network is a scalar stored in ApprovedField.Network;
+// reconcileKeys skips it and it is handled inline. Services is a flat map
+// field (Keys = service names) and reconciles like mounts/env/ports.
 func reconcileState(st State, hash string, res profile.Resolved) (State, bool) {
 	if st.Hash != hash {
 		return st, false
@@ -1714,20 +1742,9 @@ func reconcileState(st State, hash string, res profile.Resolved) (State, bool) {
 	}
 	// network is a scalar stored in ApprovedField.Network; nothing to
 	// reconcile by key. It is dropped only when the hash changes.
-	for svcName := range res.Services {
-		for _, sub := range []struct {
-			field string
-			cur   map[string]struct{}
-		}{
-			{"services." + svcName + ".mounts", keysStruct(res.Services[svcName].Mounts)},
-			{"services." + svcName + ".env", keysStruct(res.Services[svcName].Env)},
-			{"services." + svcName + ".exposes", keysStruct(res.Services[svcName].Exposes)},
-		} {
-			if af, ok := approve[sub.field]; ok {
-				n, ch := reconcileKeys(af, sub.cur)
-				maybeSet(sub.field, n, ch)
-			}
-		}
+	if af, ok := approve["services"]; ok {
+		n, ch := reconcileKeys(af, res.Services)
+		maybeSet("services", n, ch)
 	}
 	st.Approved = approve
 	return st, changed
@@ -1757,25 +1774,19 @@ func reconcileKeys[V any](af ApprovedField, current map[string]V) (ApprovedField
 	return af, changed
 }
 
-func keysStruct[V any](m map[string]V) map[string]struct{} {
-	out := make(map[string]struct{}, len(m))
-	for k := range m {
-		out[k] = struct{}{}
-	}
-	return out
-}
-
-// cascadeDependentMounts drops service-socket mounts whose expose was
-// denied (removed from svc.Exposes by applyServicesField). A service is
-// never dropped entirely (spec §"Whole-service deny" is intentional), so
-// the service always exists in the map — only its Exposes entries change.
+// cascadeDependentMounts drops top-level mounts referencing a service that
+// was denied (absent from the filtered services map). A denied service is
+// gone from cfg.Services, so its socket mounts must also be dropped —
+// validateMountServices (validate.go:374-382) would otherwise fail at
+// service binding, and the main container cannot bind a socket the service
+// isn't exposing to it. A kept service keeps all its exposes intact, so its
+// socket mounts survive.
 func cascadeDependentMounts(mounts map[string]profile.Mount, services map[string]profile.Service) map[string]profile.Mount {
 	for target, m := range mounts {
 		if m.Service == "" {
 			continue
 		}
-		svc := services[m.Service]
-		if _, ok := svc.Exposes[m.Socket]; !ok {
+		if _, ok := services[m.Service]; !ok {
 			delete(mounts, target)
 		}
 	}
@@ -1789,9 +1800,9 @@ func priorChoices(st State) map[string]map[string]bool {
 		for _, k := range af.Keys {
 			set[k] = true
 		}
-		// Scalar fields (network, services.<name>.privileged) are stored
-		// in ApprovedField.Network (*bool); surface them so the dialog can
-		// pre-check a previously-approved scalar on re-prompt.
+		// The network scalar is stored in ApprovedField.Network (*bool);
+		// surface it so the dialog can pre-check a previously-approved
+		// scalar on re-prompt.
 		if af.Network != nil {
 			set[""] = *af.Network
 		}
@@ -1805,7 +1816,7 @@ The per-field `apply*Field` helpers are written in Step 4.
 
 - [ ] **Step 4: Complete the per-field walk to make the tests pass**
 
-Add the per-field `apply*Field` functions and helpers below to `internal/approval/approval.go`. Each map field uses the same keep/drop/prompt decision: a trusted contributor (or a missing contributor) is kept ungated; a non-user contributor is kept if its key is in the stored approved set for the current hash, dropped if the field has stored state for this hash but the key is absent (denied), and prompted otherwise (kept in the profile until the dialog resolves). The network and privileged scalars use a `*bool` slot. Service exposes drops propagate to dependent mounts via the cascade step in `Filter`.
+Add the per-field `apply*Field` functions and helpers below to `internal/approval/approval.go`. Each map field uses the same keep/drop/prompt decision: a trusted contributor (or a missing contributor) is kept ungated; a non-user contributor is kept if its key is in the stored approved set for the current hash, dropped if the field has stored state for this hash but the key is absent (denied), and prompted otherwise (kept in the profile until the dialog resolves). The network scalar uses a `*bool` slot. Services are coarse — one gated item per service, field `"services"`, Key = service name: approve keeps the whole service; deny drops it from the output map, and the cascade step in `Filter` then drops top-level mounts referencing the denied service.
 
 ```go
 // decide is the shared keep/drop/prompt decision for one non-user key.
@@ -1930,64 +1941,22 @@ func applyNetworkField(v string, c profile.Contributor, field string, st State, 
 	return v, req
 }
 
-// applyServicesField gates each service's schema-valid sub-fields under the
-// service's single contributor. mounts/env/exposes are map fields keyed
-// "services.<name>.<field>"; privileged is a scalar stored in
-// ApprovedField.Network (a *bool) under "services.<name>.privileged".
-// Denied exposes keys are removed from svc.Exposes so the cascade step can
-// drop dependent mounts.
+// applyServicesField gates each service as a single coarse item under the
+// service's one contributor. Field is "services", Key = service name, Value =
+// the rendered service definition (privileged, exposes, mounts, env). A
+// trusted contributor (or a missing one) keeps the service ungated. A denied
+// service is dropped from the output map, and the cascade step in Filter then
+// drops top-level mounts referencing it. A kept service keeps its full
+// definition — the shared daemon is never filtered.
 func applyServicesField(services map[string]profile.Service, prov map[string]profile.Contributor, st State, req PromptRequest) (map[string]profile.Service, PromptRequest) {
 	out := make(map[string]profile.Service, len(services))
 	for name, svc := range services {
 		c := prov[name]
-		if !c.Trusted() {
-			f := "services." + name
-			if len(svc.Mounts) > 0 {
-				mounts := make(map[string]profile.Mount, len(svc.Mounts))
-				for k, v := range svc.Mounts {
-					keep, r := decide(f+".mounts", k, renderMount(v), c, st, req)
-					req = r
-					if keep {
-						mounts[k] = v
-					}
-				}
-				svc.Mounts = mounts
-			}
-			if len(svc.Env) > 0 {
-				env := make(map[string]string, len(svc.Env))
-				for k, v := range svc.Env {
-					keep, r := decide(f+".env", k, renderEnv(k, v), c, st, req)
-					req = r
-					if keep {
-						env[k] = v
-					}
-				}
-				svc.Env = env
-			}
-			if svc.Privileged {
-				pf := f + ".privileged"
-				af, hasField := st.Approved[pf]
-				if st.Hash == req.Hash && hasField && af.Network != nil {
-					if !*af.Network {
-						svc.Privileged = false
-					}
-				} else {
-					req.Items = append(req.Items, item(pf, "", "privileged", c))
-				}
-			}
-			if len(svc.Exposes) > 0 {
-				exposes := make(map[string]string, len(svc.Exposes))
-				for k, v := range svc.Exposes {
-					keep, r := decide(f+".exposes", k, v, c, st, req)
-					req = r
-					if keep {
-						exposes[k] = v
-					}
-				}
-				svc.Exposes = exposes
-			}
+		keep, r := decide("services", name, renderServiceDefinition(svc), c, st, req)
+		req = r
+		if keep {
+			out[name] = svc
 		}
-		out[name] = svc
 	}
 	return out, req
 }
@@ -2068,7 +2037,7 @@ Expected: may FAIL — complete `reconcileState` to actually drop stale keys and
 Append to `approval_test.go`:
 
 ```go
-func TestFilterCascadesDependentMount(t *testing.T) {
+func TestFilterCoarseServiceDenyCascadesMounts(t *testing.T) {
 	res := profile.Resolved{
 		Profile: profile.Profile{
 			Services: map[string]profile.Service{
@@ -2089,26 +2058,109 @@ func TestFilterCascadesDependentMount(t *testing.T) {
 		FullName: "myagent",
 	}
 	h := ComputeApprovalHash(res)
-	// Deny the exposes key.
+	// Deny the service: "services" field present in state, hash matches,
+	// "podman" absent from Keys → denied → dropped from cfg.Services.
 	store := &memStore{state: map[string]State{
 		"myagent": {Hash: h, Approved: map[string]ApprovedField{
-			"services.podman.exposes": {Keys: nil}, // all denied
+			"services": {Keys: nil}, // all services denied
 		}},
 	}}
 	got, _, err := Filter(res, store)
 	if err != nil {
 		t.Fatalf("Filter: %v", err)
 	}
+	if _, ok := got.Services["podman"]; ok {
+		t.Error("denied service should be dropped from filtered Services")
+	}
 	if _, ok := got.Mounts["/run/podman.sock"]; ok {
-		t.Error("dependent mount should be cascaded out when expose is denied")
+		t.Error("dependent mount should be cascaded off when its service is denied")
+	}
+}
+
+func TestFilterCoarseServiceApproveKeepsService(t *testing.T) {
+	res := profile.Resolved{
+		Profile: profile.Profile{
+			Services: map[string]profile.Service{
+				"podman": {
+					Image: "img", Command: []string{"run"},
+					Exposes: map[string]string{"registry": "/run/podman.sock"},
+				},
+			},
+			Mounts: map[string]profile.Mount{
+				"/run/podman.sock": {Service: "podman", Socket: "registry"},
+			},
+		},
+		Prov: profile.Provenance{
+			Services: map[string]profile.Contributor{
+				"podman": {FullName: "core/services/podman", Namespace: "core"},
+			},
+		},
+		FullName: "myagent",
+	}
+	h := ComputeApprovalHash(res)
+	// Approve the service: "podman" in Keys → kept.
+	store := &memStore{state: map[string]State{
+		"myagent": {Hash: h, Approved: map[string]ApprovedField{
+			"services": {Keys: []string{"podman"}},
+		}},
+	}}
+	got, req, err := Filter(res, store)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(req.Items) != 0 {
+		t.Errorf("approved service should produce no prompt, got %d items", len(req.Items))
+	}
+	if _, ok := got.Services["podman"]; !ok {
+		t.Error("approved service should remain in filtered Services")
+	}
+	if _, ok := got.Mounts["/run/podman.sock"]; !ok {
+		t.Error("dependent mount should remain when its service is approved")
+	}
+}
+
+func TestFilterCoarseServicePromptItemShape(t *testing.T) {
+	res := profile.Resolved{
+		Profile: profile.Profile{
+			Services: map[string]profile.Service{
+				"podman": {
+					Image: "img", Command: []string{"run"}, Privileged: true,
+					Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+				},
+			},
+		},
+		Prov: profile.Provenance{
+			Services: map[string]profile.Contributor{
+				"podman": {FullName: "core/services/podman", Namespace: "core"},
+			},
+		},
+		FullName: "myagent",
+	}
+	store := &memStore{}
+	_, req, err := Filter(res, store)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(req.Items) != 1 {
+		t.Fatalf("expected one prompt item for the service, got %d", len(req.Items))
+	}
+	it := req.Items[0]
+	if it.Field != "services" {
+		t.Errorf("item Field = %q, want \"services\"", it.Field)
+	}
+	if it.Key != "podman" {
+		t.Errorf("item Key = %q, want \"podman\"", it.Key)
+	}
+	if it.Value != renderServiceDefinition(res.Services["podman"]) {
+		t.Errorf("item Value = %q, want rendered service definition", it.Value)
 	}
 }
 ```
 
-- [ ] **Step 9: Run test and fix cascade wiring**
+- [ ] **Step 9: Run test and verify cascade wiring**
 
-Run: `go test ./internal/approval/ -run TestFilterCascades -v`
-Expected: PASS (the `cascadeDependentMounts` call in `Filter` handles it, but the service's `Exposes` must be cleared by `applyServicesField` when the expose key is denied — verify and fix).
+Run: `go test ./internal/approval/ -run TestFilterCoarseService -v`
+Expected: PASS — a denied service is dropped from `filtered.Services` by `applyServicesField`, and `cascadeDependentMounts` then drops top-level mounts referencing the missing service.
 
 - [ ] **Step 10: Write the test for EphemeralStore**
 
@@ -2584,10 +2636,10 @@ func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bo
 
 // mergeChoicesIntoState folds the dialog's per-field choices into the prior
 // stored state. Fields not present in choices keep their stored choices. For
-// map fields, Keys is the approved set (denied = absent). For the scalar
-// "network" and "services.<name>.privileged" fields, the choice is stored in
-// ApprovedField.Network (*bool): true → &true, false → &false. Hash and
-// Profile are refreshed to the current request.
+// map fields (mounts, devices, env, ports, dbus.talk, dbus.own, services),
+// Keys is the approved set (denied = absent). For the scalar "network"
+// field, the choice is stored in ApprovedField.Network (*bool): true → &true,
+// false → &false. Hash and Profile are refreshed to the current request.
 func mergeChoicesIntoState(prior approval.State, req approval.PromptRequest, choices map[string]map[string]bool) approval.State {
 	st := prior
 	st.Hash = req.Hash
@@ -2596,7 +2648,7 @@ func mergeChoicesIntoState(prior approval.State, req approval.PromptRequest, cho
 		st.Approved = map[string]approval.ApprovedField{}
 	}
 	for field, set := range choices {
-		if field == "network" || isScalarServiceField(field) {
+		if field == "network" {
 			b := false
 			for _, v := range set {
 				if v {
@@ -2619,22 +2671,6 @@ func mergeChoicesIntoState(prior approval.State, req approval.PromptRequest, cho
 		st.Approved[field] = approval.ApprovedField{Keys: keys}
 	}
 	return st
-}
-
-// isScalarServiceField reports whether field is a "services.<name>.privileged"
-// key, whose choice is stored as a *bool in ApprovedField.Network.
-func isScalarServiceField(field string) bool {
-	const prefix = "services."
-	if len(field) <= len(prefix) || field[:len(prefix)] != prefix {
-		return false
-	}
-	rest := field[len(prefix):]
-	for i := 0; i < len(rest); i++ {
-		if rest[i] == '.' && rest[i+1:] == "privileged" {
-			return true
-		}
-	}
-	return false
 }
 
 func incomplete(req approval.PromptRequest, choices map[string]map[string]bool) bool {
@@ -2868,6 +2904,6 @@ Confirm: exit 2, "unapproved sensitive fields require --yes or --no".
 - §10 Out of scope → no task (correct).
 - §11 Resolved questions → reflected in the constraints.
 
-**Placeholder scan:** Task 6 Step 4 contains the complete per-field walk (Mounts, Devices, Env, Ports, Dbus.Talk/Own, Network scalar, and Services mounts/env/exposes/privileged) with real keep/drop/prompt logic and helpers (`decide`, `item`, `render*`, `containsKey`). No "TBD"/"TODO" or "apply the same pattern" strings remain.
+**Placeholder scan:** Task 6 Step 4 contains the complete per-field walk (Mounts, Devices, Env, Ports, Dbus.Talk/Own, Network scalar, and coarse Services — one item per service) with real keep/drop/prompt logic and helpers (`decide`, `item`, `render*`, `renderServiceDefinition`, `containsKey`). No "TBD"/"TODO" or "apply the same pattern" strings remain.
 
 **Type consistency:** `Contributor`, `Provenance`, `Resolved`, `SensitiveItem`, `PromptRequest`, `Store`, `State`, `ApprovedField`, `EphemeralStore`, `ComputeApprovalHash`, `Filter`, `DefaultPrompt`, `IsTTYReader` are used consistently across tasks.
