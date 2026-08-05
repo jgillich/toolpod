@@ -90,59 +90,81 @@ Record, for each sensitive key in the resolved profile, the catalog entry
 which keys to gate.
 
 ```go
-// Provenance records, for each sensitive key, the FullName of the catalog
-// entry that last wrote it. Keys whose final value came from a user entry
-// (Namespace == "") are not gated; keys from a core/remote entry are.
+// Contributor identifies a catalog entry that contributed a sensitive
+// value. Stored in provenance so the filter can decide trust without
+// access to the catalog: a user entry (Namespace == "") is trusted and
+// not gated; a core or remote-namespace entry is gated.
+type Contributor struct {
+    FullName  string // canonical catalog key: "core/creds/ssh", "ssh", "github.com/foo/bar"
+    Namespace string // "" for user, "core" for built-ins, or a remote namespace
+}
+
+// Trusted reports whether this contributor is user-owned and therefore
+// not subject to the approval gate.
+func (c Contributor) Trusted() bool { return c.Namespace == "" }
+
+// Provenance records, for each sensitive key, the Contributor that last
+// wrote it. Keys whose final value came from a user entry are not gated;
+// keys from a core/remote entry are.
 type Provenance struct {
-    Mounts   map[string]string         // mount target   -> contributor FullName
-    Devices  map[string]string         // device target  -> contributor FullName
-    Env      map[string]string         // env var        -> contributor FullName
-    Ports    map[string]string         // container port -> contributor FullName
-    Dbus     DbusProvenance            // talk/own sub-maps keyed by bus name
-    Network  string                    // "" if unset or user-owned; FullName if core-contributed
-    Services map[string]ServiceProvenance // service name -> per-field provenance
+    Mounts   map[string]Contributor     // mount target   -> contributor
+    Devices  map[string]Contributor     // device target  -> contributor
+    Env      map[string]Contributor     // env var        -> contributor
+    Ports    map[string]Contributor     // container port -> contributor
+    Dbus     DbusProvenance             // talk/own sub-maps keyed by bus name
+    Network  Contributor                // zero-value Trusted() == true if unset or user-owned
+    Services map[string]Contributor     // service name -> contributor (services can't extends)
 }
 
 type DbusProvenance struct {
-    Talk map[string]string // bus name -> contributor FullName
-    Own  map[string]string // bus name -> contributor FullName
+    Talk map[string]Contributor // bus name -> contributor
+    Own  map[string]Contributor // bus name -> contributor
 }
 
-// ServiceProvenance is collapsed to a single string: services merge
+// ServiceProvenance is collapsed to Contributor: services merge
 // shallowly and cannot extends, so a whole service always has exactly one
 // contributor. See §2 "Services".
-type ServiceProvenance = string
+type ServiceProvenance = Contributor
 ```
 
 `Network` is a scalar (single slot, last-writer-wins like `image`), so its
-provenance is a single string, not a map.
+provenance is a single `Contributor` (zero-value `Contributor{}` has
+`Namespace == ""` and is trusted, matching "unset or user-owned").
 
 ### Merge semantics
 
 `MergeProfiles` already follows *child wins per key* for maps and *child
 wins* for scalars. Provenance follows the same rule: when `mergeMap` /
 `mergeStringMap` / `mergeMounts` / etc. copies a key from `child` into
-`out`, the provenance map for that field records `child.FullName()` for
-that key. Keys retained only from `parent` keep the parent's recorded
-provenance. `null`-to-delete removes the key from both the value map and
-the provenance map.
-
-This requires `MergeProfiles` to receive the contributors' `FullName`s.
-`resolveChain` already has the `RawProfile` for each link; it passes
-`parent.FullName()` and `rc.FullName()` into the merge, and the merge
-writes them into the parallel `Provenance` on the output `RawProfile`.
-
-### No MergeProfiles signature change
+`out`, the provenance map for that field records `Contributor{FullName:
+child.FullName(), Namespace: child.Namespace}` for that key. Keys
+retained only from `parent` keep the parent's recorded provenance.
+`null`-to-delete removes the key from both the value map and the
+provenance map.
 
 `resolveChain` (merge.go:83-102) calls `MergeProfiles(merged, parent)`
 then `MergeProfiles(merged, rc)`. In both calls the `child` argument is a
-`RawProfile` with valid `Namespace`/`Name`, so `child.FullName()` is
-available inside the merge without threading new parameters. Parent keys
-already have their provenance recorded from prior merges (the accumulated
-`merged` carries the provenance built up across the chain), so the merge
-only needs to stamp `child.FullName()` onto keys copied from `child` and
-leave parent-contributed provenance untouched. No signature change to
-`MergeProfiles`.
+`RawProfile` with valid `Namespace`/`Name`, so `child.FullName()` and
+`child.Namespace` are available inside the merge without threading new
+parameters. Parent keys already have their provenance recorded from prior
+merges (the accumulated `merged` carries the provenance built up across
+the chain), so the merge only needs to stamp the child `Contributor` onto
+keys copied from `child` and leave parent-contributed provenance
+untouched. No signature change to `MergeProfiles`.
+
+### Leaf initialization (no-extends case)
+
+`resolveChain` (merge.go:62-63) returns the leaf `RawProfile` directly
+when a profile has no `extends`, bypassing any merge. A built-in leaf
+profile (e.g. `core/bash`) would therefore have **empty provenance** and
+bypass all gates — a bug. The fix: `resolveChain` initializes the leaf's
+`Provenance` by stamping `Contributor{FullName: rc.FullName(), Namespace:
+rc.Namespace}` onto every sensitive key the leaf itself declares before
+returning. Equivalently, `resolveChain` can always merge the leaf against
+an empty `RawProfile` (which stamps the leaf's own contributions) — but
+the direct init is cheaper and avoids a no-op merge. The
+`ResolveProfileWithProv` wrapper ensures this runs for both the leaf and
+non-leaf paths so no built-in profile escapes the gate.
 
 ### Storage on RawProfile
 
@@ -157,31 +179,35 @@ new `(Profile, Provenance)` pair via a wrapper — see §3.
 the struct header. The value maps are rebuilt fresh by `mergeMap` /
 `mergeStringMap` (`make(...)` at merge.go:183, 242), so value maps are
 safe. The provenance maps must follow the same pattern: every merge
-helper allocates a fresh provenance map and copies entries from `parent`'s
-provenance for retained keys, then writes `child.FullName()` for keys
-copied from `child`. Provenance maps are never mutated in place on
-`parent`, or the shallow copy would alias and corrupt the parent's view.
+helper allocates a fresh `map[string]Contributor` and copies entries from
+`parent`'s provenance for retained keys, then writes the child
+`Contributor` for keys copied from `child`. Provenance maps are never
+mutated in place on `parent`, or the shallow copy would alias and
+corrupt the parent's view.
 
 ### User-wins-when-shadowing
 
 Because provenance follows child-wins, a user profile that re-declares
 `mounts: { ~/.ssh: { source: ... } }` over a built-in `ssh` fragment's
-`~/.ssh` key stamps that key's provenance as the **user** FullName (`""`
-namespace). The approval filter skips any key whose provenance is a user
-entry. This falls out of the merge rule for free and matches the trust
-model (the user explicitly opted into this value).
+`~/.ssh` key stamps that key's provenance as a **user** `Contributor`
+(`Namespace == ""`, `Trusted() == true`). The approval filter skips any
+key whose contributor is trusted. This falls out of the merge rule for
+free and matches the trust model (the user explicitly opted into this
+value).
 
 ### Services
 
 Services merge shallowly via `mergeMap(parent.Services, ...)`
-(merge.go:158) and a service may not `extends` (validate.go:309), so a
-whole service value always comes from exactly one contributor — per-field
-provenance inside a service can never diverge. `Provenance.Services` is
-therefore collapsed to `map[string]string` (service name → contributor
-FullName). The approval filter treats a service as gated if its
+(merge.go:158): a `Service` is a single map value, so the child's entire
+service struct replaces the parent's — there is no deep sub-field merge,
+and existing tests assert this. A service may not `extends`
+(validate.go:309), so a whole service always has exactly one contributor.
+`Provenance.Services` is therefore `map[string]Contributor` (service name
+→ contributor). The approval filter treats a service as gated if its
 contributor is non-user, and gates the service's sensitive sub-fields
 (`Mounts`, `Devices`, `Env`, `Ports`, `Dbus`, `Network`, `Privileged`,
-`Exposes` — see §1) as a unit under that one contributor.
+`Exposes` — see §1) as a unit under that one contributor. The merge
+contract for services is unchanged — replacement-based, as today.
 
 ### Cost
 
@@ -199,12 +225,20 @@ without polluting the YAML-shaped `Profile`, introduce a wrapper:
 
 ```go
 // Resolved is a fully merged profile plus the provenance of its sensitive
-// fields. Returned by ResolveProfileWithProv. ResolveProfile is kept as a
-// thin wrapper that discards provenance, for callers that don't gate
-// (tpd show --resolved, etc.).
+// fields and the catalog identity of the resolved entry. Returned by
+// ResolveProfileWithProv. ResolveProfile is kept as a thin wrapper that
+// discards provenance, for callers that don't gate (tpd show --resolved,
+// etc.).
+//
+// FullName is the resolved catalog key (e.g. "core/opencode", "lang/go",
+// "myagent") — the stable identity used to key the approval state file
+// (§4). DisplayName is the unqualified name for human-facing output in
+// the dialog.
 type Resolved struct {
     Profile
-    Prov Provenance
+    Prov         Provenance
+    FullName     string
+    DisplayName  string
 }
 
 func ResolveProfileWithProv(cat Catalog, name string) (Resolved, error)
@@ -218,7 +252,8 @@ callers; it calls `ResolveProfileWithProv` and returns just the `Profile`.
 ### Approval filter
 
 New `internal/approval` package with the gate logic (no UI here — that's
-injected). The filter takes a `Resolved` and produces the **gated
+injected). The filter takes a `Resolved` (which carries `FullName`,
+`DisplayName`, `Prov`, and the `Profile`) and produces the **gated
 `Profile`** (denied keys dropped) plus a **prompt request** describing
 what still needs a decision:
 
@@ -229,15 +264,16 @@ what still needs a decision:
 type SensitiveItem struct {
     Field    string // "mounts", "devices", "env", "ports",
                     // "dbus.talk", "dbus.own", "network",
-                    // "services.<name>.mounts", ...
-    Key      string // the map key ("" for scalar network)
-    Value    string // human-readable rendering (template-unexpanded)
-    Source   string // contributor FullName, e.g. "core/creds/ssh"
+                    // "services.<name>.mounts", "services.<name>.privileged", ...
+    Key      string // the map key ("" for scalar network/privileged)
+    Value    string // human-readable rendering (post-expansion)
+    Source   Contributor // the contributor that wrote this key
 }
 
 // PromptRequest is what the dialog renders. Empty Items = no prompt needed.
 type PromptRequest struct {
-    ProfileName  string
+    ProfileName  string // Resolved.DisplayName
+    FullName     string // Resolved.FullName (for diagnostics)
     Hash         string
     Items        []SensitiveItem
     // PriorChoices carries the stored allowed-set keyed by Field/Key, so the
@@ -248,7 +284,7 @@ type PromptRequest struct {
 // Filter returns the profile with denied/dropped fields removed and a
 // PromptRequest describing any still-unapproved sensitive fields. If
 // PromptRequest.Items is empty, no prompt is needed and the filtered
-// profile is ready to launch.
+// profile is ready to launch. The store is keyed by res.FullName.
 func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, error)
 ```
 
@@ -257,8 +293,8 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 1. Walk `Prov` and `Profile` together over the gated fields.
 2. Compute the hash (§4) from the non-user sensitive fields of the
    resolved profile (pre-filter).
-3. Load the stored `State` for the resolved `FullName` (not the display
-   name — see §4).
+3. Load the stored `State` for `res.FullName` (the resolved catalog key,
+   not the display name — see §4).
 4. If the stored hash == current hash: reconcile stored choices against
    the current non-user sensitive key set. Keys present in the stored set
    but **missing from the new key set** are dropped from the in-memory
@@ -339,9 +375,19 @@ resolved profile (the same expanded form the filter and dialog see — see
 func ComputeApprovalHash(res profile.Resolved) string
 ```
 
-- Walk each gated field; for each key whose `Provenance` is a non-user
-  entry, emit `<field>\n<key>\n<value-canonical>\n` into a sha256 hasher,
-  sorted by (field, key).
+- Walk each gated field; for each key whose `Provenance` contributor is
+  non-user (`!contributor.Trusted()`), emit
+  `<field>\n<key>\n<contributor FullName>\n<contributor Namespace>\n<value-canonical>\n`
+  into a sha256 hasher, sorted by (field, key, contributor).
+- **Contributor identity is part of the hash.** The dialog asks the user
+  to trust a *named* contributor ("core/creds/ssh wants to mount
+  ~/.ssh"), so the approval must bind to that contributor. If
+  `core/creds/ssh` is later replaced by a remote-namespace contributor
+  with identical mount values, the hash changes and the stored approval
+  does not silently transfer. The `Namespace` is included alongside the
+  `FullName` so a user shadow (`ssh`, Namespace `""`) and a built-in
+  (`core/ssh`) with the same FullName-leaf are also distinct — though in
+  practice the user shadow is trusted and never hashed.
 - `value-canonical` is the explicit-field write form used by
   `computeServiceHash` (e.g. for a Mount: `mount %s %s %s %s %v %v %v\n`
   with target, source, service, socket, readOnly, optional, create).
@@ -350,10 +396,11 @@ func ComputeApprovalHash(res profile.Resolved) string
   `/run/user/1000/wayland-0` hashes under that key, not under the literal
   template. This keeps the hash, the dialog display, and the approval
   keys all aligned on the same expanded identity.
-- `network` is a scalar: emit `network\n<value>\n` if non-user-contributed
-  and non-empty.
-- Services: emit `services.<name>.<field>\n<key>\n<value>\n` per sensitive
-  sub-field (including `privileged` and `exposes` — see §1).
+- `network` is a scalar: emit `network\n<contributor>\n<value>\n` if
+  non-user-contributed and non-empty.
+- Services: emit `services.<name>.<field>\n<key>\n<contributor>\n<value>\n`
+  per sensitive sub-field (including `privileged` and `exposes` — see
+  §1).
 - Return `hex.EncodeToString(sum[:])[:12]` (12 chars, same as service
   hash).
 
@@ -505,6 +552,12 @@ approval file for a deleted profile is harmless. A future
 type LaunchOpts struct {
     // ... existing fields ...
 
+    // In is the input reader for the interactive approval dialog. If nil,
+    // os.Stdin is used. The TTY check (IsTerminal) runs against this reader
+    // when it is an *os.File. Injectable so tests can drive the prompt with
+    // a pipe and exercise the non-interactive error path deterministically.
+    In io.Reader
+
     // ApprovalStore persists per-profile approval choices. If nil, a
     // default file-system store rooted at ~/.local/share/tpd/approvals/
     // is used. Injectable for tests.
@@ -512,10 +565,16 @@ type LaunchOpts struct {
 
     // ApprovalPrompt renders the interactive approval dialog and returns
     // the user's choices as a map[field]set[key]bool. If nil, a default
-    // huh-based TUI is used. If the launch is non-interactive (not a TTY)
-    // and a prompt is required, Launch returns an error unless --yes or
-    // --no was passed.
+    // huh-based TUI is used. The prompt is only invoked when In is a TTY;
+    // if In is not a TTY and a prompt is required, Launch returns an error
+    // unless AssumeYes or AssumeNo was passed.
     ApprovalPrompt approval.Prompt
+
+    // IsTTY reports whether In is an interactive terminal. If nil, a
+    // default based on golang.org/x/term.IsTerminal is used (mirrors
+    // internal/ui.IsTTY). Injectable so tests can force the non-TTY path
+    // without piping.
+    IsTTY func(io.Reader) bool
 
     // AssumeYes auto-approves all currently-unapproved sensitive fields
     // and persists the choice (equivalent to --yes). No prompt is shown.
@@ -532,9 +591,12 @@ type LaunchOpts struct {
 type Prompt func(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error)
 ```
 
-The CLI wires the real huh-based prompt (§6); tests wire a fake.
-
-### LaunchWithWriter flow
+The CLI wires `In: os.Stdin`, the real `IsTTY` (delegating to
+`internal/ui.IsTTY`), and the huh-based prompt (§6); tests wire a fake
+`Prompt`, a fake `Store`, and either a pipe for `In` (non-TTY) or a fake
+`IsTTY` that returns true (interactive path without needing a real
+terminal). `LaunchWithWriter` keeps its existing `w io.Writer` for
+progress/spec output; approval dialog I/O goes through `opts.In` and `w`.
 
 ### LaunchWithWriter flow
 
@@ -553,10 +615,10 @@ The CLI wires the real huh-based prompt (§6); tests wire a fake.
        choices = every item's key = false, merged with prior
        if !DryRun: store.Save(choices)
        filteredProfile = re-filter
-   else if DryRun || !isTTY(stdin):
+   else if DryRun || !opts.IsTTY(opts.In):
        return Result{ExitCode: 2, Err: "unapproved sensitive fields require --yes or --no: <list>"}
    else:
-       choices := ApprovalPrompt(promptReq, stdin, stdout)
+       choices := ApprovalPrompt(promptReq, opts.In, w)
        if aborted: return Result{ExitCode: 2, Err: "approval declined"}
        store.Save(choices); filteredProfile = re-filter
 6. buildSpec(filteredProfile, ...)
@@ -638,11 +700,13 @@ If the user aborts the dialog (Esc / Ctrl+C), Launch returns
 
 ### Non-interactive
 
-`approval.Prompt` is only invoked when `isTTY(stdin)`. If stdin is not a
-TTY and `AssumeYes`/`AssumeNo` are both false and `promptReq.Items` is
-non-empty, Launch fails with exit code 2 and a message listing the
-unapproved fields and the `--yes`/`--no` hint. This is your
-"non-interactive shell with missing approvals is an error" rule.
+`approval.Prompt` is only invoked when `opts.IsTTY(opts.In)` returns true.
+If `In` is not a TTY and `AssumeYes`/`AssumeNo` are both false and
+`promptReq.Items` is non-empty, Launch fails with exit code 2 and a
+message listing the unapproved fields and the `--yes`/`--no` hint. This
+is your "non-interactive shell with missing approvals is an error" rule.
+The `IsTTY` injection lets tests force either path without a real
+terminal.
 
 ## 7. CLI flags
 
