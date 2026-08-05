@@ -38,7 +38,7 @@
 - `internal/approval/store.go` — `Store` interface, `State`, `ApprovedField`, file-system impl, per-component path validation, custom `MarshalYAML`/`UnmarshalYAML`.
 - `internal/approval/prompt.go` — `Prompt` type and the huh-based default prompt.
 - `internal/approval/{approval,hash,store,prompt}_test.go` — unit tests.
-- `internal/ui/tty.go` — `IsTTYReader(r io.Reader) bool` (reader-side wrapper; existing `IsTTY` takes `io.Writer`).
+- `internal/ui/tty.go` — `IsTTYReader(r io.Reader) bool` (moved from `internal/scaffold/scaffold.go:408`; `scaffold.IsTTY` is replaced by a call to `ui.IsTTYReader`).
 
 **Modified files:**
 - `internal/profile/types.go` — add `Provenance Provenance `yaml:"-"`` to `RawProfile`; add `Resolved` type with `Profile`, `Prov`, `FullName`, `DisplayName`.
@@ -529,12 +529,12 @@ func TestMergeChainAttributionAcrossExtends(t *testing.T) {
 		Profile:   Profile{Env: map[string]string{"JS": "1"}},
 		Namespace: "core", Name: "lang/javascript",
 	}
-	js = initProvenance(js)
+	js.Provenance = initProvenance(js)
 	ts := RawProfile{
 		Profile:   Profile{Env: map[string]string{"TS": "1"}},
 		Namespace: "core", Name: "lang/typescript",
 	}
-	ts = initProvenance(ts)
+	ts.Provenance = initProvenance(ts)
 	merged := MergeProfiles(RawProfile{}, js)
 	merged = MergeProfiles(merged, ts)
 	if merged.Provenance.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
@@ -890,7 +890,7 @@ func ComputeApprovalHash(res profile.Resolved) string {
 		}
 		for _, k := range sortedKeys(svc.Mounts) {
 			m := svc.Mounts[k]
-			fmt.Fprintf(h, "services.%s.mounts\n%s\n%s\n%s\nmount %s %s %v %v\n", svcName, k, c.FullName, c.Namespace, k, m.Source, m.ReadOnly, m.Optional)
+			fmt.Fprintf(h, "services.%s.mounts\n%s\n%s\n%s\nmount %s %s %s %s %v %v %v\n", svcName, k, c.FullName, c.Namespace, k, m.Source, m.Service, m.Socket, m.ReadOnly, m.Optional, m.Create)
 		}
 		for _, k := range sortedKeys(svc.Env) {
 			fmt.Fprintf(h, "services.%s.env\n%s\n%s\n%s\nenv %s %s\n", svcName, k, c.FullName, c.Namespace, k, svc.Env[k])
@@ -1034,6 +1034,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -1072,7 +1073,7 @@ func NewFSStore(root string) *FSStore {
 func (s *FSStore) pathFor(fullName string) (string, error) {
 	segs := splitPath(fullName)
 	for _, seg := range segs {
-		if seg == "" || seg == ".." || !nameSegRe.MatchString(seg) {
+		if seg == "" || seg == ".." || strings.Contains(seg, "..") || !nameSegRe.MatchString(seg) {
 			return "", fmt.Errorf("invalid profile name segment %q in %q", seg, fullName)
 		}
 	}
@@ -1391,20 +1392,15 @@ func (s *State) UnmarshalYAML(unmarshal func(interface{}) error) error {
 type serviceFieldRef struct{ name, field string }
 
 // parseServiceField parses a "services.<name>.<field>" key. Returns ok=false
-// if the key isn't in that shape.
+// if the key isn't in that shape. Splits on the LAST dot so a service name
+// containing dots (profileNameRe allows them, e.g. "foo.bar") is preserved.
 func parseServiceField(k string) (serviceFieldRef, bool) {
 	const prefix = "services."
 	if len(k) <= len(prefix) || k[:len(prefix)] != prefix {
 		return serviceFieldRef{}, false
 	}
 	rest := k[len(prefix):]
-	dot := -1
-	for i := 0; i < len(rest); i++ {
-		if rest[i] == '.' {
-			dot = i
-			break
-		}
-	}
+	dot := strings.LastIndex(rest, ".")
 	if dot < 0 {
 		return serviceFieldRef{}, false
 	}
@@ -1769,16 +1765,16 @@ func keysStruct[V any](m map[string]V) map[string]struct{} {
 	return out
 }
 
+// cascadeDependentMounts drops service-socket mounts whose expose was
+// denied (removed from svc.Exposes by applyServicesField). A service is
+// never dropped entirely (spec §"Whole-service deny" is intentional), so
+// the service always exists in the map — only its Exposes entries change.
 func cascadeDependentMounts(mounts map[string]profile.Mount, services map[string]profile.Service) map[string]profile.Mount {
 	for target, m := range mounts {
 		if m.Service == "" {
 			continue
 		}
-		svc, ok := services[m.Service]
-		if !ok {
-			delete(mounts, target)
-			continue
-		}
+		svc := services[m.Service]
 		if _, ok := svc.Exposes[m.Socket]; !ok {
 			delete(mounts, target)
 		}
@@ -1792,6 +1788,12 @@ func priorChoices(st State) map[string]map[string]bool {
 		set := map[string]bool{}
 		for _, k := range af.Keys {
 			set[k] = true
+		}
+		// Scalar fields (network, services.<name>.privileged) are stored
+		// in ApprovedField.Network (*bool); surface them so the dialog can
+		// pre-check a previously-approved scalar on re-prompt.
+		if af.Network != nil {
+			set[""] = *af.Network
 		}
 		out[field] = set
 	}
@@ -2223,6 +2225,7 @@ Create `internal/approval/prompt.go`:
 package approval
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -2294,7 +2297,12 @@ func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[st
 
 	form := huh.NewForm(huhGroups...).WithInput(stdin).WithOutput(stdout)
 	if err := form.Run(); err != nil {
-		return nil, fmt.Errorf("approval declined")
+		// huh returns a specific error on user abort (Esc/Ctrl+C);
+		// distinguish it from a real I/O failure.
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, fmt.Errorf("approval declined")
+		}
+		return nil, fmt.Errorf("approval prompt: %w", err)
 	}
 
 	// Map the per-group selected IDs back to (field, key) choices.
@@ -2334,7 +2342,7 @@ func splitItemID(id string) (field, key string) {
 
 - [ ] **Step 4: Add IsTTYReader to internal/ui**
 
-Create `internal/ui/tty.go`:
+Create `internal/ui/tty.go` (moving `IsTTY` from `internal/scaffold/scaffold.go:408` where it's a package-local helper, to `internal/ui` where both `scaffold` and `approval` can share it):
 
 ```go
 package ui
@@ -2346,8 +2354,7 @@ import (
 	"golang.org/x/term"
 )
 
-// IsTTYReader reports whether r is an interactive terminal. Mirrors
-// IsTTY but for an io.Reader (the approval prompt reads from stdin).
+// IsTTYReader reports whether r is an interactive terminal.
 func IsTTYReader(r io.Reader) bool {
 	if f, ok := r.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd()))
@@ -2356,16 +2363,18 @@ func IsTTYReader(r io.Reader) bool {
 }
 ```
 
-- [ ] **Step 5: Run the contract test**
+Then update `internal/scaffold/scaffold.go`: delete the local `IsTTY` function (lines ~405-413) and replace its call site (in `scaffold.Run` or wherever `scaffold.IsTTY(os.Stdin)` is called) with `ui.IsTTYReader`. Add `"github.com/jgillich/tpd/internal/ui"` to scaffold's imports. Verify no other `scaffold.IsTTY` references remain.
 
-Run: `go test ./internal/approval/ -run TestDefaultPrompt -v`
-Expected: PASS (bytes.Buffer is not *os.File → not a TTY → error).
+- [ ] **Step 5: Run the contract test and scaffold tests**
+
+Run: `go test ./internal/approval/ -run TestDefaultPrompt -v && go test ./internal/scaffold/ -v`
+Expected: PASS (scaffold tests still pass with the moved helper).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/approval/prompt.go internal/approval/prompt_test.go internal/ui/tty.go
-git commit -m "feat(approval): add huh-based DefaultPrompt and ui.IsTTYReader"
+git add internal/approval/prompt.go internal/approval/prompt_test.go internal/ui/tty.go internal/scaffold/scaffold.go
+git commit -m "feat(approval): add huh-based DefaultPrompt; move IsTTY to ui.IsTTYReader"
 ```
 
 ---
@@ -2449,7 +2458,9 @@ func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
 		t.Fatalf("AssumeYes dry-run should succeed, got %v", res.Err)
 	}
 	// dry-run --yes uses the ephemeral store, so no state file is written.
-	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "core", "opencode.yaml")); !os.IsNotExist(err) {
+	// The user profile myagent resolves to FullName "myagent" (Namespace ""),
+	// so the would-be state file is approvals/myagent.yaml.
+	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "myagent.yaml")); !os.IsNotExist(err) {
 		t.Errorf("dry-run --yes should not persist, file exists or err=%v", err)
 	}
 }
@@ -2462,7 +2473,7 @@ func writeProfile(t *testing.T, dir, name string, data []byte) {
 }
 ```
 
-(Add imports: `"bytes"`, `"context"`, `"os"`, `"path/filepath"`, `"github.com/jgillich/tpd/internal/approval"`, `"github.com/jgillich/tpd/internal/profile"`.)
+(Add imports: `"bytes"`, `"context"`, `"io"`, `"os"`, `"path/filepath"`, `"github.com/jgillich/tpd/internal/approval"`. The `"github.com/jgillich/tpd/internal/profile"` import is not needed by these three tests — `LaunchOpts` is in the same package — so do not add it unless other tests in the file already require it.)
 
 - [ ] **Step 3: Run test to verify it fails**
 
@@ -2758,7 +2769,7 @@ Expected: PASS.
 In `cmd/tpd/cli.go`, delete:
 - The `if msg := catalog.Advisory(advisoryName(key)); msg != "" { ... }` blocks in `runShow` (around lines 160 and 174) and `runEdit` (around lines 185 and 228).
 - The `advisoryName` helper (around lines 551-554).
-- Remove the `"github.com/jgillich/tpd/internal/catalog"` import if no other use remains (check — `completeProfileNames` may still use it).
+- Keep the `"github.com/jgillich/tpd/internal/catalog"` import — `runEdit` still uses `catalog.Profiles`/`catalog.Fragments` (cli.go:241,244) to seed built-in edits. Only the `catalog.Advisory` calls are removed.
 
 - [ ] **Step 6: Remove advisory call sites from scaffold.go**
 
