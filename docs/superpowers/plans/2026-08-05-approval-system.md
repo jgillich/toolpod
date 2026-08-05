@@ -380,43 +380,25 @@ type RawProfile struct {
 }
 ```
 
-- [ ] **Step 4: Stamp provenance in mergeMap and mergeStringMap**
+- [ ] **Step 4: Stamp provenance in each merge helper**
 
-Modify `internal/profile/merge.go`. The generic `mergeMap` needs a parallel provenance map. Because Go generics don't easily carry a parallel typed map, add a helper that stamps provenance after each merge call. Replace the `mergeMap` function:
-
-```go
-func mergeMap[V any](parent, child map[string]V, nullKeys map[string]bool) map[string]V {
-	if nullKeys != nil && nullKeys["*"] {
-		return map[string]V{}
-	}
-	out := make(map[string]V, len(parent)+len(child))
-	for k, v := range parent {
-		out[k] = v
-	}
-	for k, v := range child {
-		out[k] = v
-	}
-	for k := range nullKeys {
-		delete(out, k)
-	}
-	return out
-}
-```
-
-Add a provenance-merging helper alongside it:
+Modify `internal/profile/merge.go`. The existing `MergeProfiles` calls field-specific merge helpers (`mergeMounts`, `mergePortMap`, `mergeDeviceMap`, `mergeStringMap`, `mergeDbus`, `mergeMap` for Services) — not a single generic `mergeMap` for all. Each value merge is followed by a provenance merge that takes the *child's keys* (derived from the child value map for that field), not the value map itself. `mergeProvMap` takes `childKeys map[string]bool` plus the child contributor:
 
 ```go
 // mergeProvMap merges parent/child provenance maps with the same key
-// semantics as mergeMap: child wins per key, nullKeys deletes.
-func mergeProvMap(parent, child map[string]Contributor, nullKeys map[string]bool, childContrib Contributor) map[string]Contributor {
+// semantics as the value merges: child wins per key, nullKeys deletes.
+// childKeys is the set of keys the child contributed for this field
+// (built via keysOf from the child's value map); nullKeys["*"] clears
+// everything.
+func mergeProvMap(parent map[string]Contributor, childKeys map[string]bool, nullKeys map[string]bool, childContrib Contributor) map[string]Contributor {
 	if nullKeys != nil && nullKeys["*"] {
 		return map[string]Contributor{}
 	}
-	out := make(map[string]Contributor, len(parent)+len(child))
+	out := make(map[string]Contributor, len(parent)+len(childKeys))
 	for k, v := range parent {
 		out[k] = v
 	}
-	for k := range child {
+	for k := range childKeys {
 		out[k] = childContrib
 	}
 	for k := range nullKeys {
@@ -424,34 +406,91 @@ func mergeProvMap(parent, child map[string]Contributor, nullKeys map[string]bool
 	}
 	return out
 }
+
+// keysOf returns the key set of m as a map[string]bool.
+func keysOf[V any](m map[string]V) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
 ```
 
-Now in `MergeProfiles`, replace each `out.X = mergeMap(...)` line with a pair that also merges provenance. For example, for Mounts:
+Now in `MergeProfiles`, after each existing value-merge line, add the matching provenance-merge line. The child contributor is `Contributor{FullName: child.FullName(), Namespace: child.Namespace}`:
 
 ```go
-out.Mounts = mergeMap(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
-out.Provenance.Mounts = mergeProvMap(parent.Provenance.Mounts, child.Mounts, child.NullKeys["mounts"], Contributor{FullName: child.FullName(), Namespace: child.Namespace})
+childContrib := Contributor{FullName: child.FullName(), Namespace: child.Namespace}
+
+// Mounts (mergeMounts wraps mergeMap):
+out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
+out.Provenance.Mounts = mergeProvMap(parent.Provenance.Mounts, keysOf(child.Mounts), child.NullKeys["mounts"], childContrib)
+
+// Env (mergeStringMap):
+out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
+out.Provenance.Env = mergeProvMap(parent.Provenance.Env, keysOf(child.Env), child.NullKeys["environment"], childContrib)
+
+// Ports (mergePortMap):
+out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
+out.Provenance.Ports = mergeProvMap(parent.Provenance.Ports, keysOf(child.Ports), child.NullKeys["ports"], childContrib)
+
+// Devices (mergeDeviceMap):
+out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
+out.Provenance.Devices = mergeProvMap(parent.Provenance.Devices, keysOf(child.Devices), child.NullKeys["devices"], childContrib)
 ```
 
-Do the same for `Devices`, `Env`, `Ports`, `Mounts`. For `Network`:
+For `Network` (scalar — last writer wins), stamp provenance only when the child actually set it; otherwise inherit the parent's:
 
 ```go
 if child.Network != "" {
 	out.Network = child.Network
-	out.Provenance.Network = Contributor{FullName: child.FullName(), Namespace: child.Namespace}
+	out.Provenance.Network = childContrib
 } else {
 	out.Provenance.Network = parent.Provenance.Network
 }
 ```
 
-For `Dbus`, after `out.Dbus = mergeDbus(...)`, stamp `prov.Dbus.Talk` and `prov.Dbus.Own` using `mergeProvMap` with the child contributor. Handle the nil cases (mergeDbus returns nil).
+For `Dbus`, `mergeDbus` may return nil (when talk and own both end up empty). Stamp provenance for the talk/own sub-maps from the child's dbus keys, honoring `nullKeys["talk"]` and `nullKeys["own"]` (those clear the sub-map's provenance) and `nullKeys["*"]` (clears both). When `mergeDbus` returns nil, the resulting provenance talk/own maps must be empty:
 
-For `Services`:
+```go
+out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
+dbNull := child.NullKeys["dbus"]
+if dbNull != nil && dbNull["*"] {
+	// both sub-maps cleared
+	out.Provenance.Dbus.Talk = map[string]Contributor{}
+	out.Provenance.Dbus.Own = map[string]Contributor{}
+} else {
+	var childTalk, childOwn map[string]bool
+	if child.Dbus != nil {
+		childTalk = keysOf(child.Dbus.Talk)
+		childOwn = keysOf(child.Dbus.Own)
+	}
+	if dbNull != nil && dbNull["talk"] {
+		out.Provenance.Dbus.Talk = map[string]Contributor{}
+	} else if childTalk != nil || parent.Provenance.Dbus.Talk != nil {
+		out.Provenance.Dbus.Talk = mergeProvMap(parent.Provenance.Dbus.Talk, childTalk, nil, childContrib)
+	}
+	if dbNull != nil && dbNull["own"] {
+		out.Provenance.Dbus.Own = map[string]Contributor{}
+	} else if childOwn != nil || parent.Provenance.Dbus.Own != nil {
+		out.Provenance.Dbus.Own = mergeProvMap(parent.Provenance.Dbus.Own, childOwn, nil, childContrib)
+	}
+	// If mergeDbus returned nil (both sub-maps empty in the value), there
+	// are no dbus keys to attribute — leave provenance talk/own empty.
+	if out.Dbus == nil {
+		out.Provenance.Dbus = DbusProvenance{}
+	}
+}
+```
+
+For `Services` (`mergeMap` over `map[string]Service`):
 
 ```go
 out.Services = mergeMap(parent.Services, child.Services, child.NullKeys["services"])
-out.Provenance.Services = mergeProvMap(parent.Provenance.Services, child.Services, child.NullKeys["services"], Contributor{FullName: child.FullName(), Namespace: child.Namespace})
+out.Provenance.Services = mergeProvMap(parent.Provenance.Services, keysOf(child.Services), child.NullKeys["services"], childContrib)
 ```
+
+(Leave `out := parent` at the top of `MergeProfiles` as-is; `mergeProvMap` allocates fresh maps and never mutates `parent.Provenance` in place, so the shallow copy is safe.)
 
 - [ ] **Step 5: Initialize provenance in resolveChain leaf case**
 
@@ -476,53 +515,41 @@ Expected: PASS.
 Run: `go test ./internal/profile/ -v`
 Expected: PASS (no regressions).
 
-- [ ] **Step 8: Write the failing test for extends-chain provenance**
+- [ ] **Step 8: Write the failing test for provenance across a manual merge chain**
 
-Append to `internal/profile/extends_test.go`:
+Append to `internal/profile/extends_test.go`. This test asserts provenance via `MergeProfiles` directly (no `ResolveProfileWithProv`, which arrives in Task 3):
 
 ```go
-func TestResolveChainAttributionAcrossExtends(t *testing.T) {
-	// myagent extends core/lang/typescript extends core/lang/javascript.
-	// Keys from javascript should be attributed to core/lang/javascript,
-	// not to typescript or myagent.
-	cat := NewProfileCatalogForTest(map[string]RawProfile{
-		"core/lang/javascript": {
-			Profile:   Profile{Version: 1, Image: "img", Command: []string{"run"}, Env: map[string]string{"JS": "1"}},
-			Namespace: "core", Name: "lang/javascript",
-		},
-		"core/lang/typescript": {
-			Profile: Profile{
-				Version: 1, Image: "img", Command: []string{"run"},
-				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/javascript"}}},
-				Env: map[string]string{"TS": "1"},
-			},
-			Namespace: "core", Name: "lang/typescript",
-		},
-		"myagent": {
-			Profile: Profile{
-				Version: 1, Image: "img", Command: []string{"run"},
-				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/typescript"}}},
-			},
-			Namespace: "", Name: "myagent",
-		},
-	})
-	res, err := ResolveProfileWithProv(cat, "myagent")
-	if err != nil {
-		t.Fatalf("ResolveProfileWithProv: %v", err)
+func TestMergeChainAttributionAcrossExtends(t *testing.T) {
+	// Simulate the extends chain myagent -> core/lang/typescript -> core/lang/javascript
+	// by calling MergeProfiles twice, the way resolveChain does. Keys from
+	// javascript should be attributed to core/lang/javascript, not to
+	// typescript or myagent.
+	js := RawProfile{
+		Profile:   Profile{Env: map[string]string{"JS": "1"}},
+		Namespace: "core", Name: "lang/javascript",
 	}
-	if res.Prov.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
-		t.Errorf("JS should be attributed to core/lang/javascript, got %+v", res.Prov.Env["JS"])
+	js = initProvenance(js)
+	ts := RawProfile{
+		Profile:   Profile{Env: map[string]string{"TS": "1"}},
+		Namespace: "core", Name: "lang/typescript",
 	}
-	if res.Prov.Env["TS"] != (Contributor{FullName: "core/lang/typescript", Namespace: "core"}) {
-		t.Errorf("TS should be attributed to core/lang/typescript, got %+v", res.Prov.Env["TS"])
+	ts = initProvenance(ts)
+	merged := MergeProfiles(RawProfile{}, js)
+	merged = MergeProfiles(merged, ts)
+	if merged.Provenance.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
+		t.Errorf("JS should be attributed to core/lang/javascript, got %+v", merged.Provenance.Env["JS"])
+	}
+	if merged.Provenance.Env["TS"] != (Contributor{FullName: "core/lang/typescript", Namespace: "core"}) {
+		t.Errorf("TS should be attributed to core/lang/typescript, got %+v", merged.Provenance.Env["TS"])
 	}
 }
 ```
 
-- [ ] **Step 9: Run test to verify it fails**
+- [ ] **Step 9: Run test to verify it passes**
 
-Run: `go test ./internal/profile/ -run TestResolveChainAttribution -v`
-Expected: FAIL — `undefined: ResolveProfileWithProv`.
+Run: `go test ./internal/profile/ -run TestMergeChainAttribution -v`
+Expected: PASS — provenance is stamped by `MergeProfiles`, which Step 4 wired up. (`ResolveProfileWithProv` is not used here; that comes in Task 3.)
 
 - [ ] **Step 10: Commit (provenance merge is testable now; ResolveProfileWithProv comes in Task 3)**
 
@@ -538,7 +565,7 @@ git commit -m "feat(profile): stamp provenance during merge and leaf init"
 **Files:**
 - Modify: `internal/profile/types.go` (add `Resolved`)
 - Modify: `internal/profile/merge.go` (add `ResolveProfileWithProv`, `ResolveFragmentWithProv`)
-- Modify: `internal/profile/merge_test.go` / `extends_test.go` (complete the test from Task 2)
+- Modify: `internal/profile/extends_test.go` (add the ResolveProfileWithProv attribution test)
 
 **Interfaces:**
 - Consumes: provenance-populated `RawProfile` from Task 2.
@@ -645,10 +672,59 @@ func ResolveFragment(cat Catalog, name string) (Profile, error) {
 }
 ```
 
-- [ ] **Step 3: Run the extends-chain provenance test**
+- [ ] **Step 3: Write the failing test for extends-chain provenance across ResolveProfileWithProv**
+
+Append to `internal/profile/extends_test.go`. `NewProfileCatalogForTest` stamps `Namespace="core"` and `Name=<key>`, so the entry key *is* the `Name` (not `core/...`). `FullName()` then returns `"core/" + Name`. Use bare keys (`"lang/javascript"`, `"lang/typescript"`, `"myagent"`) so `FullName()` is `"core/lang/javascript"` etc.:
+
+```go
+func TestResolveChainAttributionAcrossExtends(t *testing.T) {
+	// myagent extends core/lang/typescript extends core/lang/javascript.
+	// Keys from javascript should be attributed to core/lang/javascript,
+	// not to typescript or myagent.
+	//
+	// NewProfileCatalogForTest stamps Namespace="core"; Name=<map key>.
+	// Use bare keys so FullName() == "core/" + key. The test is about
+	// attribution across extends, not user-vs-core, so all three are
+	// core entries.
+	cat := NewProfileCatalogForTest(map[string]RawProfile{
+		"lang/javascript": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				Env: map[string]string{"JS": "1"},
+			},
+		},
+		"lang/typescript": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/javascript"}}},
+				Env: map[string]string{"TS": "1"},
+			},
+		},
+		"myagent": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/typescript"}}},
+			},
+		},
+	})
+	res, err := ResolveProfileWithProv(cat, "core/myagent")
+	if err != nil {
+		t.Fatalf("ResolveProfileWithProv: %v", err)
+	}
+	if res.Prov.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
+		t.Errorf("JS should be attributed to core/lang/javascript, got %+v", res.Prov.Env["JS"])
+	}
+	if res.Prov.Env["TS"] != (Contributor{FullName: "core/lang/typescript", Namespace: "core"}) {
+		t.Errorf("TS should be attributed to core/lang/typescript, got %+v", res.Prov.Env["TS"])
+	}
+	if res.FullName != "core/myagent" {
+		t.Errorf("FullName = %q, want core/myagent", res.FullName)
+	}
+}
+```
 
 Run: `go test ./internal/profile/ -run TestResolveChainAttribution -v`
-Expected: PASS.
+Expected: PASS — `ResolveProfileWithProv` was implemented in Step 2, and `MergeProfiles` stamps provenance (Task 2 Step 4).
 
 - [ ] **Step 4: Run the full profile package suite**
 
@@ -690,7 +766,7 @@ import (
 func TestHashStableForSameContent(t *testing.T) {
 	res := makeResolvedWithMounts(map[string]profile.Mount{
 		"~/.ssh": {Source: "~/.ssh"},
-	}, Contributor{FullName: "core/creds/ssh", Namespace: "core"})
+	}, profile.Contributor{FullName: "core/creds/ssh", Namespace: "core"})
 	h1 := ComputeApprovalHash(res)
 	h2 := ComputeApprovalHash(res)
 	if h1 != h2 {
@@ -703,15 +779,15 @@ func TestHashStableForSameContent(t *testing.T) {
 
 func TestHashChangesOnContributorSwap(t *testing.T) {
 	mounts := map[string]profile.Mount{"~/.ssh": {Source: "~/.ssh"}}
-	a := makeResolvedWithMounts(mounts, Contributor{FullName: "core/creds/ssh", Namespace: "core"})
-	b := makeResolvedWithMounts(mounts, Contributor{FullName: "github.com/foo/ssh", Namespace: "github.com/foo"})
+	a := makeResolvedWithMounts(mounts, profile.Contributor{FullName: "core/creds/ssh", Namespace: "core"})
+	b := makeResolvedWithMounts(mounts, profile.Contributor{FullName: "github.com/foo/ssh", Namespace: "github.com/foo"})
 	if ComputeApprovalHash(a) == ComputeApprovalHash(b) {
 		t.Error("hash should differ when contributor identity differs")
 	}
 }
 
 func TestHashExcludesUserContributions(t *testing.T) {
-	res := makeResolvedWithMounts(map[string]profile.Mount{"~/x": {Source: "~/x"}}, Contributor{FullName: "myagent", Namespace: ""})
+	res := makeResolvedWithMounts(map[string]profile.Mount{"~/x": {Source: "~/x"}}, profile.Contributor{FullName: "myagent", Namespace: ""})
 	h := ComputeApprovalHash(res)
 	// No non-user sensitive fields → empty hash input → deterministic.
 	want := ComputeApprovalHash(profile.Resolved{})
@@ -723,7 +799,7 @@ func TestHashExcludesUserContributions(t *testing.T) {
 func TestHashPreservesTemplateLiterals(t *testing.T) {
 	res := makeResolvedWithMounts(map[string]profile.Mount{
 		"{{ .Env.X }}": {Source: "{{ .Env.X }}"},
-	}, Contributor{FullName: "core/gui", Namespace: "core"})
+	}, profile.Contributor{FullName: "core/gui", Namespace: "core"})
 	h := ComputeApprovalHash(res)
 	if h == ComputeApprovalHash(profile.Resolved{}) {
 		t.Error("templated mount should produce a non-empty hash")
@@ -994,9 +1070,6 @@ func NewFSStore(root string) *FSStore {
 }
 
 func (s *FSStore) pathFor(fullName string) (string, error) {
-	for _, seg := range filepath.SplitList(filepath.ToSlash(fullName)) {
-		_ = seg
-	}
 	segs := splitPath(fullName)
 	for _, seg := range segs {
 		if seg == "" || seg == ".." || !nameSegRe.MatchString(seg) {
@@ -1102,6 +1175,53 @@ func TestStateMarshalDistinguishesDeniedFromAbsent(t *testing.T) {
 	}
 }
 
+func TestStateMarshalNestsDbusAndServices(t *testing.T) {
+	yes := true
+	st := State{
+		Approved: map[string]ApprovedField{
+			"dbus.talk":            {Keys: []string{"org.freedesktop.portal.Desktop"}},
+			"dbus.own":            {Keys: nil},
+			"network":              {Network: &yes},
+			"services.podman.privileged": {Network: &yes},
+			"services.podman.exposes":    {Keys: []string{"registry"}},
+			"services.podman.mounts":     {Keys: []string{"/var/run/podman.sock"}},
+		},
+	}
+	data, err := yaml.Marshal(st)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{"dbus:", "talk:", "services:", "podman:", "network:"} {
+		if !contains(s, want) {
+			t.Errorf("YAML should contain nested key %q:\n%s", want, s)
+		}
+	}
+	// Flat dotted keys must NOT appear.
+	for _, bad := range []string{"dbus.talk:", "services.podman.exposes:"} {
+		if contains(s, bad) {
+			t.Errorf("YAML should not contain flat dotted key %q:\n%s", bad, s)
+		}
+	}
+	// Round-trip preserves the flat keyed State.
+	var back State
+	if err := yaml.Unmarshal(data, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if back.Approved["dbus.talk"].Keys[0] != "org.freedesktop.portal.Desktop" {
+		t.Errorf("dbus.talk round-trip failed: %+v", back.Approved["dbus.talk"])
+	}
+	if back.Approved["services.podman.exposes"].Keys[0] != "registry" {
+		t.Errorf("services.podman.exposes round-trip failed: %+v", back.Approved["services.podman.exposes"])
+	}
+	if back.Approved["network"].Network == nil || !*back.Approved["network"].Network {
+		t.Errorf("network round-trip failed: %+v", back.Approved["network"])
+	}
+	if back.Approved["services.podman.privileged"].Network == nil || !*back.Approved["services.podman.privileged"].Network {
+		t.Errorf("services.podman.privileged round-trip failed: %+v", back.Approved["services.podman.privileged"])
+	}
+}
+
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
@@ -1123,23 +1243,99 @@ Add to `internal/approval/store.go`:
 // with nil Keys means "field present, all denied"; a field absent from
 // the map means "never decided". This distinction must survive
 // round-trip, so State has custom marshal/unmarshal.
+//
+// The on-disk shape nests dbus and services sub-fields per spec §4:
+//   dbus: { talk: [...], own: [...] }
+//   services: { <name>: { mounts: [...], env: [...], exposes: [...], privileged: true } }
+// The Go State.Approved map stays flat (keys like "dbus.talk",
+// "services.podman.mounts"); the marshal/unmarshal translates between
+// the flat keyed map and the nested YAML.
 type yamlState struct {
-	Profile  string                   `yaml:"profile,omitempty"`
-	Hash     string                   `yaml:"hash"`
-	Approved map[string]yamlField     `yaml:"approved,omitempty"`
+	Profile  string                 `yaml:"profile,omitempty"`
+	Hash     string                 `yaml:"hash"`
+	Approved yamlApproved           `yaml:"approved,omitempty"`
+}
+
+// yamlApproved is the top-level "approved:" block. Top-level scalar/map
+// fields are keyed directly; dbus and services are nested sub-objects.
+type yamlApproved struct {
+	Mounts   *yamlField             `yaml:"mounts,omitempty"`
+	Devices  *yamlField             `yaml:"devices,omitempty"`
+	Env      *yamlField             `yaml:"env,omitempty"`
+	Ports    *yamlField             `yaml:"ports,omitempty"`
+	Network  *bool                  `yaml:"network,omitempty"`
+	Dbus     *yamlDbus              `yaml:"dbus,omitempty"`
+	Services map[string]yamlService `yaml:"services,omitempty"`
 }
 
 type yamlField struct {
-	Keys     []string `yaml:"keys,omitempty"`
-	Network  *bool    `yaml:"network,omitempty"`
+	Keys []string `yaml:"keys,omitempty"`
+}
+
+type yamlDbus struct {
+	Talk *yamlField `yaml:"talk,omitempty"`
+	Own  *yamlField `yaml:"own,omitempty"`
+}
+
+type yamlService struct {
+	Mounts     *yamlField `yaml:"mounts,omitempty"`
+	Env        *yamlField `yaml:"env,omitempty"`
+	Exposes    *yamlField `yaml:"exposes,omitempty"`
+	Privileged *bool      `yaml:"privileged,omitempty"`
+}
+
+// ptrField wraps a yamlField in a non-nil pointer so "present, all denied"
+// (empty Keys) emits an explicit key rather than being omitted by omitempty.
+func ptrField(af ApprovedField) *yamlField {
+	return &yamlField{Keys: af.Keys}
 }
 
 func (s State) MarshalYAML() (interface{}, error) {
-	out := yamlState{Profile: s.Profile, Hash: s.Hash, Approved: map[string]yamlField{}}
+	out := yamlState{Profile: s.Profile, Hash: s.Hash}
+	a := yamlApproved{}
 	for k, v := range s.Approved {
-		yf := yamlField{Keys: v.Keys, Network: v.Network}
-		out.Approved[k] = yf
+		switch k {
+		case "mounts":
+			a.Mounts = ptrField(v)
+		case "devices":
+			a.Devices = ptrField(v)
+		case "env":
+			a.Env = ptrField(v)
+		case "ports":
+			a.Ports = ptrField(v)
+		case "network":
+			a.Network = v.Network
+		case "dbus.talk":
+			if a.Dbus == nil {
+				a.Dbus = &yamlDbus{}
+			}
+			a.Dbus.Talk = ptrField(v)
+		case "dbus.own":
+			if a.Dbus == nil {
+				a.Dbus = &yamlDbus{}
+			}
+			a.Dbus.Own = ptrField(v)
+		default:
+			if svc, ok := parseServiceField(k); ok {
+				if a.Services == nil {
+					a.Services = map[string]yamlService{}
+				}
+				s := a.Services[svc.name]
+				switch svc.field {
+				case "mounts":
+					s.Mounts = ptrField(v)
+				case "env":
+					s.Env = ptrField(v)
+				case "exposes":
+					s.Exposes = ptrField(v)
+				case "privileged":
+					s.Privileged = v.Network
+				}
+				a.Services[svc.name] = s
+			}
+		}
 	}
+	out.Approved = a
 	return out, nil
 }
 
@@ -1151,10 +1347,73 @@ func (s *State) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	s.Profile = y.Profile
 	s.Hash = y.Hash
 	s.Approved = map[string]ApprovedField{}
-	for k, v := range y.Approved {
-		s.Approved[k] = ApprovedField{Keys: v.Keys, Network: v.Network}
+	a := y.Approved
+	if a.Mounts != nil {
+		s.Approved["mounts"] = ApprovedField{Keys: a.Mounts.Keys}
+	}
+	if a.Devices != nil {
+		s.Approved["devices"] = ApprovedField{Keys: a.Devices.Keys}
+	}
+	if a.Env != nil {
+		s.Approved["env"] = ApprovedField{Keys: a.Env.Keys}
+	}
+	if a.Ports != nil {
+		s.Approved["ports"] = ApprovedField{Keys: a.Ports.Keys}
+	}
+	if a.Network != nil {
+		s.Approved["network"] = ApprovedField{Network: a.Network}
+	}
+	if a.Dbus != nil {
+		if a.Dbus.Talk != nil {
+			s.Approved["dbus.talk"] = ApprovedField{Keys: a.Dbus.Talk.Keys}
+		}
+		if a.Dbus.Own != nil {
+			s.Approved["dbus.own"] = ApprovedField{Keys: a.Dbus.Own.Keys}
+		}
+	}
+	for name, sv := range a.Services {
+		if sv.Mounts != nil {
+			s.Approved["services."+name+".mounts"] = ApprovedField{Keys: sv.Mounts.Keys}
+		}
+		if sv.Env != nil {
+			s.Approved["services."+name+".env"] = ApprovedField{Keys: sv.Env.Keys}
+		}
+		if sv.Exposes != nil {
+			s.Approved["services."+name+".exposes"] = ApprovedField{Keys: sv.Exposes.Keys}
+		}
+		if sv.Privileged != nil {
+			s.Approved["services."+name+".privileged"] = ApprovedField{Network: sv.Privileged}
+		}
 	}
 	return nil
+}
+
+type serviceFieldRef struct{ name, field string }
+
+// parseServiceField parses a "services.<name>.<field>" key. Returns ok=false
+// if the key isn't in that shape.
+func parseServiceField(k string) (serviceFieldRef, bool) {
+	const prefix = "services."
+	if len(k) <= len(prefix) || k[:len(prefix)] != prefix {
+		return serviceFieldRef{}, false
+	}
+	rest := k[len(prefix):]
+	dot := -1
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '.' {
+			dot = i
+			break
+		}
+	}
+	if dot < 0 {
+		return serviceFieldRef{}, false
+	}
+	name, field := rest[:dot], rest[dot+1:]
+	switch field {
+	case "mounts", "env", "exposes", "privileged":
+		return serviceFieldRef{name: name, field: field}, true
+	}
+	return serviceFieldRef{}, false
 }
 ```
 
@@ -1340,6 +1599,8 @@ Create `internal/approval/approval.go`:
 package approval
 
 import (
+	"fmt"
+
 	"github.com/jgillich/tpd/internal/profile"
 )
 
@@ -1387,9 +1648,9 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 	}
 
 	// Walk sensitive fields; drop denied, collect unapproved into Items.
-	filtered.Mounts, req = applyMapField(filtered.Mounts, res.Prov.Mounts, "mounts", reconciled, req)
-	filtered.Devices, req = applyMapField(filtered.Devices, res.Prov.Devices, "devices", reconciled, req)
-	filtered.Env, req = applyStringMapField(filtered.Env, res.Prov.Env, "env", reconciled, req)
+	filtered.Mounts, req = applyMountField(filtered.Mounts, res.Prov.Mounts, "mounts", reconciled, req)
+	filtered.Devices, req = applyDeviceField(filtered.Devices, res.Prov.Devices, "devices", reconciled, req)
+	filtered.Env, req = applyEnvField(filtered.Env, res.Prov.Env, "env", reconciled, req)
 	filtered.Ports, req = applyPortField(filtered.Ports, res.Prov.Ports, "ports", reconciled, req)
 	filtered.Dbus, req = applyDbusField(filtered.Dbus, res.Prov.Dbus, reconciled, req)
 	filtered.Network, req = applyNetworkField(filtered.Network, res.Prov.Network, "network", reconciled, req)
@@ -1402,54 +1663,110 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 }
 
 // reconcileState drops stored keys that no longer exist in res when the
-// hash matches. Returns the reconciled state and whether it changed.
+// stored hash matches the current hash. Returns the reconciled state and
+// whether it changed. Network and services.<name>.privileged are scalars
+// stored in ApprovedField.Network; reconcileKeys skips them and they are
+// handled inline.
 func reconcileState(st State, hash string, res profile.Resolved) (State, bool) {
 	if st.Hash != hash {
 		return st, false
 	}
 	changed := false
-	// For each field in st.Approved, drop keys that are not in the current
-	// profile's non-user sensitive set for that field.
-	if _, ok := st.Approved["mounts"]; ok {
-		st.Approved["mounts"] = dropMissingKeys(st.Approved["mounts"], res.Mounts, res.Prov.Mounts)
+	approve := st.Approved
+	maybeSet := func(field string, af ApprovedField, ch bool) {
+		if ch {
+			approve[field] = af
+			changed = true
+		}
 	}
-	// (Repeat for other fields — devices, env, ports, dbus, services.)
-	// For brevity in this step, the full implementation covers all fields;
-	// the test for reconciliation-persistence is in the next step.
+
+	if af, ok := approve["mounts"]; ok {
+		n, ch := reconcileKeys(af, res.Mounts)
+		maybeSet("mounts", n, ch)
+	}
+	if af, ok := approve["devices"]; ok {
+		n, ch := reconcileKeys(af, res.Devices)
+		maybeSet("devices", n, ch)
+	}
+	if af, ok := approve["env"]; ok {
+		n, ch := reconcileKeys(af, res.Env)
+		maybeSet("env", n, ch)
+	}
+	if af, ok := approve["ports"]; ok {
+		n, ch := reconcileKeys(af, res.Ports)
+		maybeSet("ports", n, ch)
+	}
+	if af, ok := approve["dbus.talk"]; ok {
+		talk := map[string]struct{}{}
+		if res.Dbus != nil {
+			for k := range res.Dbus.Talk {
+				talk[k] = struct{}{}
+			}
+		}
+		n, ch := reconcileKeys(af, talk)
+		maybeSet("dbus.talk", n, ch)
+	}
+	if af, ok := approve["dbus.own"]; ok {
+		own := map[string]struct{}{}
+		if res.Dbus != nil {
+			for k := range res.Dbus.Own {
+				own[k] = struct{}{}
+			}
+		}
+		n, ch := reconcileKeys(af, own)
+		maybeSet("dbus.own", n, ch)
+	}
+	// network is a scalar stored in ApprovedField.Network; nothing to
+	// reconcile by key. It is dropped only when the hash changes.
+	for svcName := range res.Services {
+		for _, sub := range []struct {
+			field string
+			cur   map[string]struct{}
+		}{
+			{"services." + svcName + ".mounts", keysStruct(res.Services[svcName].Mounts)},
+			{"services." + svcName + ".env", keysStruct(res.Services[svcName].Env)},
+			{"services." + svcName + ".exposes", keysStruct(res.Services[svcName].Exposes)},
+		} {
+			if af, ok := approve[sub.field]; ok {
+				n, ch := reconcileKeys(af, sub.cur)
+				maybeSet(sub.field, n, ch)
+			}
+		}
+	}
+	st.Approved = approve
 	return st, changed
 }
 
-func dropMissingKeys(af ApprovedField, present map[string]struct{}, _ map[string]profile.Contributor) ApprovedField {
-	// Simplified: real implementation filters af.Keys against present.
-	return af
+// reconcileKeys drops af.Keys entries that are not present in current and
+// reports whether anything was dropped. The Network scalar slot is skipped
+// (handled separately).
+func reconcileKeys[V any](af ApprovedField, current map[string]V) (ApprovedField, bool) {
+	if af.Network != nil {
+		return af, false
+	}
+	currentKeys := map[string]bool{}
+	for k := range current {
+		currentKeys[k] = true
+	}
+	kept := af.Keys[:0]
+	changed := false
+	for _, k := range af.Keys {
+		if currentKeys[k] {
+			kept = append(kept, k)
+		} else {
+			changed = true
+		}
+	}
+	af.Keys = kept
+	return af, changed
 }
 
-// applyMapField is a placeholder; the real implementation iterates the
-// field's map, checks provenance, and either keeps, drops, or adds to
-// req.Items. The structure is identical across field types; generics or
-// per-type helpers handle the value rendering.
-func applyMapField[V any](m map[string]V, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]V, PromptRequest) {
-	return m, req
-}
-
-func applyStringMapField(m map[string]string, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]string, PromptRequest) {
-	return m, req
-}
-
-func applyPortField(m map[string]profile.PortBind, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]profile.PortBind, PromptRequest) {
-	return m, req
-}
-
-func applyDbusField(d *profile.DbusConfig, prov profile.DbusProvenance, st State, req PromptRequest) (*profile.DbusConfig, PromptRequest) {
-	return d, req
-}
-
-func applyNetworkField(v string, c profile.Contributor, field string, st State, req PromptRequest) (string, PromptRequest) {
-	return v, req
-}
-
-func applyServicesField(m map[string]profile.Service, prov map[string]profile.Contributor, st State, req PromptRequest) (map[string]profile.Service, PromptRequest) {
-	return m, req
+func keysStruct[V any](m map[string]V) map[string]struct{} {
+	out := make(map[string]struct{}, len(m))
+	for k := range m {
+		out[k] = struct{}{}
+	}
+	return out
 }
 
 func cascadeDependentMounts(mounts map[string]profile.Mount, services map[string]profile.Service) map[string]profile.Mount {
@@ -1482,45 +1799,226 @@ func priorChoices(st State) map[string]map[string]bool {
 }
 ```
 
-The placeholders above are skeletons — the full implementation fills in the per-field walk with real keep/drop/prompt logic. The next steps make the tests pass by completing that logic.
+The per-field `apply*Field` helpers are written in Step 4.
 
 - [ ] **Step 4: Complete the per-field walk to make the tests pass**
 
-Replace the placeholder `applyMapField` and `applyStringMapField` with real implementations. The pattern for a map field:
+Add the per-field `apply*Field` functions and helpers below to `internal/approval/approval.go`. Each map field uses the same keep/drop/prompt decision: a trusted contributor (or a missing contributor) is kept ungated; a non-user contributor is kept if its key is in the stored approved set for the current hash, dropped if the field has stored state for this hash but the key is absent (denied), and prompted otherwise (kept in the profile until the dialog resolves). The network and privileged scalars use a `*bool` slot. Service exposes drops propagate to dependent mounts via the cascade step in `Filter`.
 
 ```go
+// decide is the shared keep/drop/prompt decision for one non-user key.
+// Returns keep=true if the key should remain in the filtered profile, and
+// appends a SensitiveItem to req.Items when the user must still decide.
+func decide(field, key, value string, c profile.Contributor, st State, req PromptRequest) (bool, PromptRequest) {
+	if c.Trusted() {
+		return true, req
+	}
+	// Hash mismatch or no stored state for this field → prompt.
+	af, hasField := st.Approved[field]
+	if st.Hash != req.Hash || !hasField {
+		req.Items = append(req.Items, item(field, key, value, c))
+		return true, req
+	}
+	if containsKey(af.Keys, key) {
+		return true, req
+	}
+	return false, req
+}
+
 func applyMountField(mounts map[string]profile.Mount, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]profile.Mount, PromptRequest) {
-	out := map[string]profile.Mount{}
+	out := make(map[string]profile.Mount, len(mounts))
 	for k, v := range mounts {
-		c, ok := prov[k]
-		if !ok || c.Trusted() {
-			out[k] = v
-			continue
-		}
-		if st.Hash != req.Hash {
-			// Hash differs: this is a new key → prompt.
-			req.Items = append(req.Items, item(field, k, renderMount(v), c))
-			out[k] = v
-			continue
-		}
-		if af, hasField := st.Approved[field]; hasField && containsKey(af.Keys, k) {
-			out[k] = v // approved
-		} else {
-			// denied or no stored choice for this key
-			if af, hasField := st.Approved[field]; hasField {
-				// field present in state but key absent → denied → drop
-				continue
-			}
-			// field absent from state → no stored choice → prompt
-			req.Items = append(req.Items, item(field, k, renderMount(v), c))
+		c := prov[k]
+		keep, r := decide(field, k, renderMount(v), c, st, req)
+		req = r
+		if keep {
 			out[k] = v
 		}
 	}
 	return out, req
 }
-```
 
-Apply the same pattern to `Devices`, `Env`, `Ports`, `Dbus.Talk`, `Dbus.Own`, `Network`, and each service's sub-fields. Add the `item`, `renderMount`, `containsKey` helpers. Wire each into `Filter` replacing its placeholder calls.
+func applyDeviceField(devices map[string]profile.DeviceBind, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]profile.DeviceBind, PromptRequest) {
+	out := make(map[string]profile.DeviceBind, len(devices))
+	for k, v := range devices {
+		c := prov[k]
+		keep, r := decide(field, k, renderDevice(v), c, st, req)
+		req = r
+		if keep {
+			out[k] = v
+		}
+	}
+	return out, req
+}
+
+func applyEnvField(env map[string]string, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]string, PromptRequest) {
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		c := prov[k]
+		keep, r := decide(field, k, renderEnv(k, v), c, st, req)
+		req = r
+		if keep {
+			out[k] = v
+		}
+	}
+	return out, req
+}
+
+func applyPortField(ports map[string]profile.PortBind, prov map[string]profile.Contributor, field string, st State, req PromptRequest) (map[string]profile.PortBind, PromptRequest) {
+	out := make(map[string]profile.PortBind, len(ports))
+	for k, v := range ports {
+		c := prov[k]
+		keep, r := decide(field, k, renderPort(v), c, st, req)
+		req = r
+		if keep {
+			out[k] = v
+		}
+	}
+	return out, req
+}
+
+func applyDbusField(d *profile.DbusConfig, prov profile.DbusProvenance, st State, req PromptRequest) (*profile.DbusConfig, PromptRequest) {
+	if d == nil {
+		return d, req
+	}
+	out := &profile.DbusConfig{}
+	if len(d.Talk) > 0 {
+		out.Talk = make(map[string]*struct{}, len(d.Talk))
+		for k, v := range d.Talk {
+			c := prov.Talk[k]
+			keep, r := decide("dbus.talk", k, "talk", c, st, req)
+			req = r
+			if keep {
+				out.Talk[k] = v
+			}
+		}
+	}
+	if len(d.Own) > 0 {
+		out.Own = make(map[string]*struct{}, len(d.Own))
+		for k, v := range d.Own {
+			c := prov.Own[k]
+			keep, r := decide("dbus.own", k, "own", c, st, req)
+			req = r
+			if keep {
+				out.Own[k] = v
+			}
+		}
+	}
+	if len(out.Talk) == 0 && len(out.Own) == 0 {
+		return nil, req
+	}
+	return out, req
+}
+
+// applyNetworkField gates the scalar network value. The stored choice is
+// kept in ApprovedField.Network (*bool): nil → prompt, true → keep, false →
+// drop (set to ""). The item key for network is the empty string.
+func applyNetworkField(v string, c profile.Contributor, field string, st State, req PromptRequest) (string, PromptRequest) {
+	if v == "" || c.Trusted() {
+		return v, req
+	}
+	af, hasField := st.Approved[field]
+	if st.Hash == req.Hash && hasField && af.Network != nil {
+		if *af.Network {
+			return v, req
+		}
+		return "", req
+	}
+	req.Items = append(req.Items, item(field, "", v, c))
+	return v, req
+}
+
+// applyServicesField gates each service's schema-valid sub-fields under the
+// service's single contributor. mounts/env/exposes are map fields keyed
+// "services.<name>.<field>"; privileged is a scalar stored in
+// ApprovedField.Network (a *bool) under "services.<name>.privileged".
+// Denied exposes keys are removed from svc.Exposes so the cascade step can
+// drop dependent mounts.
+func applyServicesField(services map[string]profile.Service, prov map[string]profile.Contributor, st State, req PromptRequest) (map[string]profile.Service, PromptRequest) {
+	out := make(map[string]profile.Service, len(services))
+	for name, svc := range services {
+		c := prov[name]
+		if !c.Trusted() {
+			f := "services." + name
+			if len(svc.Mounts) > 0 {
+				mounts := make(map[string]profile.Mount, len(svc.Mounts))
+				for k, v := range svc.Mounts {
+					keep, r := decide(f+".mounts", k, renderMount(v), c, st, req)
+					req = r
+					if keep {
+						mounts[k] = v
+					}
+				}
+				svc.Mounts = mounts
+			}
+			if len(svc.Env) > 0 {
+				env := make(map[string]string, len(svc.Env))
+				for k, v := range svc.Env {
+					keep, r := decide(f+".env", k, renderEnv(k, v), c, st, req)
+					req = r
+					if keep {
+						env[k] = v
+					}
+				}
+				svc.Env = env
+			}
+			if svc.Privileged {
+				pf := f + ".privileged"
+				af, hasField := st.Approved[pf]
+				if st.Hash == req.Hash && hasField && af.Network != nil {
+					if !*af.Network {
+						svc.Privileged = false
+					}
+				} else {
+					req.Items = append(req.Items, item(pf, "", "privileged", c))
+				}
+			}
+			if len(svc.Exposes) > 0 {
+				exposes := make(map[string]string, len(svc.Exposes))
+				for k, v := range svc.Exposes {
+					keep, r := decide(f+".exposes", k, v, c, st, req)
+					req = r
+					if keep {
+						exposes[k] = v
+					}
+				}
+				svc.Exposes = exposes
+			}
+		}
+		out[name] = svc
+	}
+	return out, req
+}
+
+func item(field, key, value string, source profile.Contributor) SensitiveItem {
+	return SensitiveItem{Field: field, Key: key, Value: value, Source: source}
+}
+
+func renderMount(m profile.Mount) string {
+	return fmt.Sprintf("mount %s %s %v %v", m.Source, m.Service, m.ReadOnly, m.Optional)
+}
+
+func renderDevice(d profile.DeviceBind) string {
+	return fmt.Sprintf("device %s %s", d.Source, d.Permissions)
+}
+
+func renderEnv(k, v string) string {
+	return fmt.Sprintf("env %s=%s", k, v)
+}
+
+func renderPort(p profile.PortBind) string {
+	return fmt.Sprintf("port %s %s %s", p.Host, p.HostIP, p.Protocol)
+}
+
+func containsKey(keys []string, k string) bool {
+	for _, x := range keys {
+		if x == k {
+			return true
+		}
+	}
+	return false
+}
+```
 
 - [ ] **Step 5: Run the filter tests**
 
@@ -1727,9 +2225,9 @@ package approval
 import (
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/charmbracelet/huh"
-	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/ui"
 )
 
@@ -1738,29 +2236,68 @@ import (
 // error.
 type Prompt func(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error)
 
-// DefaultPrompt is the huh-based implementation.
+// DefaultPrompt is the huh-based implementation. Items are grouped by
+// contributing leaf (Source.FullName); each contributor gets its own
+// huh.Group with a title naming the contributor. Options for keys that
+// PriorChoices marks approved are pre-selected. An abort (Esc/Ctrl+C) is
+// surfaced as "approval declined".
 func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
 	if !ui.IsTTYReader(stdin) {
 		return nil, fmt.Errorf("approval prompt: stdin is not a TTY")
 	}
-	// Build a multi-select of all items, grouped by contributor in the title.
-	opts := make([]huh.Option[string], 0, len(req.Items))
+
+	// Group items by contributor, preserving a stable order.
+	groups := map[string][]SensitiveItem{}
+	var order []string
 	for _, it := range req.Items {
-		label := fmt.Sprintf("%s = %s (%s)", it.Key, it.Value, it.Field)
-		opts = append(opts, huh.NewOption(label, itemID(it)))
+		src := it.Source.FullName
+		if _, ok := groups[src]; !ok {
+			order = append(order, src)
+		}
+		groups[src] = append(groups[src], it)
 	}
-	var selected []string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title(fmt.Sprintf("tpd: %s wants the following sensitive fields", req.ProfileName)).
-				Options(opts...).
-				Value(&selected),
-		),
-	).WithInput(stdin).WithOutput(stdout)
+	sort.Strings(order)
+
+	// Pre-select any item whose key PriorChoices marks approved.
+	preSelected := map[string]bool{}
+	for field, set := range req.PriorChoices {
+		for k, v := range set {
+			if v {
+				preSelected[field+"\x00"+k] = true
+			}
+		}
+	}
+
+	// One *[]string per group, retained so we can read the final selection.
+	sels := make([][]string, len(order))
+	selPtrs := make([]*[]string, len(order))
+	var huhGroups []*huh.Group
+	for i, src := range order {
+		items := groups[src]
+		opts := make([]huh.Option[string], 0, len(items))
+		for _, it := range items {
+			id := itemID(it)
+			opts = append(opts, huh.NewOption(fmt.Sprintf("%s = %s (%s)", it.Key, it.Value, it.Field), id))
+			if preSelected[id] {
+				sels[i] = append(sels[i], id)
+			}
+		}
+		selPtrs[i] = &sels[i]
+		huhGroups = append(huhGroups,
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title(fmt.Sprintf("tpd: %s wants the following from %s", req.ProfileName, src)).
+					Options(opts...).
+					Value(selPtrs[i]),
+			))
+	}
+
+	form := huh.NewForm(huhGroups...).WithInput(stdin).WithOutput(stdout)
 	if err := form.Run(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("approval declined")
 	}
+
+	// Map the per-group selected IDs back to (field, key) choices.
 	choices := map[string]map[string]bool{}
 	for _, it := range req.Items {
 		set, ok := choices[it.Field]
@@ -1768,7 +2305,16 @@ func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[st
 			set = map[string]bool{}
 			choices[it.Field] = set
 		}
-		set[it.Key] = containsStr(selected, itemID(it))
+		set[it.Key] = false
+	}
+	for i := range order {
+		for _, id := range sels[i] {
+			f, k := splitItemID(id)
+			if choices[f] == nil {
+				choices[f] = map[string]bool{}
+			}
+			choices[f][k] = true
+		}
 	}
 	return choices, nil
 }
@@ -1777,15 +2323,14 @@ func itemID(it SensitiveItem) string {
 	return it.Field + "\x00" + it.Key
 }
 
-func containsStr(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
+func splitItemID(id string) (field, key string) {
+	for i := 0; i < len(id); i++ {
+		if id[i] == '\x00' {
+			return id[:i], id[i+1:]
 		}
 	}
-	return false
+	return id, ""
 }
-```
 
 - [ ] **Step 4: Add IsTTYReader to internal/ui**
 
@@ -1862,43 +2407,17 @@ Add to `LaunchOpts`:
 
 - [ ] **Step 2: Write the failing end-to-end test**
 
-Append to `pkg/tpd/launch_test.go`:
-
-```go
-func TestLaunchApprovalGateNonInteractiveErrors(t *testing.T) {
-	// A profile with a core-contributed mount, no stored approval,
-	// non-interactive (no --yes/--no) → exit 2.
-	cat := profile.NewProfileCatalogForTest(map[string]profile.RawProfile{
-		"core/bash": {
-			Profile:   profile.Profile{Version: 1, Image: "img", Command: []string{"run"}, Mounts: map[string]profile.Mount{"~/.ssh": {Source: "~/.ssh"}}},
-			Namespace: "core", Name: "bash",
-		},
-	})
-	_ = cat
-	// Launch uses LoadProfiles; for a unit test, inject a fake store and
-	// prompt and exercise the gate logic via LaunchWithWriter with DryRun
-	// to avoid the container runtime. This test verifies the error path.
-	opts := LaunchOpts{
-		ProfileName: "bash",
-		DryRun:      true,
-		In:          &bytes.Buffer{},
-		IsTTY:       func(io.Reader) bool { return false },
-		ApprovalStore: &fakeStore{},
-	}
-	// Note: this requires a profile dir with the test profile; the
-	// real test writes a temp profile dir. See the full test below.
-	_ = opts
-}
-```
-
-Because `Launch` loads profiles from disk, the full end-to-end test writes a temp profile dir. Replace the stub with a real test:
+Append to `pkg/tpd/launch_test.go`. A user profile's *own* mount is trusted (Namespace "") and is not gated, so a plain user `bash` profile with a direct `mounts:` would never trigger the gate and the non-interactive test would wrongly pass. The test instead writes a *user* profile that `extends: core/opencode`. `core/opencode` extends `core/mise`, which mounts `~/.config/mise` — a core-contributed sensitive mount that the gate must surface. Built-in profiles (core/opencode, core/mise) load from the embedded catalog automatically via `LoadProfiles`; only the user profile is written to the temp profile dir.
 
 ```go
 func TestLaunchApprovalNonInteractiveErrors(t *testing.T) {
 	dir := t.TempDir()
-	writeProfile(t, dir, "bash.yaml", []byte("version: 1\nimage: img\ncommand: [run]\nmounts:\n  ~/.ssh:\n    source: ~/.ssh\n"))
+	// User profile extending core/opencode inherits core/mise's ~/.config/mise
+	// mount (Namespace "core") → gated. The user profile's own Namespace is ""
+	// but the inherited mount stays attributed to core/mise, so the gate fires.
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
 	opts := LaunchOpts{
-		ProfileName:   "bash",
+		ProfileName:   "myagent",
 		ProfileDir:    dir,
 		DryRun:        true,
 		In:            &bytes.Buffer{},
@@ -1913,13 +2432,13 @@ func TestLaunchApprovalNonInteractiveErrors(t *testing.T) {
 
 func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
 	dir := t.TempDir()
-	writeProfile(t, dir, "bash.yaml", []byte("version: 1\nimage: img\ncommand: [run]\nmounts:\n  ~/.ssh:\n    source: ~/.ssh\n"))
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
 	storeDir := t.TempDir()
 	store := approval.NewFSStore(storeDir)
 	opts := LaunchOpts{
-		ProfileName:   "bash",
+		ProfileName:   "myagent",
 		ProfileDir:    dir,
-		DryRun:        true, // avoid runtime
+		DryRun:        true,
 		In:            &bytes.Buffer{},
 		IsTTY:         func(io.Reader) bool { return false },
 		ApprovalStore: store,
@@ -1929,9 +2448,8 @@ func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
 	if res.Err != nil {
 		t.Fatalf("AssumeYes dry-run should succeed, got %v", res.Err)
 	}
-	// State should be persisted (dry-run with AssumeYes does NOT persist;
-	// it uses the ephemeral store). Verify no file written.
-	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "core", "bash.yaml")); !os.IsNotExist(err) {
+	// dry-run --yes uses the ephemeral store, so no state file is written.
+	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "core", "opencode.yaml")); !os.IsNotExist(err) {
 		t.Errorf("dry-run --yes should not persist, file exists or err=%v", err)
 	}
 }
@@ -1983,11 +2501,13 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 	if len(promptReq.Items) > 0 {
 		if opts.AssumeYes || opts.AssumeNo {
 			choices := buildChoices(promptReq, opts.AssumeYes)
+			prior, _ := store.Load(resolved.FullName)
+			merged := mergeChoicesIntoState(prior, promptReq, choices)
 			effectiveStore := store
 			if opts.DryRun {
-				effectiveStore = approval.NewEphemeralStore(store, mergeChoicesIntoState(promptReq, choices))
+				effectiveStore = approval.NewEphemeralStore(store, merged)
 			} else {
-				if err := store.Save(resolved.FullName, mergeChoicesIntoState(promptReq, choices)); err != nil {
+				if err := store.Save(resolved.FullName, merged); err != nil {
 					return Result{ExitCode: 2, Err: err}
 				}
 			}
@@ -2002,14 +2522,16 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 			if prompt == nil {
 				prompt = approval.DefaultPrompt
 			}
-			choices, err := prompt(promptReq, in, os.Stderr)
+			choices, err := prompt(promptReq, in, w)
 			if err != nil {
 				return Result{ExitCode: 2, Err: fmt.Errorf("approval: %w", err)}
 			}
 			if incomplete(promptReq, choices) {
 				return Result{ExitCode: 2, Err: fmt.Errorf("approval incomplete: %s", summarizeUndecided(promptReq, choices))}
 			}
-			if err := store.Save(resolved.FullName, mergeChoicesIntoState(promptReq, choices)); err != nil {
+			prior, _ := store.Load(resolved.FullName)
+			merged := mergeChoicesIntoState(prior, promptReq, choices)
+			if err := store.Save(resolved.FullName, merged); err != nil {
 				return Result{ExitCode: 2, Err: err}
 			}
 			cfg, _, err = approval.Filter(resolved, store)
@@ -2020,15 +2542,20 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 	}
 ```
 
+`w` is the `io.Writer` argument to `LaunchWithWriter`; the approval dialog routes its I/O through `w` (spec §5), not `os.Stderr`.
+
 Add the helper functions and `defaultApprovalDir`:
 
 ```go
 func defaultApprovalDir() string {
-	share, err := os.UserShareDir() // or os.UserHomeDir + "/.local/share"
-	if err != nil || share == "" {
-		share = filepath.Join(os.Getenv("HOME"), ".local", "share")
+	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
+		return filepath.Join(v, "tpd")
 	}
-	return share
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".local", "share", "tpd")
 }
 
 func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bool {
@@ -2044,10 +2571,33 @@ func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bo
 	return choices
 }
 
-func mergeChoicesIntoState(req approval.PromptRequest, choices map[string]map[string]bool) approval.State {
-	st := approval.State{Hash: req.Hash, Profile: req.ProfileName}
-	st.Approved = map[string]approval.ApprovedField{}
+// mergeChoicesIntoState folds the dialog's per-field choices into the prior
+// stored state. Fields not present in choices keep their stored choices. For
+// map fields, Keys is the approved set (denied = absent). For the scalar
+// "network" and "services.<name>.privileged" fields, the choice is stored in
+// ApprovedField.Network (*bool): true → &true, false → &false. Hash and
+// Profile are refreshed to the current request.
+func mergeChoicesIntoState(prior approval.State, req approval.PromptRequest, choices map[string]map[string]bool) approval.State {
+	st := prior
+	st.Hash = req.Hash
+	st.Profile = req.ProfileName
+	if st.Approved == nil {
+		st.Approved = map[string]approval.ApprovedField{}
+	}
 	for field, set := range choices {
+		if field == "network" || isScalarServiceField(field) {
+			b := false
+			for _, v := range set {
+				if v {
+					b = true
+					break
+				}
+			}
+			af := st.Approved[field]
+			af.Network = &b
+			st.Approved[field] = af
+			continue
+		}
 		var keys []string
 		for k, v := range set {
 			if v {
@@ -2058,6 +2608,22 @@ func mergeChoicesIntoState(req approval.PromptRequest, choices map[string]map[st
 		st.Approved[field] = approval.ApprovedField{Keys: keys}
 	}
 	return st
+}
+
+// isScalarServiceField reports whether field is a "services.<name>.privileged"
+// key, whose choice is stored as a *bool in ApprovedField.Network.
+func isScalarServiceField(field string) bool {
+	const prefix = "services."
+	if len(field) <= len(prefix) || field[:len(prefix)] != prefix {
+		return false
+	}
+	rest := field[len(prefix):]
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '.' && rest[i+1:] == "privileged" {
+			return true
+		}
+	}
+	return false
 }
 
 func incomplete(req approval.PromptRequest, choices map[string]map[string]bool) bool {
@@ -2084,20 +2650,20 @@ func summarizeItems(items []approval.SensitiveItem) string {
 func summarizeUndecided(req approval.PromptRequest, choices map[string]map[string]bool) string {
 	var parts []string
 	for _, it := range req.Items {
-		if set, ok := choices[it.Field]; ok {
-			if _, d := set[it.Key]; d {
-				continue
-			}
+		set, ok := choices[it.Field]
+		if !ok {
+			parts = append(parts, it.Field+"."+it.Key)
+			continue
 		}
-		parts = append(parts, it.Field+"."+it.Key)
+		if _, decided := set[it.Key]; !decided {
+			parts = append(parts, it.Field+"."+it.Key)
+		}
 	}
 	return strings.Join(parts, ", ")
 }
 ```
 
 (Add imports: `"github.com/jgillich/tpd/internal/approval"`, `"github.com/jgillich/tpd/internal/ui"`, `"path/filepath"`, `"sort"`.)
-
-Note: `os.UserShareDir` may not exist in Go 1.25; if not, use `os.UserConfigDir` parent or `$XDG_DATA_HOME`. Check the Go version and use the right call. The implementer should verify with `go doc os.UserShareDir`.
 
 - [ ] **Step 5: Run the end-to-end tests**
 
@@ -2260,17 +2826,17 @@ git commit -m "docs: update security model for approval system"
 
 - [ ] **Step 4: Manual smoke test (documented, not automated)**
 
-On a fresh state dir, run a sensitive profile and verify the dialog appears:
+On a fresh state dir, run a sensitive profile and verify the dialog appears. `core/opencode` extends `core/mise`, which mounts `~/.config/mise` — a core-contributed sensitive mount that triggers the gate:
 ```bash
 rm -rf ~/.local/share/tpd/approvals
 go install ./cmd/tpd
-tpd --dry-run --yes core/creds/ssh 2>&1 | head
+tpd --dry-run --yes core/opencode 2>&1 | head
 ```
-Confirm: the dry-run prints the spec with the mount present (approved by --yes via the ephemeral store), and no approval file is written.
+Confirm: the dry-run prints the spec with the mount present (approved by --yes via the ephemeral store), and no approval file is written at `~/.local/share/tpd/approvals/core/opencode.yaml`.
 
 Then:
 ```bash
-tpd --dry-run core/creds/ssh 2>&1 | head
+tpd --dry-run core/opencode 2>&1 | head
 ```
 Confirm: exit 2, "unapproved sensitive fields require --yes or --no".
 
@@ -2291,6 +2857,6 @@ Confirm: exit 2, "unapproved sensitive fields require --yes or --no".
 - §10 Out of scope → no task (correct).
 - §11 Resolved questions → reflected in the constraints.
 
-**Placeholder scan:** Task 6 has skeleton helpers (`applyMapField` etc.) that Step 4 replaces with real logic. This is intentional — the full per-field walk is long and repetitive, and the test in Step 1 drives the implementation. The implementer must complete Step 4 fully; the plan calls this out. No "TBD"/"TODO" strings remain.
+**Placeholder scan:** Task 6 Step 4 contains the complete per-field walk (Mounts, Devices, Env, Ports, Dbus.Talk/Own, Network scalar, and Services mounts/env/exposes/privileged) with real keep/drop/prompt logic and helpers (`decide`, `item`, `render*`, `containsKey`). No "TBD"/"TODO" or "apply the same pattern" strings remain.
 
 **Type consistency:** `Contributor`, `Provenance`, `Resolved`, `SensitiveItem`, `PromptRequest`, `Store`, `State`, `ApprovedField`, `EphemeralStore`, `ComputeApprovalHash`, `Filter`, `DefaultPrompt`, `IsTTYReader` are used consistently across tasks.
