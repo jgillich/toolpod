@@ -88,8 +88,15 @@ func TestPodmanNestedFragment(t *testing.T) {
 	if !svc.Privileged {
 		t.Error("service must be privileged for the nested rootful engine")
 	}
-	if len(svc.Files) != 0 {
-		t.Errorf("service should need no config files, got %v", svc.Files)
+	// The nested engine must avoid the 10.88.0.0/16 default subnet (it
+	// collides with the outer network the service container itself is on) and
+	// carry a DNS backend, so the fragment writes containers.conf.
+	conf, ok := svc.Files["/etc/containers/containers.conf"]
+	if !ok {
+		t.Fatal("service should write /etc/containers/containers.conf")
+	}
+	if !strings.Contains(conf.Content, "default_subnet") || !strings.Contains(conf.Content, "172.20.0.0/16") {
+		t.Errorf("containers.conf should set a non-colliding default_subnet, got:\n%s", conf.Content)
 	}
 	cmd := strings.Join(svc.Command, " ")
 	if !strings.Contains(cmd, "podman system service") {

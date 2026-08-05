@@ -9,11 +9,24 @@ services:
     image: debian:13-slim
     packages:
       - podman
+      # aardvark-dns is a Recommends of podman, so --no-install-recommends skips
+      # it; without it launch containers have no DNS server.
+      - aardvark-dns
       - nftables
       - iptables
       - iproute2
       - catatonit
       - ca-certificates
+      - procps
+    files:
+      # The nested podman's default network (10.88.0.0/16) collides with the
+      # outer podman network the service container itself is attached to, so
+      # launch containers lose routing; pick a subnet the outer network does
+      # not use.
+      /etc/containers/containers.conf:
+        content: |
+          [network]
+          default_subnet = "172.20.0.0/16"
     privileged: true
     caches:
       podman-storage:
