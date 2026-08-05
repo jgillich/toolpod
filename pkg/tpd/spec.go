@@ -105,18 +105,19 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		svcLabels[runtime.ServiceHashLabel] = svc.Hash
 
 		services = append(services, runtime.ServiceSpec{
-			Name:     name,
-			Hash:     svc.Hash,
-			Image:    svc.Image,
-			Packages: svc.Packages,
-			Repos:    svcRepos,
-			Files:    svcFiles,
-			Command:  svc.Command,
-			Caches:   svcCaches,
-			Mounts:   svcMounts,
-			Env:      svc.Env,
-			Labels:   svcLabels,
-			Exposes:  svc.Exposes,
+			Name:       name,
+			Hash:       svc.Hash,
+			Image:      svc.Image,
+			Packages:   svc.Packages,
+			Repos:      svcRepos,
+			Files:      svcFiles,
+			Command:    svc.Command,
+			Caches:     svcCaches,
+			Mounts:     svcMounts,
+			Env:        svc.Env,
+			Labels:     svcLabels,
+			Exposes:    svc.Exposes,
+			Privileged: svc.Privileged,
 		})
 	}
 

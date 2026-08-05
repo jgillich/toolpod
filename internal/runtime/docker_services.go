@@ -232,8 +232,17 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 		exposeParents[parent] = true
 		// A force-removed service leaves dead sockets behind; the next
 		// launch's probe would otherwise succeed on a socket nobody serves.
-		if err := os.Remove(serviceSocketPath(name, mode, exposePath)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale socket: %w", err)
+		// A permission error is tolerated: the socket dir may be owned by the
+		// previous instance's host subuid (a service that chowned it), in
+		// which case the new instance's daemon replaces the socket on bind and
+		// the probe's connect() already fails on a dead socket.
+		path := serviceSocketPath(name, mode, exposePath)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			if os.IsPermission(err) {
+				fmt.Fprintf(os.Stderr, "tpd: warning: cannot remove stale service socket %s: %v\n", path, err)
+			} else {
+				return fmt.Errorf("remove stale socket: %w", err)
+			}
 		}
 	}
 	parents := make([]string, 0, len(exposeParents))
@@ -273,6 +282,7 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 		NetworkMode: "",
 		SecurityOpt: d.securityOpts(),
 		Init:        &initEnabled,
+		Privileged:  svc.Privileged,
 	}, nil, nil, serviceContainerName(name, mode))
 	if err != nil {
 		return fmt.Errorf("create service container: %w", err)

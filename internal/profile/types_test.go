@@ -349,6 +349,7 @@ services:
     exposes:
       registry: /run/registry/registry.sock
     network: host
+    privileged: true
 `
 	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
@@ -362,6 +363,9 @@ services:
 	}
 	if svc.Network != "host" {
 		t.Errorf("service network = %q, want host (rejected field must be captured by YAML)", svc.Network)
+	}
+	if !svc.Privileged {
+		t.Error("service privileged = false, want true")
 	}
 	if len(svc.Command) != 3 || svc.Command[0] != "registry" {
 		t.Errorf("service command = %v, want [registry serve /etc/docker/registry/config.yml]", svc.Command)

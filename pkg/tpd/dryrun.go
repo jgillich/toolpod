@@ -129,6 +129,12 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			if err != nil {
 				return err
 			}
+			if svc.Privileged {
+				_, err = fmt.Fprintln(w, "    privileged: true")
+				if err != nil {
+					return err
+				}
+			}
 			if len(svc.Exposes) > 0 {
 				_, err = fmt.Fprintln(w, "    exposes:")
 				if err != nil {

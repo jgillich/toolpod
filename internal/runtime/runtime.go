@@ -104,18 +104,19 @@ type CacheSpec struct {
 // it shares the profile's packages/repos/files/caches and publishes its
 // service sockets back into the main container.
 type ServiceSpec struct {
-	Name     string
-	Hash     string
-	Image    string
-	Packages []string
-	Repos    map[string]Repo
-	Files    []FileSpec
-	Command  []string
-	Caches   []CacheSpec
-	Mounts   []MountSpec
-	Env      map[string]string
-	Labels   map[string]string
-	Exposes  map[string]string
+	Name       string
+	Hash       string
+	Image      string
+	Packages   []string
+	Repos      map[string]Repo
+	Files      []FileSpec
+	Command    []string
+	Caches     []CacheSpec
+	Mounts     []MountSpec
+	Env        map[string]string
+	Labels     map[string]string
+	Exposes    map[string]string
+	Privileged bool
 }
 
 type WorkspaceSpec struct {

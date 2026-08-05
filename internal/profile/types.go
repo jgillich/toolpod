@@ -122,6 +122,7 @@ type Service struct {
 	Env         map[string]string     `yaml:"environment,omitempty"`
 	Labels      map[string]string     `yaml:"labels,omitempty"`
 	Exposes     map[string]string     `yaml:"exposes,omitempty"`
+	Privileged  bool                  `yaml:"privileged,omitempty"`
 	Version     int                   `yaml:"version,omitempty"`
 	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
 	Network     string                `yaml:"network,omitempty"`

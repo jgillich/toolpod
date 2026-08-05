@@ -45,6 +45,7 @@ func computeServiceHash(svc Service) string {
 	for _, k := range sortedKeys(svc.Labels) {
 		fmt.Fprintf(h, "label %s %s\n", k, svc.Labels[k])
 	}
+	fmt.Fprintf(h, "privileged %v\n", svc.Privileged)
 	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:])[:12]
 }

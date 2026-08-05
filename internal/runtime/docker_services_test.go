@@ -259,6 +259,28 @@ func TestStartServicesCreatesNewService(t *testing.T) {
 	}
 }
 
+func TestStartServicesPrivileged(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.sockets = map[string][]string{
+		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	spec.Services[0].Privileged = true
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	hc := daemon.createReqs[0].HostConfig
+	if hc == nil || !hc.Privileged {
+		t.Errorf("HostConfig.Privileged not true: %+v", hc)
+	}
+}
+
 func TestStartServicesAcceptsNilServiceLabels(t *testing.T) {
 	_, runDir := overrideServicePaths(t)
 	daemon := newFakeServicesDaemon()
