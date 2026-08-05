@@ -1,0 +1,22 @@
+version: 1
+extends: mise
+command: ["goose"]
+tools:
+  aqua:aaif-goose/goose: latest
+mounts:
+  ~/.config/goose:
+    source: ~/.config/goose
+    create: true
+    read_only: false
+  ~/.local/share/goose:
+    source: ~/.local/share/goose
+    create: true
+    read_only: false
+  ~/.cache/goose:
+    source: ~/.cache/goose
+    create: true
+    read_only: false
+  ~/.agents:
+    source: ~/.agents
+    create: true
+    read_only: false

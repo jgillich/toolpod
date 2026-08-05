@@ -1,0 +1,10 @@
+version: 1
+extends: mise
+command: ["codewhale"]
+tools:
+  github:Hmbown/CodeWhale: latest
+mounts:
+  ~/.codewhale:
+    source: ~/.codewhale
+    create: true
+    read_only: false
