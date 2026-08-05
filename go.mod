@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/huh v1.0.0
+	github.com/creack/pty v1.1.24
 	github.com/charmbracelet/x/ansi v0.9.3
 	github.com/distribution/reference v0.6.0
 	github.com/docker/docker v27.1.0+incompatible

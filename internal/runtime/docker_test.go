@@ -1,19 +1,23 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -543,6 +547,171 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
+}
+
+func TestIntegrationPTYSuspendResume(t *testing.T) {
+	if os.Getenv("TPD_PTY_HELPER") == "1" {
+		runPTYSuspendResumeHelper(t)
+		return
+	}
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+
+	command := exec.Command("bash", "--noprofile", "--norc", "-i", "-m")
+	command.Env = append(os.Environ(), "TPD_PTY_HELPER=1", "TERM=xterm-256color", "PS1=tpd-test> ")
+	master, err := pty.StartWithSize(command, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatalf("start test job: %v", err)
+	}
+	defer master.Close()
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = unix.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+		cleanupPTYTestContainers(t)
+	})
+	readPTYUntil(t, master, "tpd-test> ")
+	if _, err := master.Write([]byte(fmt.Sprintf("%s -test.run=TestIntegrationPTYSuspendResume -test.v\n", shellQuote([]string{os.Args[0]})))); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+
+	readPTYUntil(t, master, "READY")
+	if _, err := master.Write([]byte{ctrlZByte}); err != nil {
+		t.Fatalf("send Ctrl-Z: %v", err)
+	}
+	readPTYUntil(t, master, "Stopped")
+
+	if _, err := master.Write([]byte("fg\n")); err != nil {
+		t.Fatalf("send fg: %v", err)
+	}
+	readPTYUntil(t, master, "\x1b[2JRESUMED")
+
+	slave, err := os.Open(fmt.Sprintf("/proc/%d/fd/0", command.Process.Pid))
+	if err != nil {
+		t.Fatalf("open test job terminal: %v", err)
+	}
+	state, err := waitForRawTerminal(slave.Fd())
+	_ = slave.Close()
+	if err != nil {
+		t.Fatalf("read resumed terminal state: %v", err)
+	}
+	if state.Lflag&(unix.ICANON|unix.ECHO) != 0 {
+		t.Fatalf("resumed terminal is not raw: lflag=%#x", state.Lflag)
+	}
+
+	if _, err := master.Write([]byte("\x1b[<64;10;10M\r")); err != nil {
+		t.Fatalf("send mouse and Enter: %v", err)
+	}
+	output := readPTYUntil(t, master, "ENTER")
+	if strings.Contains(output, "\x1b[<64;10;10M") {
+		t.Fatalf("mouse report was echoed by the host terminal: %q", output)
+	}
+	if _, err := master.Write([]byte("q")); err != nil {
+		t.Fatalf("send quit: %v", err)
+	}
+	readPTYUntil(t, master, "tpd-test> ")
+	if _, err := master.Write([]byte("exit\n")); err != nil {
+		t.Fatalf("exit test shell: %v", err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("test job: %v\noutput: %s", err, output)
+	}
+}
+
+func waitForRawTerminal(fd uintptr) (*unix.Termios, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := unix.IoctlGetTermios(int(fd), unix.TCGETS)
+		if err != nil {
+			return nil, err
+		}
+		if state.Lflag&(unix.ICANON|unix.ECHO) == 0 {
+			return state, nil
+		}
+		if time.Now().After(deadline) {
+			return state, nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func cleanupPTYTestContainers(t *testing.T) {
+	t.Helper()
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		return
+	}
+	containers, err := rt.cli.ContainerList(context.Background(), container.ListOptions{All: true})
+	if err != nil {
+		return
+	}
+	for _, c := range containers {
+		for _, name := range c.Names {
+			if strings.HasPrefix(strings.TrimPrefix(name, "/"), "tpd-test-pty-suspend-") {
+				_ = rt.cli.ContainerRemove(context.Background(), c.ID, container.RemoveOptions{Force: true})
+				break
+			}
+		}
+	}
+}
+
+func runPTYSuspendResumeHelper(t *testing.T) {
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	spec := Spec{
+		ProfileName: "test-pty-suspend",
+		Image:       integrationImage,
+		Packages:    []string{"mise", "procps"},
+		Repos:       map[string]Repo{"mise": {ExtRepo: "mise"}},
+		Command:     []string{"bash", "-c", `stty -isig -echo -icanon min 1 time 0; trap 'printf "\033[2JRESUMED\n"' CONT; printf 'READY\n'; while :; do IFS= read -r -N 1 c </dev/tty || exit 1; case "$c" in $'\032') kill -TSTP -- -$$;; $'\r'|$'\n') printf 'ENTER\n';; q) exit 0;; esac; done`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
+		RuntimeHome: "/root",
+		Network:     "none",
+		TTY:         "true",
+	}
+	imageRef, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	spec.Image = imageRef
+	defer rt.cli.ImageRemove(context.Background(), imageRef, image.RemoveOptions{Force: true, PruneChildren: true})
+	created, err := rt.CreateContainer(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, err := rt.RunContainer(context.Background(), spec, created)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("Run exit code = %d, want 0", code)
+	}
+}
+
+func readPTYUntil(t *testing.T, master *os.File, marker string) string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var output bytes.Buffer
+	buf := make([]byte, 4096)
+	for !strings.Contains(output.String(), marker) {
+		if err := master.SetReadDeadline(deadline); err != nil {
+			t.Fatalf("set PTY read deadline: %v", err)
+		}
+		n, err := master.Read(buf)
+		if n > 0 {
+			_, _ = output.Write(buf[:n])
+		}
+		if err != nil {
+			t.Fatalf("read PTY waiting for %q: %v\noutput: %q", marker, err, output.String())
+		}
+	}
+	return output.String()
 }
 
 func TestIntegrationRunPublishesPort(t *testing.T) {
