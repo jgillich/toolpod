@@ -67,7 +67,7 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "myagent",
-		Extends:    []string{"opencode", "podman", "ruby"},
+		Extends:    []string{"opencode", "services/podman", "lang/ruby"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "myagent.yaml"))
 	content := string(data)
-	for _, want := range []string{"- core/opencode", "- core/podman", "- core/ruby"} {
+	for _, want := range []string{"- core/opencode", "- core/services/podman", "- core/lang/ruby"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
@@ -145,17 +145,35 @@ func TestNewProfileExtendsUserProfile(t *testing.T) {
 }
 
 func TestNewProfileNameCollidesWithFragment(t *testing.T) {
+	// No built-in fragment keeps a single-segment display name after the
+	// catalog restructure (all live under lang/services/creds/...), so the
+	// single-segment case collides with a user fragment, while a hierarchical
+	// name collides with a built-in (core/lang/javascript).
 	dir := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), Options{
-		Name:       "javascript",
-		ProfileDir: dir,
-	}, strings.NewReader(""), &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for name colliding with fragment")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "fragment") {
-		t.Errorf("error should mention fragment, got: %v", err)
+	if err := os.WriteFile(filepath.Join(fragDir, "myfrag.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct{ profileName string }{
+		"single-segment user fragment":   {profileName: "myfrag"},
+		"hierarchical built-in fragment": {profileName: "lang/javascript"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := Run(context.Background(), Options{
+				Name:       tc.profileName,
+				ProfileDir: dir,
+			}, strings.NewReader(""), &stdout, &stderr)
+			if err == nil {
+				t.Fatal("expected error for name colliding with fragment")
+			}
+			if !strings.Contains(err.Error(), "fragment") {
+				t.Errorf("error should mention fragment, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -207,9 +225,9 @@ func TestUnknownExtendsRejected(t *testing.T) {
 
 func TestWizardNewProfileFlow(t *testing.T) {
 	dir := t.TempDir()
-	// "New" → name "foo" → bases "mise,opencode" → fragments "javascript,gitconfig"
+	// "New" → name "foo" → bases "mise,opencode" → fragments "lang/javascript,creds/gitconfig"
 	// (the fragment picker appends to the same extends list).
-	input := strings.NewReader("New\nfoo\nmise,opencode\njavascript,gitconfig\n")
+	input := strings.NewReader("New\nfoo\nmise,opencode\nlang/javascript,creds/gitconfig\n")
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Interactive: true,
@@ -223,7 +241,7 @@ func TestWizardNewProfileFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, want := range []string{"- core/mise", "- core/opencode", "- core/javascript", "- core/gitconfig"} {
+	for _, want := range []string{"- core/mise", "- core/opencode", "- core/lang/javascript", "- core/creds/gitconfig"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
@@ -235,7 +253,7 @@ func TestUnknownNameCreatesNewProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "rustdev",
-		Extends:    []string{"javascript"},
+		Extends:    []string{"lang/javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -266,11 +284,11 @@ func TestGenerateEmitsCoreQualifiedFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := generate("myagent", []string{"core/mise", "core/javascript"}, cat)
+	content, err := generate("myagent", []string{"core/mise", "core/lang/javascript"}, cat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "- core/mise") || !strings.Contains(content, "- core/javascript") {
+	if !strings.Contains(content, "- core/mise") || !strings.Contains(content, "- core/lang/javascript") {
 		t.Errorf("generated content missing core/-qualified extends, got:\n%s", content)
 	}
 }

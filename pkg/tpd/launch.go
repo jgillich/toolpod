@@ -63,10 +63,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	// here with the composition path instead.
 	if ref, err := cat.ParseRefForCatalog(opts.ProfileName); err == nil {
 		if key, ok := cat.ResolveRef(ref); ok && cat.IsFragment(key) {
-			name := key
-			if i := strings.LastIndex(name, "/"); i >= 0 {
-				name = name[i+1:]
-			}
+			name := strings.TrimPrefix(key, "core/")
 			return Result{ExitCode: 2, Err: fmt.Errorf("fragment %q cannot be launched: fragments carry no image or command. Create a profile that extends it: tpd init myprofile --extends %s", name, name)}
 		}
 	}

@@ -14,9 +14,10 @@ func (c Catalog) ParseRefForCatalog(s string) (Ref, error) {
 // ParseRef splits a reference string against the registered namespaces into a
 // Ref. A string with no "/" is unqualified (Ref{Namespace: "", Name: s}). A
 // string with "/" is matched against the longest registered namespace prefix
-// at a segment boundary (ns + "/"); the remainder is the local name. An
-// unregistered prefix is a parse error (the "/" belongs to an unknown
-// namespace); an empty local name ("core/") is rejected.
+// at a segment boundary (ns + "/"); the remainder is the local name and may
+// itself be multi-segment (lang/go). A slash string matching no registered
+// prefix is an unqualified hierarchical name (user namespaces like lang/go
+// parse this way), not an error. An empty local name ("core/") is rejected.
 func ParseRef(s string, namespaces map[string]bool) (Ref, error) {
 	if s == "" {
 		return Ref{}, fmt.Errorf("empty reference")
@@ -39,16 +40,15 @@ func ParseRef(s string, namespaces map[string]bool) (Ref, error) {
 			if local == "" {
 				return Ref{}, fmt.Errorf("empty local name in extends: %s", s)
 			}
-			// Local names are single-segment file basenames; the namespace
-			// carries any path prefix. A remaining "/" means the local name
-			// has multiple segments, which is not allowed.
-			if strings.Contains(local, "/") {
-				return Ref{}, fmt.Errorf("invalid local name %q in extends: %s (must be a single segment)", local, s)
-			}
+			// The local name may be multi-segment (lang/go, lang/js/node);
+			// the namespace is a registered prefix, everything after it is name.
 			return Ref{Namespace: ns, Name: local}, nil
 		}
 	}
-	return Ref{}, fmt.Errorf("unknown namespace in extends: %s", s)
+	// No registered prefix matches, so the whole string is an unqualified
+	// hierarchical name. This is how user namespaces (lang/go,
+	// services/podman) parse: their directory is not a registered prefix.
+	return Ref{Namespace: "", Name: s}, nil
 }
 
 // ResolveRef resolves a Ref to a canonical catalog FullName (an entries key).

@@ -58,11 +58,15 @@ func TestExtendsListResolve(t *testing.T) {
 	}
 }
 
-func TestExtendsListResolveRejectsUnknownNamespace(t *testing.T) {
+func TestExtendsListResolveHierarchicalFallback(t *testing.T) {
 	ns := map[string]bool{"": true, "core": true}
 	el := ExtendsList{Raw: []string{"corexy/foo"}}
-	if err := el.Resolve(ns); err == nil {
-		t.Fatal("expected unknown-namespace error")
+	if err := el.Resolve(ns); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := []Ref{{Namespace: "", Name: "corexy/foo"}}
+	if !reflect.DeepEqual(el.Resolved, want) {
+		t.Errorf("Resolved = %+v, want %+v", el.Resolved, want)
 	}
 }
 

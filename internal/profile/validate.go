@@ -439,17 +439,27 @@ func validateReservedName(rc RawProfile, name string) error {
 }
 
 // ValidateName checks a user-supplied profile name for the init flow. It
-// rejects empty names, names unsafe for use as a file path (slashes, "..",
-// whitespace), and names reserved for subcommands. Fragment collisions are
-// checked separately by the caller against the catalog.
+// rejects empty names, names unsafe for use as a file path (an invalid
+// segment, ".."), a reserved-namespace first segment, and single-segment
+// names reserved for subcommands. Fragment collisions are checked separately
+// by the caller against the catalog.
 func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("profile name is required")
 	}
-	if !profileNameRe.MatchString(name) || strings.Contains(name, "..") {
-		return fmt.Errorf("invalid profile name %q: must match %s and must not contain '..'", name, profileNameRe)
+	segs := strings.Split(name, "/")
+	for _, seg := range segs {
+		if !profileNameRe.MatchString(seg) || strings.Contains(seg, "..") {
+			return fmt.Errorf("invalid profile name %q: each segment must match %s and must not contain '..'", name, profileNameRe)
+		}
 	}
-	if reservedNames[name] {
+	// The reserved-namespace check applies to the first segment of a
+	// hierarchical name only; a bare profile named "core" is allowed (it
+	// doesn't collide with built-in "core/..." keys).
+	if len(segs) > 1 && segs[0] == "core" {
+		return fmt.Errorf("invalid profile name %q: %s is a reserved namespace prefix", name, "core")
+	}
+	if !strings.Contains(name, "/") && reservedNames[name] {
 		return fmt.Errorf("profile name %q is reserved (collides with a subcommand)", name)
 	}
 	return nil

@@ -102,10 +102,13 @@ func TestLoadProfilesRejectsCrossTypeDisplayNameCollision(t *testing.T) {
 }
 
 func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *testing.T) {
-	// A user profile named ssh collides with the built-in core/ssh fragment.
-	// Tolerant mode keeps the profile (launchable) and drops the fragment.
+	// A user profile named creds/ssh collides with the built-in core/creds/ssh
+	// fragment. Tolerant mode keeps the profile (launchable) and drops the fragment.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ssh.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "creds"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "creds", "ssh.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var warnings []string
@@ -113,17 +116,17 @@ func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *tes
 	if err != nil {
 		t.Fatalf("LoadProfilesTolerant: %v", err)
 	}
-	if rc, ok := cat.Get("ssh"); !ok || rc.Namespace != "" {
-		t.Errorf("user profile ssh = {%q, %q}, want {\"\", ssh}", rc.Namespace, rc.Name)
+	if rc, ok := cat.Get("creds/ssh"); !ok || rc.Namespace != "" {
+		t.Errorf("user profile creds/ssh = {%q, %q}, want {\"\", creds/ssh}", rc.Namespace, rc.Name)
 	}
-	if cat.IsFragment("ssh") {
-		t.Error("user profile ssh should not be a fragment")
+	if cat.IsFragment("creds/ssh") {
+		t.Error("user profile creds/ssh should not be a fragment")
 	}
-	if _, ok := cat.Get("core/ssh"); ok {
-		t.Error("core/ssh fragment should be dropped on cross-type collision")
+	if _, ok := cat.Get("core/creds/ssh"); ok {
+		t.Error("core/creds/ssh fragment should be dropped on cross-type collision")
 	}
-	if len(warnings) == 0 || !strings.Contains(warnings[0], "ssh") || !strings.Contains(warnings[0], "fragment") {
-		t.Errorf("warn should name ssh and fragment, got %v", warnings)
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "creds/ssh") || !strings.Contains(warnings[0], "fragment") {
+		t.Errorf("warn should name creds/ssh and fragment, got %v", warnings)
 	}
 }
 
@@ -457,7 +460,7 @@ func TestBuiltinFragmentsDeclarePackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
-	for _, name := range []string{"core/php", "core/gui"} {
+	for _, name := range []string{"core/lang/php", "core/gui/gui"} {
 		rc, ok := cat.Get(name)
 		if !ok {
 			t.Fatalf("fragment %q missing from catalog", name)
@@ -525,8 +528,8 @@ func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := cat.ProfileDisplayNames()
-	if contains(names, "javascript") {
-		t.Errorf("ProfileDisplayNames should exclude fragment javascript; got %v", names)
+	if contains(names, "lang/javascript") {
+		t.Errorf("ProfileDisplayNames should exclude fragment lang/javascript; got %v", names)
 	}
 	if !contains(names, "mise") {
 		t.Errorf("ProfileDisplayNames missing profile mise; got %v", names)
@@ -566,7 +569,7 @@ func TestSourceUserOnly(t *testing.T) {
 
 func TestFragmentByDisplayNameUserWins(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -577,12 +580,12 @@ func TestFragmentByDisplayNameUserWins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := cat.FragmentByDisplayName("javascript")
+	got, ok := cat.FragmentByDisplayName("lang/javascript")
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if got != "javascript" {
-		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"javascript\" (user wins)", got)
+	if got != "lang/javascript" {
+		t.Errorf("FragmentByDisplayName(lang/javascript) = %q, want \"lang/javascript\" (user wins)", got)
 	}
 }
 
@@ -591,12 +594,12 @@ func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := cat.FragmentByDisplayName("javascript")
+	got, ok := cat.FragmentByDisplayName("lang/javascript")
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if got != "core/javascript" {
-		t.Errorf("FragmentByDisplayName(javascript) = %q, want \"core/javascript\"", got)
+	if got != "core/lang/javascript" {
+		t.Errorf("FragmentByDisplayName(lang/javascript) = %q, want \"core/lang/javascript\"", got)
 	}
 }
 
@@ -605,21 +608,21 @@ func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, ok := cat.Get("core/typescript")
+	rc, ok := cat.Get("core/lang/typescript")
 	if !ok {
-		t.Fatal("core/typescript missing")
+		t.Fatal("core/lang/typescript missing")
 	}
-	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "javascript"}) {
-		t.Errorf("core/typescript extends = %+v, want [core/javascript]", rc.ExtendsList.Resolved)
+	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "lang/javascript"}) {
+		t.Errorf("core/lang/typescript extends = %+v, want [core/lang/javascript]", rc.ExtendsList.Resolved)
 	}
 }
 
 func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
-	// A user *fragment* named javascript wins unqualified fallback, but
-	// core/typescript extends core/javascript (qualified), so the built-in
-	// fragment still provides its tools despite the display-name shadow.
+	// A user *fragment* named lang/javascript wins unqualified fallback, but
+	// core/lang/typescript extends core/lang/javascript (qualified), so the
+	// built-in fragment still provides its tools despite the display-name shadow.
 	dir := t.TempDir()
-	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -630,15 +633,136 @@ func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged, err := ResolveFragment(cat, "typescript")
+	merged, err := ResolveFragment(cat, "lang/typescript")
 	if err != nil {
 		t.Fatalf("ResolveFragment: %v", err)
 	}
 	if merged.Tools["node"].Version != "latest" {
-		t.Error("core/typescript should inherit node from the built-in core/javascript fragment, not the user fragment")
+		t.Error("core/lang/typescript should inherit node from the built-in core/lang/javascript fragment, not the user fragment")
 	}
 	if _, ok := merged.Tools["userjs"]; ok {
-		t.Error("core/typescript must not inherit tools from the user javascript fragment")
+		t.Error("core/lang/typescript must not inherit tools from the user lang/javascript fragment")
+	}
+}
+
+func TestLoadProfilesUserSubfolderNamespace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "lang"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// lang/cobol has no built-in fragment, so it must not trip the cross-type
+	// display-name collision check.
+	if err := os.WriteFile(filepath.Join(dir, "lang", "cobol.yaml"),
+		[]byte("version: 1\ncommand: [\"cobol\"]\nimage: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, ok := cat.Get("lang/cobol")
+	if !ok {
+		t.Fatal("user lang/cobol not keyed under hierarchical FullName")
+	}
+	if rc.Namespace != "" || rc.Name != "lang/cobol" {
+		t.Errorf("identity = {%q, %q}, want {\"\", \"lang/cobol\"}", rc.Namespace, rc.Name)
+	}
+}
+
+func TestLoadProfilesUserNestedSubfolder(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "lang", "js", "node.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("version: 1\ncommand: [\"node\"]\nimage: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc, ok := cat.Get("lang/js/node"); !ok || rc.Name != "lang/js/node" {
+		t.Errorf("lang/js/node = %+v, want present with Name lang/js/node", rc)
+	}
+}
+
+func TestLoadProfilesRejectsReservedNamespacePrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core", "mytool.yaml"),
+		[]byte("version: 1\ncommand: [\"mytool\"]\nimage: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadProfiles(dir)
+	if err == nil {
+		t.Fatal("expected reserved-namespace error, got nil")
+	}
+	if !strings.Contains(err.Error(), "core is a reserved namespace prefix") {
+		t.Fatalf("error = %v, want 'core is a reserved namespace prefix'", err)
+	}
+}
+
+func TestLoadProfilesTolerantSkipsReservedNamespacePrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core", "mytool.yaml"),
+		[]byte("version: 1\ncommand: [\"mytool\"]\nimage: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warns []string
+	cat, err := LoadProfilesTolerant(dir, func(w string) { warns = append(warns, w) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cat.Get("core/mytool"); ok {
+		t.Error("reserved-namespace file must be skipped in tolerant mode")
+	}
+	if len(warns) == 0 || !strings.Contains(warns[0], "reserved namespace") {
+		t.Errorf("expected a reserved-namespace warning, got %v", warns)
+	}
+}
+
+func TestFragmentByDisplayNameHierarchicalCoreOnly(t *testing.T) {
+	cat := Catalog{
+		entries: map[string]RawProfile{
+			"core/lang/go": {Profile: Profile{Version: 1}, Namespace: "core", Name: "lang/go"},
+		},
+		namespaces: map[string]bool{"": true, "core": true},
+		fragments:  map[string]bool{"core/lang/go": true},
+	}
+	got, ok := cat.FragmentByDisplayName("lang/go")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if got != "core/lang/go" {
+		t.Errorf("FragmentByDisplayName(lang/go) = %q, want core/lang/go", got)
+	}
+}
+
+func TestLoadProfilesUserShadowsCoreHierarchical(t *testing.T) {
+	// User fragments/lang/go.yaml shadows the built-in core/lang/go fragment.
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "go.yaml"), []byte("version: 1\ntools:\n  user-go: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := cat.ResolveRef(Ref{Name: "lang/go"}); got != "lang/go" {
+		t.Errorf("ResolveRef(lang/go) = %q, want user lang/go", got)
+	}
+	if got := cat.Source("lang/go"); got != "user shadow" {
+		t.Errorf("Source(lang/go) = %q, want \"user shadow\"", got)
 	}
 }
 

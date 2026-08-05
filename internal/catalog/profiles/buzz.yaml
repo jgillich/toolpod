@@ -1,8 +1,8 @@
 version: 1
 extends:
   - mise
-  - gui
-  - gui-runtime
+  - gui/gui
+  - gui/gui-runtime
   - codex
   - claude
 command: ["buzz"]

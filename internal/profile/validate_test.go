@@ -71,17 +71,32 @@ func TestValidateImage(t *testing.T) {
 }
 
 func TestValidateName(t *testing.T) {
-	valid := []string{"foo", "my-agent", "a.b", "opencode", "x_y"}
+	valid := []string{"foo", "my-agent", "a.b", "opencode", "x_y", "a/b"}
 	for _, name := range valid {
 		if err := ValidateName(name); err != nil {
 			t.Errorf("ValidateName(%q) = %v, want nil", name, err)
 		}
 	}
-	invalid := []string{"", "config", "doctor", "help", "version", "completion", "prune", "init", "../x", "a/b", `a\b`, "a b", "a..b"}
+	invalid := []string{"", "config", "doctor", "help", "version", "completion", "prune", "init", "../x", `a\b`, "a b", "a..b"}
 	for _, name := range invalid {
 		if err := ValidateName(name); err == nil {
 			t.Errorf("ValidateName(%q) = nil, want error", name)
 		}
+	}
+	if err := ValidateName("lang/go"); err != nil {
+		t.Errorf("ValidateName(lang/go) = %v, want nil", err)
+	}
+	if err := ValidateName("core/go"); err == nil {
+		t.Error("ValidateName(core/go) = nil, want reserved-namespace error")
+	}
+	if err := ValidateName("core"); err != nil {
+		t.Errorf("ValidateName(core) = %v, want nil (a bare core profile name is allowed)", err)
+	}
+	if err := ValidateName("lang/foo bar"); err == nil {
+		t.Error("ValidateName(lang/foo bar) = nil, want invalid-segment error")
+	}
+	if err := ValidateName("lang/.."); err == nil {
+		t.Error("ValidateName(lang/..) = nil, want '..' error")
 	}
 }
 

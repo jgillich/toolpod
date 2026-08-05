@@ -12,8 +12,8 @@ func TestLoadProfilesIncludesFragments(t *testing.T) {
 		t.Fatal(err)
 	}
 	// "ssh" is a built-in fragment, not a profile.
-	// It should be resolvable via Get under its core/ FullName.
-	rc, ok := cat.Get("core/ssh")
+	// It should be resolvable via Get under its core/creds/ FullName.
+	rc, ok := cat.Get("core/creds/ssh")
 	if !ok {
 		t.Fatal("fragment 'ssh' not found in catalog")
 	}
@@ -24,8 +24,12 @@ func TestLoadProfilesIncludesFragments(t *testing.T) {
 
 func TestFragmentProfileNameCollisionRejected(t *testing.T) {
 	dir := t.TempDir()
-	// Create a user profile named "ssh" that collides with the built-in fragment.
-	if err := os.WriteFile(filepath.Join(dir, "ssh.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\n"), 0o644); err != nil {
+	// Create a user profile named "creds/ssh" that collides with the built-in
+	// core/creds/ssh fragment.
+	if err := os.MkdirAll(filepath.Join(dir, "creds"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "creds", "ssh.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadProfiles(dir)

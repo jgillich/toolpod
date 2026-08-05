@@ -78,7 +78,7 @@ func (d *DockerRuntime) CreateContainer(ctx context.Context, spec Spec) (CreateR
 		return CreateResult{}, fmt.Errorf("build mounts: %w", err)
 	}
 	envList := buildEnv(spec, runtimeHome)
-	containerName := "tpd-" + spec.ProfileName + "-" + randomID(8)
+	containerName := containerNameFor(spec.ProfileName) + randomID(8)
 
 	exposedPorts, portBindings := buildPortBindings(spec)
 	devices := buildDevices(spec)
@@ -98,7 +98,7 @@ func (d *DockerRuntime) CreateContainer(ctx context.Context, spec Spec) (CreateR
 		AttachStderr: true,
 		WorkingDir:   spec.RuntimeHome,
 		Labels:       spec.Labels,
-		Hostname:     spec.ProfileName,
+		Hostname:     strings.ReplaceAll(spec.ProfileName, "/", "-"),
 		Entrypoint:   []string{},
 		ExposedPorts: exposedPorts,
 	}, &container.HostConfig{
@@ -927,4 +927,11 @@ func randomID(n int) string {
 		return strconv.Itoa(os.Getpid())
 	}
 	return hex.EncodeToString(b)
+}
+
+// containerNameFor builds the Docker container-name prefix from a profile
+// name. Profile names may be hierarchical (lang/go); '/' is not valid in a
+// container name, so it becomes '-'.
+func containerNameFor(profileName string) string {
+	return "tpd-" + strings.ReplaceAll(profileName, "/", "-") + "-"
 }

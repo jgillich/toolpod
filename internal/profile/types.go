@@ -68,7 +68,10 @@ func (e ExtendsList) MarshalYAML() (interface{}, error) {
 }
 
 // Resolve splits each Raw string against the registered namespaces into
-// Resolved. Idempotent. An unregistered prefix or empty local name is an error.
+// Resolved. Idempotent. A string matching a registered namespace prefix at a
+// segment boundary splits into (namespace, remainder); a slash string matching
+// no prefix is kept as an unqualified hierarchical name. An empty local name
+// is an error.
 func (e *ExtendsList) Resolve(namespaces map[string]bool) error {
 	if len(e.Raw) == 0 {
 		e.Resolved = nil
@@ -333,13 +336,14 @@ type Resources struct {
 // RawProfile is a profile as loaded from disk, before extends-merge. It
 // carries its source identity (Namespace + Name) and file path. Namespace is
 // "core" for embedded built-ins, "" for user files, or a future remote
-// namespace ("github.com/user/project"). Name is the local single-segment name
-// (file basename). FullName is the canonical catalog key; DisplayName is the
-// unqualified name used in user-facing output.
+// namespace ("github.com/user/project"). Name is the path relative to the
+// profiles/fragments root minus .yaml (may contain /). FullName is the
+// canonical catalog key; DisplayName is the unqualified name used in
+// user-facing output.
 type RawProfile struct {
 	Profile
 	Namespace string                    `yaml:"-"` // source identity, stamped by loaders
-	Name      string                    `yaml:"-"` // local single-segment name (file basename)
+	Name      string                    `yaml:"-"` // path relative to the profiles/fragments root minus .yaml (may contain /)
 	Path      string                    `yaml:"-"` // file path for error reporting
 	NullKeys  map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
 }

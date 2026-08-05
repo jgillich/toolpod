@@ -272,8 +272,8 @@ func loadUserDirTolerant(dir string, entries map[string]RawProfile, fragmentName
 			warn(fmt.Sprintf("%s: %v", path, err))
 			return nil
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
-		if err := validateFilenameName(name, path); err != nil {
+		name := nameFromPath(dir, path)
+		if err := validateHierarchicalName(name, path, builtinNamespaces); err != nil {
 			warn(path + ": " + err.Error())
 			return nil
 		}
@@ -314,8 +314,8 @@ func loadUserFragmentsTolerant(dir string, entries map[string]RawProfile, fragme
 			warn(fmt.Sprintf("%s: %v", path, err))
 			return nil
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
-		if err := validateFilenameName(name, path); err != nil {
+		name := nameFromPath(dir, path)
+		if err := validateHierarchicalName(name, path, builtinNamespaces); err != nil {
 			warn(path + ": " + err.Error())
 			return nil
 		}
@@ -353,7 +353,7 @@ func loadBuiltins(entries map[string]RawProfile) error {
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		name := nameFromPath(root, path)
 		rc, err := parseRaw(data, "built-in:"+path)
 		if err != nil {
 			return err
@@ -390,8 +390,8 @@ func loadUserDir(dir string, entries map[string]RawProfile, fragmentNames map[st
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
-		if err := validateFilenameName(name, path); err != nil {
+		name := nameFromPath(dir, path)
+		if err := validateHierarchicalName(name, path, builtinNamespaces); err != nil {
 			return err
 		}
 		rc, err := parseRaw(data, path)
@@ -561,7 +561,7 @@ func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, erro
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		name := nameFromPath(root, path)
 		rc, err := parseRaw(data, "fragment:"+name)
 		if err != nil {
 			return err
@@ -588,7 +588,7 @@ func loadBuiltinFragments(entries map[string]RawProfile, fragmentNames map[strin
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
+		name := nameFromPath(root, path)
 		rc, err := parseRaw(data, "built-in-fragment:"+path)
 		if err != nil {
 			return err
@@ -622,8 +622,8 @@ func loadUserFragments(dir string, entries map[string]RawProfile, fragmentNames 
 		if err != nil {
 			return err
 		}
-		name := strings.TrimSuffix(filepath.Base(path), ".yaml")
-		if err := validateFilenameName(name, path); err != nil {
+		name := nameFromPath(dir, path)
+		if err := validateHierarchicalName(name, path, builtinNamespaces); err != nil {
 			return err
 		}
 		rc, err := parseRaw(data, path)
@@ -656,11 +656,31 @@ func ParseRaw(data []byte, path string) (RawProfile, error) {
 // from user filenames, and the container name/hostname construction.
 var profileNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
-// validateFilenameName applies profileNameRe to names derived from filenames,
-// additionally rejecting ".." for path safety.
-func validateFilenameName(name, path string) error {
-	if !profileNameRe.MatchString(name) || strings.Contains(name, "..") {
-		return ProfileError{Path: path, Message: "invalid profile name derived from filename: " + name}
+// nameFromPath derives the hierarchical name for a YAML file from its path
+// relative to the catalog root: root/lang/go.yaml -> "lang/go".
+func nameFromPath(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = filepath.Base(path)
+	}
+	name := strings.TrimSuffix(filepath.ToSlash(rel), ".yaml")
+	return name
+}
+
+// validateHierarchicalName checks every segment of a file-derived name and
+// rejects a first segment that names a registered namespace (core), which
+// would collide with built-in entries.
+func validateHierarchicalName(name, path string, namespaces map[string]bool) error {
+	for _, seg := range strings.Split(name, "/") {
+		if !profileNameRe.MatchString(seg) || strings.Contains(seg, "..") {
+			return ProfileError{Path: path, Message: "invalid profile name derived from filename: " + name}
+		}
+	}
+	if strings.Contains(name, "/") {
+		first := strings.SplitN(name, "/", 2)[0]
+		if namespaces[first] {
+			return ProfileError{Path: path, Message: first + " is a reserved namespace prefix"}
+		}
 	}
 	return nil
 }

@@ -202,8 +202,8 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	}
 	bases = dedup(bases)
 	for _, b := range bases {
-		if msg := catalog.Advisory(displayName(b)); msg != "" {
-			fmt.Fprintf(stderr, "note: %s grants: %s\n", displayName(b), msg)
+		if msg := catalog.Advisory(advisoryLeaf(b)); msg != "" {
+			fmt.Fprintf(stderr, "note: %s grants: %s\n", advisoryLeaf(b), msg)
 		}
 	}
 
@@ -286,7 +286,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 	}
 
-	if err := os.MkdirAll(userDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
 
@@ -393,9 +393,9 @@ func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
 	return cat.ResolveRef(ref)
 }
 
-// displayName is the local name segment of a canonical catalog key ("mise"
-// for both "mise" and "core/mise"), used for advisory lookups.
-func displayName(key string) string {
+// advisoryLeaf is the last path segment of a canonical catalog key ("docker-host"
+// for "core/services/docker-host"), the key the advisory table uses.
+func advisoryLeaf(key string) string {
 	if i := strings.LastIndex(key, "/"); i >= 0 {
 		return key[i+1:]
 	}

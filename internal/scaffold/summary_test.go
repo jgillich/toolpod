@@ -15,7 +15,7 @@ func TestInitSummaryWithMounts(t *testing.T) {
 	// Non-interactive, no TTY — summary prints but no editor prompt
 	err := Run(context.Background(), Options{
 		Name:       "opencode",
-		Extends:    []string{"ssh"},
+		Extends:    []string{"creds/ssh"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestInitNoEditorPromptWithoutMounts(t *testing.T) {
 	// javascript fragment has only caches+tools, no mounts
 	err := Run(context.Background(), Options{
 		Name:       "shell",
-		Extends:    []string{"javascript"},
+		Extends:    []string{"lang/javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestExplicitArgsNoReviewPrompt(t *testing.T) {
 	// prompt: print the container-access summary and write the file.
 	err := Run(context.Background(), Options{
 		Name:        "opencode",
-		Extends:     []string{"javascript", "gitconfig", "ssh"},
+		Extends:     []string{"lang/javascript", "creds/gitconfig", "creds/ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -82,7 +82,7 @@ func TestInitReviewAbort(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nssh\na\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\ncreds/ssh\na\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestInitReviewProceed(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nssh\n\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\ncreds/ssh\n\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

@@ -1,7 +1,7 @@
 version: 1
 extends:
   - mise
-  - gui
+  - gui/gui
 command: ["opencode", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"]
 tools:
   "appimage:anomalyco/opencode": latest

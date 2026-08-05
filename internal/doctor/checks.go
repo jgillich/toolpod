@@ -386,7 +386,7 @@ func checkUserOverrides(userDir string) []Check {
 			checks = append(checks, Check{
 				Name:    "gitconfig",
 				Status:  Info,
-				Message: fmt.Sprintf("%s: not mounted (run `tpd init %s --fragments gitconfig`)", name, name),
+				Message: fmt.Sprintf("%s: not mounted (run `tpd init %s --extends creds/gitconfig`)", name, name),
 			})
 		}
 	}

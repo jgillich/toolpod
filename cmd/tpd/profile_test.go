@@ -122,9 +122,9 @@ func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
 				t.Errorf("bash row should be 'profile' 'user shadow', got: %q", line)
 			}
 			bashRow = true
-		case "docker-host":
+		case "services/docker-host":
 			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
-				t.Errorf("docker-host row should be 'fragment' 'core', got: %q", line)
+				t.Errorf("services/docker-host row should be 'fragment' 'core', got: %q", line)
 			}
 			dockerRow = true
 		}
@@ -194,11 +194,11 @@ func TestProfileEditBuiltInFragmentNoSaveRemovesSeed(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "docker-host")
+	out, err := runTpdEnv(t, env, "edit", "services/docker-host")
 	if err != nil {
-		t.Fatalf("edit docker-host fragment (no save): %v\n%s", err, out)
+		t.Fatalf("edit services/docker-host fragment (no save): %v\n%s", err, out)
 	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpd", "fragments", "docker-host.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")); !os.IsNotExist(err) {
 		t.Errorf("expected no user fragment after quitting without saving, stat err: %v", err)
 	}
 }
@@ -209,17 +209,17 @@ func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "docker-host")
+	out, err := runTpdEnv(t, env, "edit", "services/docker-host")
 	if err != nil {
-		t.Fatalf("edit docker-host fragment (save): %v\n%s", err, out)
+		t.Fatalf("edit services/docker-host fragment (save): %v\n%s", err, out)
 	}
-	target := filepath.Join(cfg, "tpd", "fragments", "docker-host.yaml")
+	target := filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "extends: core/docker-host") {
+	if !strings.Contains(s, "extends: core/services/docker-host") {
 		t.Errorf("fragment seed must extend the built-in fragment, got:\n%s", s)
 	}
 	if !strings.Contains(s, "Resolved fragment (reference)") {
@@ -342,9 +342,9 @@ func (f fakeFileInfo) IsDir() bool        { return false }
 func (f fakeFileInfo) Sys() interface{}   { return nil }
 
 func TestProfileShowResolvedFragment(t *testing.T) {
-	out, err := runTpd(t, "show", "--resolved", "ssh")
+	out, err := runTpd(t, "show", "--resolved", "creds/ssh")
 	if err != nil {
-		t.Fatalf("show --resolved ssh: %v\n%s", err, out)
+		t.Fatalf("show --resolved creds/ssh: %v\n%s", err, out)
 	}
 	if strings.Contains(out, "is a fragment") {
 		t.Errorf("expected fragment to resolve, got refusal:\n%s", out)
@@ -379,6 +379,26 @@ func TestProfileEditCoreMiseSeedsUserMiseYaml(t *testing.T) {
 	}
 	if !strings.Contains(s, "# saved by test") {
 		t.Errorf("expected override to carry the editor's write, got:\n%s", s)
+	}
+}
+
+func TestProfileEditQualifiedBuiltInFragmentSeedsNamespacedPath(t *testing.T) {
+	cfg := t.TempDir()
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "core/services/docker-host")
+	if err != nil {
+		t.Fatalf("edit core/services/docker-host: %v\n%s", err, out)
+	}
+	target := filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("expected seeded override at %s: %v", target, err)
+	}
+	if !strings.Contains(string(data), "extends: core/services/docker-host") {
+		t.Errorf("seed must extend core/services/docker-host, got:\n%s", string(data))
 	}
 }
 

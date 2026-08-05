@@ -5,5 +5,5 @@ import "embed"
 //go:embed profiles/*.yaml
 var Profiles embed.FS
 
-//go:embed fragments/*.yaml
+//go:embed fragments
 var Fragments embed.FS

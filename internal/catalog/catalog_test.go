@@ -39,17 +39,17 @@ func TestPodmanNestedFragment(t *testing.T) {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
 
-	host, err := profile.ResolveFragment(cat, "podman-host")
+	host, err := profile.ResolveFragment(cat, "services/podman-host")
 	if err != nil {
-		t.Fatalf("ResolveFragment(podman-host): %v", err)
+		t.Fatalf("ResolveFragment(services/podman-host): %v", err)
 	}
 	if len(host.Services) != 0 {
 		t.Error("podman-host must not declare services")
 	}
 
-	cfg, err := profile.ResolveFragment(cat, "podman")
+	cfg, err := profile.ResolveFragment(cat, "services/podman")
 	if err != nil {
-		t.Fatalf("ResolveFragment(podman): %v", err)
+		t.Fatalf("ResolveFragment(services/podman): %v", err)
 	}
 	if len(cfg.Mounts) != 1 {
 		t.Fatalf("podman mounts = %v, want only the service-socket mount", cfg.Mounts)
@@ -112,9 +112,9 @@ func TestGuiRuntimeSplit(t *testing.T) {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
 
-	guiCfg, err := profile.ResolveFragment(cat, "gui")
+	guiCfg, err := profile.ResolveFragment(cat, "gui/gui")
 	if err != nil {
-		t.Fatalf("ResolveFragment(gui): %v", err)
+		t.Fatalf("ResolveFragment(gui/gui): %v", err)
 	}
 	if _, ok := guiCfg.Mounts["{{ .Env.XDG_RUNTIME_DIR }}"]; ok {
 		t.Error("gui must not mount $XDG_RUNTIME_DIR wholesale; use gui-runtime")
@@ -123,9 +123,9 @@ func TestGuiRuntimeSplit(t *testing.T) {
 		t.Error("gui should mount only the guarded wayland socket")
 	}
 
-	rtCfg, err := profile.ResolveFragment(cat, "gui-runtime")
+	rtCfg, err := profile.ResolveFragment(cat, "gui/gui-runtime")
 	if err != nil {
-		t.Fatalf("ResolveFragment(gui-runtime): %v", err)
+		t.Fatalf("ResolveFragment(gui/gui-runtime): %v", err)
 	}
 	if _, ok := rtCfg.Mounts["{{ .Env.XDG_RUNTIME_DIR }}"]; !ok {
 		t.Error("gui-runtime should mount $XDG_RUNTIME_DIR wholesale")

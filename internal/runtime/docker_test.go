@@ -926,6 +926,18 @@ func containerIPOf(rt *DockerRuntime, profileName string) (string, error) {
 	return "", fmt.Errorf("container for profile %s has no IP", profileName)
 }
 
+func TestContainerNameSanitizesProfile(t *testing.T) {
+	for in, wantPrefix := range map[string]string{
+		"lang/go":                   "tpd-lang-go-",
+		"core/services/docker-host": "tpd-core-services-docker-host-",
+		"mise":                      "tpd-mise-",
+	} {
+		if got := containerNameFor(in); !strings.HasPrefix(got, wantPrefix) {
+			t.Errorf("containerNameFor(%q) = %q, want prefix %q", in, got, wantPrefix)
+		}
+	}
+}
+
 func TestBuildMountsHidesRealBusSocket(t *testing.T) {
 	spec := Spec{
 		Workspace: WorkspaceSpec{HostPath: "/ws", Target: "/ws"},
