@@ -74,7 +74,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 			return "", err
 		}
 		if !exists {
-			if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, spec.Repos, spec.Packages, w); err != nil {
+			if err := buildDerivedImage(ctx, d.cli, derivedRef, baseRef, baseID, spec.Repos, spec.Packages, w); err != nil {
 				return "", fmt.Errorf("build derived image: %w", err)
 			}
 		}

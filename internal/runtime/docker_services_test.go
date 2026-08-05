@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,9 +35,12 @@ type fakeServicesDaemon struct {
 	containers []types.Container
 	consumers  []types.Container
 
-	imagePresent bool
-	imageID      string
-	pulls        int
+	imagePresent   bool
+	imageID        string
+	derivedPresent bool
+	derivedID      string
+	buildReqs      []fakeBuildReq
+	pulls          int
 
 	createCount  int
 	createReqs   []container.CreateRequest
@@ -50,6 +55,11 @@ type fakeServicesDaemon struct {
 
 	sockets   map[string][]string
 	listeners []net.Listener
+}
+
+type fakeBuildReq struct {
+	version    string
+	dockerfile string
 }
 
 func newFakeServicesDaemon() *fakeServicesDaemon {
@@ -99,11 +109,35 @@ func (f *fakeServicesDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"Pull complete"}`+"\n")
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/json"):
+		if !strings.HasPrefix(p, "images/") {
+			fmt.Fprintf(w, `{"Id":%q}`, f.imageID)
+			return
+		}
+		ref, err := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(p, "images/"), "/json"))
+		if err != nil {
+			http.Error(w, "bad ref", http.StatusBadRequest)
+			return
+		}
+		if strings.HasPrefix(ref, "tpd/packages:") {
+			if !f.derivedPresent {
+				http.Error(w, `{"message":"No such image"}`, http.StatusNotFound)
+				return
+			}
+			fmt.Fprintf(w, `{"Id":%q}`, f.derivedID)
+			return
+		}
 		if !f.imagePresent {
 			http.Error(w, `{"message":"No such image"}`, http.StatusNotFound)
 			return
 		}
 		fmt.Fprintf(w, `{"Id":%q}`, f.imageID)
+	case r.Method == http.MethodPost && p == "build":
+		f.buildReqs = append(f.buildReqs, readFakeBuildReq(w, r))
+		io.Copy(io.Discard, r.Body)
+		f.derivedPresent = true
+		f.derivedID = "sha256:derived"
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"stream":"Successfully built derived\n"}`+"\n")
 	default:
 		http.NotFound(w, r)
 	}
@@ -472,6 +506,45 @@ func TestStartServicesPullsServiceImage(t *testing.T) {
 	}
 }
 
+func TestStartServicesBuildPassesBaseID(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	// The fake creates the exposed socket on ContainerStart, so the socket
+	// poll in StartServices succeeds (mirrors TestStartServicesCreatesNewService).
+	daemon.sockets = map[string][]string{
+		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	spec.Services[0].Packages = []string{"pkg1"}
+
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if len(daemon.buildReqs) != 1 {
+		t.Fatalf("build requests = %d, want 1", len(daemon.buildReqs))
+	}
+	req := daemon.buildReqs[0]
+	if req.version != "2" {
+		t.Errorf("service build version = %q, want %q", req.version, "2")
+	}
+	// The fake's base image id is "sha256:base"; the cache ids must derive from
+	// it, proving createService threads its resolved baseID through.
+	aptID, listsID := cacheMountIDs(daemon.imageID, nil)
+	for _, want := range []string{
+		"--mount=type=cache,id=" + aptID + ",target=/var/cache/apt,sharing=locked",
+		"--mount=type=cache,id=" + listsID + ",target=/var/lib/apt,sharing=locked",
+	} {
+		if !strings.Contains(req.dockerfile, want) {
+			t.Errorf("service build Dockerfile must contain %q:\n%s", want, req.dockerfile)
+		}
+	}
+}
+
 func TestStartServicesAcquiresLocksInSortedOrder(t *testing.T) {
 	lockDir := t.TempDir()
 	runDir := t.TempDir()
@@ -809,4 +882,27 @@ func containsString(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func readFakeBuildReq(w http.ResponseWriter, r *http.Request) fakeBuildReq {
+	var req fakeBuildReq
+	req.version = r.URL.Query().Get("version")
+	tr := tar.NewReader(r.Body)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return req
+		}
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			return req
+		}
+		if hdr.Name == "Dockerfile" {
+			req.dockerfile = string(content)
+		}
+	}
+	return req
 }

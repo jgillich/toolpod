@@ -72,6 +72,24 @@ func canonicalRepos(repos map[string]Repo) string {
 	return strings.Join(entries, "\x02")
 }
 
+// cacheMountIDs returns the cache-mount ids for a derived build. The .deb
+// cache is keyed by base image only (apt reuses a cached archive only when the
+// current index references the same filename and size), while the lists cache
+// is keyed by base and canonical repo set: index files are source-specific, so
+// sharing them across profiles with different repos could resolve packages
+// from a repo the profile never declared. The sha256: prefix is stripped,
+// unlike DerivedTag.
+func cacheMountIDs(baseID string, repos map[string]Repo) (aptID, listsID string) {
+	base := strings.TrimPrefix(baseID, "sha256:")
+	aptID = "tpd-" + base + "-apt"
+	listsID = "tpd-" + base + "-lists"
+	if cr := canonicalRepos(repos); cr != "" {
+		sum := sha256.Sum256([]byte(cr))
+		listsID = "tpd-" + base + "-" + hex.EncodeToString(sum[:])[:16] + "-lists"
+	}
+	return aptID, listsID
+}
+
 // DerivedRef normalizes a RepoTag from ImageList into the canonical
 // tpd/packages:<hash> form, or "" if the tag doesn't belong to a derived
 // image. Engines qualify RepoTags with their registry (docker.io/,
@@ -110,15 +128,21 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 // buildDerivedImage builds and tags a derived image (base + repos + packages)
 // as derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef> (the
 // base image is already pulled), a COPY per resolved repo (the deb822 .sources
-// and signing key resolved from the extrepo catalog at build time), then a
-// single apt-get install of the sorted, shell-quoted package list. Build
-// output is streamed through w.
-func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+// and signing key resolved from the extrepo catalog at build time), then
+// mounted RUNs that apt-get install the sorted, shell-quoted packages (and,
+// when repos are present, bootstrap ca-certificates) into cache-mount-backed
+// /var/cache/apt and /var/lib/apt. Build output is streamed through w.
+//
+// The request pins version=2 so the Docker daemon dispatches to its embedded
+// buildkit, the only builder that parses the cache-mount RUNs; podman's compat
+// endpoint ignores the param and buildah parses cache mounts natively.
+func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
 	resolved, err := resolveExtrepoRepos(ctx, cli, baseRef, repos)
 	if err != nil {
 		return fmt.Errorf("resolve repos: %w", err)
 	}
-	dockerfile := []byte(synthesizeDockerfile(baseRef, resolved, packages))
+	aptID, listsID := cacheMountIDs(baseID, repos)
+	dockerfile := []byte(synthesizeDockerfile(baseRef, resolved, packages, aptID, listsID))
 	buildContext, err := tarBuildContext(dockerfile, repoFiles(resolved))
 	if err != nil {
 		return fmt.Errorf("build context: %w", err)
@@ -132,6 +156,7 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 		Dockerfile: "Dockerfile",
 		Labels:     labels,
 		Remove:     true,
+		Version:    types.BuilderBuildKit,
 	})
 	if err != nil {
 		return err
@@ -226,11 +251,19 @@ func sortedCopy(s []string) []string {
 // old `extrepo enable <name>` chain. The context file names are
 // extrepo/<name>.sources and extrepo/<name>.asc.
 //
+// Every RUN mounts the shared apt cache ids from cacheMountLines, so .debs
+// and apt lists persist across builds (sharing=locked serializes concurrent
+// builders). The Debian docker-clean hook deletes cached .debs on install, so
+// the first mounted RUN removes /etc/apt/apt.conf.d/docker-clean before apt
+// runs; it is removed once and scoped to that RUN's layer. No RUN ever does
+// `rm -rf /var/lib/apt/lists/*`: the lists live in the lists cache mount, not
+// a layer, so a classic list-clean step would only discard the cache.
+//
 // When repos are present, a bootstrap RUN installs ca-certificates first: the
 // base image is bare (no certs), and apt-get update needs them to verify the
 // https repos the COPYs add. The Debian archive itself is http, so the
 // bootstrap works without certificates.
-func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []string) string {
+func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []string, aptCacheID, listsCacheID string) string {
 	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
 	for i, p := range sorted {
@@ -239,19 +272,36 @@ func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []strin
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", baseRef)
 	if len(repos) > 0 {
-		b.WriteString("RUN apt-get update \\\n")
-		b.WriteString("    && apt-get install -y --no-install-recommends ca-certificates \\\n")
-		b.WriteString("    && rm -rf /var/lib/apt/lists/*\n")
+		// The ca-certificates bootstrap is the first mounted RUN: it removes
+		// docker-clean before its own install so the dpkg hook cannot purge the
+		// cache mount, and its index/debs land in the shared mounts.
+		b.WriteString(cacheMountLines(aptCacheID, listsCacheID))
+		b.WriteString("    rm -f /etc/apt/apt.conf.d/docker-clean \\\n")
+		b.WriteString("    && apt-get update \\\n")
+		b.WriteString("    && apt-get -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends ca-certificates\n")
 	}
 	for _, r := range sortedResolvedRepos(repos) {
 		fmt.Fprintf(&b, "COPY extrepo/%s.sources /etc/apt/sources.list.d/extrepo_%s.sources\n", r.name, r.name)
 		fmt.Fprintf(&b, "COPY extrepo/%s.asc /etc/apt/keyrings/%s.asc\n", r.name, r.name)
 	}
-	b.WriteString("RUN apt-get update \\\n")
-	b.WriteString("    && apt-get install -y --no-install-recommends \\\n")
-	b.WriteString("        " + strings.Join(quoted, " \\\n        ") + " \\\n")
-	b.WriteString("    && rm -rf /var/lib/apt/lists/*\n")
+	b.WriteString(cacheMountLines(aptCacheID, listsCacheID))
+	if len(repos) == 0 {
+		// Packages-only build: this is the first mounted RUN, so it removes
+		// docker-clean itself.
+		b.WriteString("    rm -f /etc/apt/apt.conf.d/docker-clean \\\n")
+		b.WriteString("    && apt-get update \\\n")
+	} else {
+		// docker-clean was already removed by the bootstrap RUN.
+		b.WriteString("    apt-get update \\\n")
+	}
+	b.WriteString("    && apt-get -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends \\\n")
+	b.WriteString("        " + strings.Join(quoted, " \\\n        ") + "\n")
 	return b.String()
+}
+
+func cacheMountLines(aptCacheID, listsCacheID string) string {
+	return "RUN --mount=type=cache,id=" + aptCacheID + ",target=/var/cache/apt,sharing=locked \\\n" +
+		"    --mount=type=cache,id=" + listsCacheID + ",target=/var/lib/apt,sharing=locked \\\n"
 }
 
 func repoFiles(repos []resolvedRepo) map[string][]byte {

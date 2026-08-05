@@ -1,12 +1,17 @@
 package runtime
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1164,4 +1169,283 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 	if code != 0 {
 		t.Errorf("cat-check exit code = %d, want 0", code)
 	}
+}
+
+const mirrorSuite = "tpd"
+
+type aptMirror struct {
+	srv     *httptest.Server
+	port    int
+	arch    string
+	mu      sync.Mutex
+	gets    map[string]int
+	debs    map[string][]byte
+	index   []byte
+	release []byte
+}
+
+func startAptMirror(t *testing.T, arch string) *aptMirror {
+	m := &aptMirror{arch: arch, gets: map[string]int{}}
+	pkgs := []struct {
+		name, version, arch string
+		data                []byte
+	}{
+		{"pkg1", "1.0", arch, makeDeb("pkg1", "1.0", arch)},
+		{"pkg2", "1.0", arch, makeDeb("pkg2", "1.0", arch)},
+	}
+	m.debs = map[string][]byte{}
+	for _, p := range pkgs {
+		m.debs[p.name] = p.data
+	}
+	m.index = buildPackagesIndex(pkgs)
+	now := time.Now().UTC()
+	m.release = []byte(fmt.Sprintf(
+		"Suite: %s\nCodename: %s\nComponents: main\nArchitectures: %s\nDate: %s\nValid-Until: %s\n",
+		mirrorSuite, mirrorSuite, arch, now.Format(time.RFC1123Z), now.AddDate(0, 0, 10).Format(time.RFC1123Z),
+	))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// URL layout: the source line uses the repo ROOT as the base URI and
+		// "tpd" as the suite, so apt requests dists/tpd/... for indexes and
+		// pool/main/<filename> (the index Filename) for .debs.
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		m.mu.Lock()
+		m.gets[path]++
+		m.mu.Unlock()
+		switch path {
+		case "dists/" + mirrorSuite + "/Release":
+			_, _ = w.Write(m.release)
+		case "dists/" + mirrorSuite + "/main/binary-" + arch + "/Packages":
+			_, _ = w.Write(m.index)
+		case "pool/main/pkg1_1.0_" + arch + ".deb":
+			_, _ = w.Write(m.debs["pkg1"])
+		case "pool/main/pkg2_1.0_" + arch + ".deb":
+			_, _ = w.Write(m.debs["pkg2"])
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewUnstartedServer(mux)
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	m.srv = srv
+	m.port = ln.Addr().(*net.TCPAddr).Port
+	return m
+}
+
+func (m *aptMirror) debGets(name string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gets["pool/main/"+name+"_1.0_"+m.arch+".deb"]
+}
+
+func buildPackagesIndex(pkgs []struct{ name, version, arch string; data []byte }) []byte {
+	var b strings.Builder
+	for _, p := range pkgs {
+		sum := sha256.Sum256(p.data)
+		fmt.Fprintf(&b, "Package: %s\nVersion: %s\nArchitecture: %s\nFilename: pool/main/%s_%s_%s.deb\nSize: %d\nSHA256: %x\n\n",
+			p.name, p.version, p.arch, p.name, p.version, p.arch, len(p.data), sum)
+	}
+	return []byte(b.String())
+}
+
+func makeDeb(name, version, arch string) []byte {
+	control := gzipBytes(tarBytes(map[string]string{
+		"./control": fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: tpd test\nDescription: test package\n",
+			name, version, arch),
+	}))
+	data := gzipBytes(tarBytes(map[string]string{
+		"./usr/share/doc/" + name + "/README": "tpd integration test package " + name + "\n",
+	}))
+	return arArchive([]arMember{
+		{name: "debian-binary", data: []byte("2.0\n")},
+		{name: "control.tar.gz", data: control},
+		{name: "data.tar.gz", data: data},
+	})
+}
+
+type arMember struct {
+	name string
+	data []byte
+}
+
+// arArchive writes a minimal ar archive: 60-byte headers with space-padded
+// names, matching dpkg's member layout for .deb files.
+func arArchive(members []arMember) []byte {
+	var b bytes.Buffer
+	b.WriteString("!<arch>\n")
+	for _, m := range members {
+		fmt.Fprintf(&b, "%-16s%-12d%-6d%-6d%-8o%-10d`\n", m.name, 0, 0, 0, 0o100644, len(m.data))
+		b.Write(m.data)
+		if len(m.data)%2 == 1 {
+			b.WriteByte('\n')
+		}
+	}
+	return b.Bytes()
+}
+
+func tarBytes(files map[string]string) []byte {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, content := range files {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content))})
+		_, _ = tw.Write([]byte(content))
+	}
+	_ = tw.Close()
+	return buf.Bytes()
+}
+
+func gzipBytes(data []byte) []byte {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	_, _ = gw.Write(data)
+	_ = gw.Close()
+	return buf.Bytes()
+}
+
+func primaryNonLoopbackIPv4(t *testing.T) string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	host, _, err := net.SplitHostPort(conn.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return host
+}
+
+func isLocalDockerHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	u, err := url.Parse(host)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "unix", "npipe":
+		return true
+	case "tcp", "http", "https":
+		h := u.Hostname()
+		return h == "localhost" || h == "127.0.0.1" || h == "::1"
+	default:
+		return false
+	}
+}
+
+func TestIntegrationCacheMountsReuse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+	if !isLocalDockerHost(os.Getenv("DOCKER_HOST")) {
+		t.Skip("remote DOCKER_HOST: test mirror unreachable")
+	}
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	baseRef := "debian:13-slim"
+	if _, _, err := cli.ImageInspectWithRaw(ctx, baseRef); err != nil {
+		// The base build below pulls it; pull explicitly so the failure is
+		// reported here with context.
+		reader, err := cli.ImagePull(ctx, baseRef, image.PullOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, reader)
+		_ = reader.Close()
+	}
+
+	arch := "amd64"
+	if inspect, _, err := cli.ImageInspectWithRaw(ctx, baseRef); err == nil && inspect.Architecture != "" {
+		arch = inspect.Architecture
+	}
+
+	mirror := startAptMirror(t, arch)
+	sourceLine := fmt.Sprintf("deb [trusted=yes] http://%s:%d/ %s main", primaryNonLoopbackIPv4(t), mirror.port, mirrorSuite)
+
+	// Hermetic base: default Debian sources neutralized, only the mirror.
+	const baseTag = "tpd-test-cache-base:1"
+	buildHermeticBase(t, cli, baseTag, sourceLine)
+
+	baseID, err := ResolveImageID(ctx, cli, baseTag)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	builds := []struct {
+		name string
+		pkgs []string
+	}{
+		{"a", []string{"pkg1"}},
+		{"b", []string{"pkg1", "pkg2"}},
+	}
+	// Register cleanup before building so a failure mid-loop cannot leak the
+	// derived images or the test base on the dev engine.
+	refs := make([]string, len(builds))
+	for i, b := range builds {
+		refs[i] = DerivedTag(baseID, b.pkgs, nil)
+	}
+	t.Cleanup(func() {
+		for _, ref := range refs {
+			_, _ = cli.ImageRemove(context.Background(), ref, image.RemoveOptions{Force: true, PruneChildren: true})
+		}
+		_, _ = cli.ImageRemove(context.Background(), baseTag, image.RemoveOptions{Force: true, PruneChildren: true})
+	})
+
+	for i, b := range builds {
+		if err := buildDerivedImage(ctx, cli, refs[i], baseTag, baseID, nil, b.pkgs, NoopProgressWriter{}); err != nil {
+			t.Fatalf("build %s: %v", b.name, err)
+		}
+	}
+
+	if got := mirror.debGets("pkg1"); got != 1 {
+		t.Errorf("pkg1 .deb fetched %d times, want exactly 1 (second build must reuse the cache mount)", got)
+	}
+	if got := mirror.debGets("pkg2"); got != 1 {
+		t.Errorf("pkg2 .deb fetched %d times, want 1", got)
+	}
+}
+
+func buildHermeticBase(t *testing.T, cli *client.Client, tag, sourceLine string) {
+	dockerfile := fmt.Sprintf(`FROM debian:13-slim
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && echo '%s' > /etc/apt/sources.list.d/tpd-test.list
+`, sourceLine)
+	rc := mustTarContext(t, dockerfile)
+	resp, err := cli.ImageBuild(context.Background(), rc, types.ImageBuildOptions{
+		Tags:       []string{tag},
+		Dockerfile: "Dockerfile",
+		Remove:     true,
+	})
+	if err != nil {
+		t.Fatalf("build hermetic base: %v", err)
+	}
+	defer resp.Body.Close()
+	if err := drainBuildStream(resp.Body, NoopProgressWriter{}); err != nil {
+		t.Fatalf("build hermetic base stream: %v", err)
+	}
+}
+
+func mustTarContext(t *testing.T, dockerfile string) io.Reader {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0o644, Size: int64(len(dockerfile))})
+	_, _ = tw.Write([]byte(dockerfile))
+	_ = tw.Close()
+	return &buf
 }

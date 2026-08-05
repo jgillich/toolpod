@@ -232,15 +232,35 @@ func TestOwnershipLabels(t *testing.T) {
 func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	// The ownership + provenance labels must ride on every derived image so
 	// prune (and the future container-leak checks) can filter by label
-	// instead of name.
-	var gotLabels string
+	// instead of name. The build must also request buildkit (version=2),
+	// which is the only Docker builder that parses the cache-mount Dockerfile.
+	var gotLabels, gotVersion, gotDockerfile string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/build") {
 			http.NotFound(w, r)
 			return
 		}
 		gotLabels = r.URL.Query().Get("labels")
-		io.Copy(io.Discard, r.Body)
+		gotVersion = r.URL.Query().Get("version")
+		tr := tar.NewReader(r.Body)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				http.Error(w, "bad tar", http.StatusBadRequest)
+				return
+			}
+			content, err := io.ReadAll(tr)
+			if err != nil {
+				http.Error(w, "read tar", http.StatusBadRequest)
+				return
+			}
+			if hdr.Name == "Dockerfile" {
+				gotDockerfile = string(content)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"stream":"Successfully built abc123\n"}`+"\n")
 	}))
@@ -253,7 +273,7 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", nil, []string{"git"}, &recordingWriter{}); err != nil {
+	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", "sha256:abc123", nil, []string{"git"}, &recordingWriter{}); err != nil {
 		t.Fatalf("buildDerivedImage: %v", err)
 	}
 	want := OwnershipLabels()
@@ -265,24 +285,35 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	if gotLabels != string(wantJSON) {
 		t.Errorf("build labels = %s, want %s (ownership + provenance labels must ride on derived images)", gotLabels, wantJSON)
 	}
+	if gotVersion != "2" {
+		t.Errorf("build request version = %q, want %q (daemon must use buildkit)", gotVersion, "2")
+	}
+	for _, want := range []string{
+		"--mount=type=cache,id=tpd-abc123-apt,target=/var/cache/apt,sharing=locked",
+		"--mount=type=cache,id=tpd-abc123-lists,target=/var/lib/apt,sharing=locked",
+	} {
+		if !strings.Contains(gotDockerfile, want) {
+			t.Errorf("build Dockerfile must contain %q:\n%s", want, gotDockerfile)
+		}
+	}
 }
 
 func TestSynthesizeDockerfile(t *testing.T) {
 	const baseRef = "debian:13-slim"
-	got := synthesizeDockerfile(baseRef, nil, []string{"libxml2-dev", "git"})
+	const aptID, listsID = "tpd-abc123-apt", "tpd-abc123-lists"
+	got := synthesizeDockerfile(baseRef, nil, []string{"libxml2-dev", "git"}, aptID, listsID)
 	if !strings.Contains(got, "FROM "+baseRef+"\n") {
 		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)
 	}
-	// Package list sorted, each shell-quoted, single apt invocation.
 	wantInstall := "'git' \\\n        'libxml2-dev'"
 	if !strings.Contains(got, wantInstall) {
 		t.Errorf("dockerfile must contain sorted shell-quoted packages:\n%s\nwant substring:\n%s", got, wantInstall)
 	}
-	if !strings.Contains(got, "apt-get install -y --no-install-recommends") {
-		t.Errorf("dockerfile must use --no-install-recommends:\n%s", got)
+	if !strings.Contains(got, "apt-get -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends") {
+		t.Errorf("dockerfile must keep downloaded packages on install:\n%s", got)
 	}
-	if !strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
-		t.Errorf("dockerfile must clean apt lists:\n%s", got)
+	if strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
+		t.Errorf("repo-less dockerfile must not clean apt lists:\n%s", got)
 	}
 	if strings.Contains(got, "ca-certificates") {
 		t.Errorf("repo-less dockerfile must not bootstrap ca-certificates:\n%s", got)
@@ -290,21 +321,31 @@ func TestSynthesizeDockerfile(t *testing.T) {
 	if strings.Count(got, "apt-get update") != 1 {
 		t.Errorf("repo-less dockerfile must have a single apt-get update:\n%s", got)
 	}
+	for _, want := range []string{
+		"--mount=type=cache,id=" + aptID + ",target=/var/cache/apt,sharing=locked",
+		"--mount=type=cache,id=" + listsID + ",target=/var/lib/apt,sharing=locked",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dockerfile must contain cache mount %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "rm -f /etc/apt/apt.conf.d/docker-clean") {
+		t.Errorf("dockerfile must neutralize docker-clean inside the mount RUN:\n%s", got)
+	}
 }
 
 func TestSynthesizeDockerfileRepos(t *testing.T) {
 	const baseRef = "base:1"
+	const aptID, listsID = "tpd-abc-apt", "tpd-abc-lists"
 	repos := []resolvedRepo{
 		{name: "mise"},
 		{name: "nodejs"},
 		{name: "extrane"},
 	}
-	got := synthesizeDockerfile(baseRef, repos, []string{"mise"})
+	got := synthesizeDockerfile(baseRef, repos, []string{"mise"}, aptID, listsID)
 	if !strings.Contains(got, "FROM "+baseRef+"\n") {
 		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)
 	}
-	// Each repo emits a COPY of its .sources and key, in sorted repo order,
-	// before apt-get update.
 	for _, want := range []string{"COPY extrepo/extrane.sources", "COPY extrepo/mise.sources", "COPY extrepo/nodejs.sources"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("dockerfile must contain %q:\n%s", want, got)
@@ -323,28 +364,34 @@ func TestSynthesizeDockerfileRepos(t *testing.T) {
 	if !strings.Contains(got, "COPY extrepo/mise.asc /etc/apt/keyrings/mise.asc") {
 		t.Errorf("dockerfile must COPY the key to apt keyrings:\n%s", got)
 	}
-	if !strings.Contains(got, "apt-get update") {
-		t.Errorf("dockerfile must run apt-get update after copying repos:\n%s", got)
-	}
-	// A bare base has no ca-certificates; the first RUN must install them so
-	// apt can verify the https repos the COPYs add. It must precede both the
-	// COPYs and the main apt-get update.
-	certInstall := "apt-get install -y --no-install-recommends ca-certificates"
+	certInstall := "apt-get -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends ca-certificates"
 	if !strings.Contains(got, certInstall) {
 		t.Errorf("dockerfile must bootstrap ca-certificates when repos present:\n%s", got)
 	}
-	firstRun := strings.Index(got, "RUN apt-get update")
+	// The mounted bootstrap RUN (first apt-get update) precedes the COPYs and
+	// the install RUN (second apt-get update).
+	firstUpdate := strings.Index(got, "apt-get update")
 	firstCopy := strings.Index(got, "COPY extrepo/extrane.sources")
-	secondRun := strings.LastIndex(got, "RUN apt-get update")
-	if !(firstRun < firstCopy && firstCopy < secondRun) {
-		t.Errorf("bootstrap RUN must precede COPYs and main RUN:\n%s", got)
+	secondUpdate := strings.LastIndex(got, "apt-get update")
+	if !(firstUpdate < firstCopy && firstCopy < secondUpdate) {
+		t.Errorf("bootstrap RUN must precede COPYs and install RUN:\n%s", got)
+	}
+	if strings.Count(got, "rm -f /etc/apt/apt.conf.d/docker-clean") != 1 {
+		t.Errorf("docker-clean must be removed exactly once (bootstrap RUN):\n%s", got)
+	}
+	if strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
+		t.Errorf("no RUN may clean apt lists:\n%s", got)
+	}
+	aptMount := "--mount=type=cache,id=" + aptID + ",target=/var/cache/apt,sharing=locked"
+	if c := strings.Count(got, aptMount); c != 2 {
+		t.Errorf("apt cache mount must appear on both RUNs, got %d:\n%s", c, got)
 	}
 }
 
 func TestSynthesizeDockerfileOrderIndependent(t *testing.T) {
 	const baseRef = "base:1"
-	a := synthesizeDockerfile(baseRef, nil, []string{"git", "curl"})
-	b := synthesizeDockerfile(baseRef, nil, []string{"curl", "git"})
+	a := synthesizeDockerfile(baseRef, nil, []string{"git", "curl"}, "a-apt", "a-lists")
+	b := synthesizeDockerfile(baseRef, nil, []string{"curl", "git"}, "a-apt", "a-lists")
 	if a != b {
 		t.Errorf("dockerfile synthesis must be sort-normalised:\nA:\n%s\nB:\n%s", a, b)
 	}
@@ -353,7 +400,7 @@ func TestSynthesizeDockerfileOrderIndependent(t *testing.T) {
 func TestSynthesizeDockerfileShellQuotesPackages(t *testing.T) {
 	// A hostile package name must not break out of the RUN step. Validation
 	// rejects these, but the emission path is defense-in-depth.
-	got := synthesizeDockerfile("base:1", nil, []string{"libxml2-dev;rm -rf /"})
+	got := synthesizeDockerfile("base:1", nil, []string{"libxml2-dev;rm -rf /"}, "a-apt", "a-lists")
 	if strings.Contains(got, "libxml2-dev;rm -rf /") && !strings.Contains(got, "'libxml2-dev;rm -rf /'") {
 		t.Errorf("package name must be shell-quoted:\n%s", got)
 	}
@@ -444,5 +491,66 @@ func TestDrainBuildStreamMissingPackageDedup(t *testing.T) {
 	}
 	if c := strings.Count(err.Error(), "libxml2-dev"); c != 1 {
 		t.Errorf("missing package should be reported once, got %d in %q", c, err.Error())
+	}
+}
+
+func TestCacheMountIDs(t *testing.T) {
+	const baseID = "sha256:abc123"
+	tests := []struct {
+		name     string
+		baseID   string
+		repos    map[string]Repo
+		wantApt  string
+		wantList string
+	}{
+		{
+			name:     "no repos: base-keyed ids",
+			baseID:   baseID,
+			wantApt:  "tpd-abc123-apt",
+			wantList: "tpd-abc123-lists",
+		},
+		{
+			name:     "prefix stripped",
+			baseID:   "sha256:abcdef0123456789",
+			wantApt:  "tpd-abcdef0123456789-apt",
+			wantList: "tpd-abcdef0123456789-lists",
+		},
+		{
+			name:    "repos key the lists id, not the apt id",
+			baseID:  baseID,
+			repos:   map[string]Repo{"mise": {ExtRepo: "mise"}},
+			wantApt: "tpd-abc123-apt",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aptID, listsID := cacheMountIDs(tt.baseID, tt.repos)
+			if aptID != tt.wantApt {
+				t.Errorf("apt id = %q, want %q", aptID, tt.wantApt)
+			}
+			if tt.wantList != "" && listsID != tt.wantList {
+				t.Errorf("lists id = %q, want %q", listsID, tt.wantList)
+			}
+		})
+	}
+
+	// Contract: apt id varies with base only; lists id varies with repos too.
+	aApt, aList := cacheMountIDs(baseID, nil)
+	bApt, bList := cacheMountIDs(baseID, map[string]Repo{"a": {ExtRepo: "a"}})
+	cList, _ := cacheMountIDs(baseID, map[string]Repo{"b": {ExtRepo: "b"}})
+	if aApt != bApt {
+		t.Errorf("apt id must be base-keyed only: %q vs %q", aApt, bApt)
+	}
+	if aList == bList {
+		t.Errorf("lists id must vary with repos: %q vs %q", aList, bList)
+	}
+	if bList == cList {
+		t.Errorf("distinct repo sets must produce distinct lists ids: %q", bList)
+	}
+	if strings.HasPrefix(aList, "tpd-sha256:") {
+		t.Errorf("lists id must strip the sha256: prefix: %q", aList)
+	}
+	if _, dList := cacheMountIDs(baseID, map[string]Repo{"a": {ExtRepo: "a"}}); dList != bList {
+		t.Errorf("cache ids must be deterministic: %q vs %q", dList, bList)
 	}
 }

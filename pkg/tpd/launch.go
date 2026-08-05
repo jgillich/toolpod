@@ -12,6 +12,7 @@ import (
 
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
+	"github.com/jgillich/tpd/internal/ui"
 	"github.com/jgillich/tpd/internal/workspace"
 )
 
@@ -127,8 +128,11 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			RenderSpec(w, spec)
 		}
 
-		progress := progress
-		imageRef, err := rt.Prepare(ctx, spec, progress, opts.Pull)
+		sp := newSpinnerProgress(os.Stderr, progress, ui.IsTTY(os.Stderr))
+		sp.Start()
+		defer sp.Stop()
+
+		imageRef, err := rt.Prepare(ctx, spec, sp, opts.Pull)
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
 		}
@@ -161,7 +165,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		// call it unconditionally before StartServices succeeds.
 		serviceBindings.Release = func() {}
 		if len(spec.Services) > 0 {
-			bindings, err := rt.StartServices(ctx, spec, progress, opts.Pull)
+			bindings, err := rt.StartServices(ctx, spec, sp, opts.Pull)
 			if err != nil {
 				return Result{ExitCode: 3, Err: fmt.Errorf("start services: %w", err)}
 			}
@@ -184,6 +188,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			}
 		}
 
+		sp.Stop()
 		created, err := rt.CreateContainer(ctx, runSpec)
 		if err != nil {
 			serviceBindings.Release()

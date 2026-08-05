@@ -192,7 +192,7 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 			return err
 		}
 		if !exists {
-			if err := buildDerivedImage(ctx, d.cli, derivedRef, svc.Image, svc.Repos, svc.Packages, w); err != nil {
+			if err := buildDerivedImage(ctx, d.cli, derivedRef, svc.Image, baseID, svc.Repos, svc.Packages, w); err != nil {
 				return fmt.Errorf("build service image: %w", err)
 			}
 		}
