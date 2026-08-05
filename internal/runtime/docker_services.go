@@ -300,7 +300,7 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 	}
 
 	for socketName, exposePath := range svc.Exposes {
-		if err := waitForServiceSocket(serviceSocketPath(name, mode, exposePath)); err != nil {
+		if err := waitForServiceSocket(ctx, serviceSocketPath(name, mode, exposePath)); err != nil {
 			cleanup()
 			return fmt.Errorf("service %s did not expose socket %s within %s", name, socketName, serviceProbeTimeout)
 		}
@@ -426,12 +426,13 @@ func containerDisplayName(c types.Container) string {
 }
 
 // waitForServiceSocket probes a unix socket with connect() (a stale file or a
-// touched-but-not-accepting socket both fail the dial) until it accepts or the
-// deadline passes.
-func waitForServiceSocket(path string) error {
+// touched-but-not-accepting socket both fail the dial) until it accepts, the
+// deadline passes, or the context is canceled.
+func waitForServiceSocket(ctx context.Context, path string) error {
 	deadline := time.Now().Add(serviceProbeTimeout)
+	dialer := net.Dialer{Timeout: time.Second}
 	for {
-		conn, err := net.DialTimeout("unix", path, time.Second)
+		conn, err := dialer.DialContext(ctx, "unix", path)
 		if err == nil {
 			conn.Close()
 			return nil
@@ -439,7 +440,13 @@ func waitForServiceSocket(path string) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("socket %s did not appear", path)
 		}
-		time.Sleep(500 * time.Millisecond)
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 
@@ -488,14 +495,15 @@ func (d *DockerRuntime) stopService(ctx context.Context, name string, mode works
 	if err != nil {
 		return fmt.Errorf("find service container %s: %w", containerName, err)
 	}
-	if c == nil {
-		return nil
+	if c != nil {
+		if err := d.cli.ContainerStop(ctx, c.ID, container.StopOptions{}); err != nil {
+			return fmt.Errorf("stop service container %s: %w", c.ID, err)
+		}
+		if err := d.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("remove service container %s: %w", c.ID, err)
+		}
 	}
-	if err := d.cli.ContainerStop(ctx, c.ID, container.StopOptions{}); err != nil {
-		return fmt.Errorf("stop service container %s: %w", c.ID, err)
-	}
-	if err := d.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-		return fmt.Errorf("remove service container %s: %w", c.ID, err)
-	}
-	return nil
+	// The run-dir is host-side state (sockets, expose parents); remove it once
+	// nobody consumes the service so dirs and stale exposes don't accumulate.
+	return os.RemoveAll(serviceRunDir(name, mode))
 }
