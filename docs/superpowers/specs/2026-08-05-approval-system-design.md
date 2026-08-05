@@ -265,8 +265,14 @@ type SensitiveItem struct {
     Field    string // "mounts", "devices", "env", "ports",
                     // "dbus.talk", "dbus.own", "network",
                     // "services.<name>.mounts", "services.<name>.privileged", ...
-    Key      string // the map key ("" for scalar network/privileged)
-    Value    string // human-readable rendering (post-expansion)
+    Key      string // the map key ("" for scalar network/privileged);
+                    // pre-expansion — this is the stable identity used by
+                    // the hash and the store
+    Value    string // human-readable rendering, pre-expansion (literal
+                    // "{{ ... }}" if the profile templated the value).
+                    // The dialog expands this for display only (§6);
+                    // the choice the dialog returns is keyed by Key, not
+                    // by the expanded form.
     Source   Contributor // the contributor that wrote this key
 }
 
@@ -344,22 +350,25 @@ at all.
 ### Where Filter is called
 
 Inside `pkg/tpd.LaunchWithWriter`, immediately after
-`ResolveProfileWithProv` and **after `ResolveTildes`**, so the dialog can
-render template-expanded values (e.g. the actual
-`/run/user/1000/wayland-0` instead of the literal
-`{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}` — the trust
-decision is meaningless against an opaque template string). The filtered
-`Profile` flows into `buildSpec`; the original `Resolved` is discarded.
+`ResolveProfileWithProv` and **before** `buildSpec`. The filter runs on
+the **unexpanded** `Resolved` — template values stay literal, because the
+hash (§4) and approval keys are pre-expansion (a changed host env var
+must not invalidate approvals). The filtered `Profile` flows into
+`buildSpec`, which calls `ResolveTildes` as it does today (spec.go:30) —
+no refactor of `buildSpec` or reordering of port allocation.
+
+The dialog (§6) renders **expanded** values for display only. To produce
+that display, the prompt function receives the unexpanded
+`PromptRequest` (whose `Items` carry the literal template strings as
+`Value`) and expands them itself using `profile.ResolveTildes`-equivalent
+logic over the host env. The choices the dialog returns are keyed by the
+**unexpanded** keys, so they map directly onto the hash and the store
+without translation. This keeps the stable-identity property (hash and
+store are pre-expansion) while still showing the user the actual host
+path at decision time.
+
 The DryRun path uses the same filter so `--dry-run` reflects the approved
 set.
-
-`ResolveTildes` currently runs inside `buildSpec` (spec.go:30) after port
-allocation. To make expanded values available to the filter, the launch
-flow is reordered: port allocation and `ResolveTildes` move out of
-`buildSpec` into `LaunchWithWriter`, before the filter. `buildSpec`
-receives an already-expanded `Profile`. This is a refactor of existing
-code, not new logic — `ResolveTildes` is already a pure function
-(`internal/profile/paths.go:69`).
 
 ## 4. Hash, state file, and Store interface
 
@@ -367,9 +376,9 @@ code, not new logic — `ResolveTildes` is already a pure function
 
 New `internal/approval/hash.go` (parallel to
 `internal/profile/hash.go`'s `computeServiceHash`). The hash covers
-**non-user sensitive fields only**, post-template-expansion, of the
-resolved profile (the same expanded form the filter and dialog see — see
-§3 "Where Filter is called"):
+**non-user sensitive fields only**, **pre-template-expansion**, of the
+resolved profile — i.e. the profile-declared values exactly as they
+appear after `extends` merge, with `{{ ... }}` templates left literal:
 
 ```go
 func ComputeApprovalHash(res profile.Resolved) string
@@ -391,11 +400,11 @@ func ComputeApprovalHash(res profile.Resolved) string
 - `value-canonical` is the explicit-field write form used by
   `computeServiceHash` (e.g. for a Mount: `mount %s %s %s %s %v %v %v\n`
   with target, source, service, socket, readOnly, optional, create).
-  Values are **expanded** — the key and canonical value are the
-  post-`ResolveTildes` form, so a mount whose template expanded to
-  `/run/user/1000/wayland-0` hashes under that key, not under the literal
-  template. This keeps the hash, the dialog display, and the approval
-  keys all aligned on the same expanded identity.
+  **Templates stay as literal `{{ ... }}` strings** — the hash captures
+  what the profile *declares*, not what the host environment resolves it
+  to. A changed `$DISPLAY` or `$XDG_RUNTIME_DIR` must not invalidate
+  approvals; the approval is for the profile's intent, and the expansion
+  is a per-launch runtime fact.
 - `network` is a scalar: emit `network\n<contributor>\n<value>\n` if
   non-user-contributed and non-empty.
 - Services: emit `services.<name>.<field>\n<key>\n<contributor>\n<value>\n`
@@ -408,23 +417,11 @@ A user-only change to a non-sensitive field never touches this hash. A
 user re-declaration of a core key changes that key's provenance to user,
 removing it from the hash input → hash changes → reprompt, but the new
 item set has fewer items (that key is no longer gated). Prior choices for
-that key are dropped via the reconciliation rule.
-
-**Trade-off accepted:** the hash now depends on the host environment
-(e.g. `$DISPLAY`, `$XDG_RUNTIME_DIR`). Two machines with different
-runtime dirs will hash the same profile differently and reprompt
-independently. This is correct: the expanded path *is* the thing being
-approved, and `/run/user/1000/wayland-0` is a different trust decision
-than `/run/user/1001/wayland-0`. The state file is per-machine anyway
-(it lives under `~/.local/share`).
-
-> **Note (design change from initial Q&A):** the brainstorming Q&A
-> originally chose pre-template hashing. Post-review, this was flipped
-> to post-template because the approval dialog must show the actual host
-> path being approved (issue 8: "the trust decision is made on an opaque
-> string"). The hash, the dialog display, and the approval keys must all
-> align on the same expanded identity, so the hash moved to
-> post-expansion with them.
+that key are dropped via the reconciliation rule. A host environment
+change (`$DISPLAY`, `$XDG_RUNTIME_DIR`, etc.) does **not** touch the
+hash — the same profile on the same machine (or a different machine)
+hashes identically and approvals persist. Expansion is a display-time
+concern only (§6).
 
 ### State file
 
@@ -602,10 +599,9 @@ progress/spec output; approval dialog I/O goes through `opts.In` and `w`.
 
 ```
 1. LoadProfiles
-2. ResolveProfileWithProv  -> Resolved{Profile, Prov}
-3. allocate ports; ResolveTildes(expandedProfile, ...) -> expanded Resolved
-4. filteredProfile, promptReq, err := approval.Filter(expandedResolved, store)
-5. if promptReq.Items empty:
+2. ResolveProfileWithProv  -> Resolved{Profile, Prov, FullName, DisplayName}
+3. filteredProfile, promptReq, err := approval.Filter(resolved, store)
+4. if promptReq.Items empty:
        proceed to buildSpec with filteredProfile
    else if AssumeYes:
        choices = every item's key = true, merged with prior
@@ -621,15 +617,16 @@ progress/spec output; approval dialog I/O goes through `opts.In` and `w`.
        choices := ApprovalPrompt(promptReq, opts.In, w)
        if aborted: return Result{ExitCode: 2, Err: "approval declined"}
        store.Save(choices); filteredProfile = re-filter
-6. buildSpec(filteredProfile, ...)
-7. ... existing Prepare/Run pipeline ...
+5. buildSpec(filteredProfile, ...)   // ResolveTildes runs inside buildSpec as today
+6. ... existing Prepare/Run pipeline ...
 ```
 
-"re-filter" in step 5 means a second `approval.Filter(expandedResolved, store)`
+"re-filter" in step 4 means a second `approval.Filter(resolved, store)`
 call. Because the store now has a choice for every item under the current
 hash, the second call returns `promptReq.Items` empty and the filtered
 profile ready for `buildSpec`. This mirrors the dialog-return shape in
-§3.
+§3. The `resolved` passed to both filter calls is the **unexpanded**
+profile; `buildSpec` expands it after the gate.
 
 The `--yes` and `--no` flags persist their choices to the state file, so
 subsequent non-interactive launches reuse them. A later launch with a
@@ -663,13 +660,22 @@ confirms. Default state: **all off** (per your spec), unless a key was
 previously approved and the hash changed (then `PriorChoices` pre-checks
 it).
 
-Values are rendered **post-template-expansion** because the filter runs
-after `ResolveTildes` (§3). The user sees the actual host path that will
-mount, not the opaque `{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}`
-template. If expansion produced an empty string (an optional mount whose
-host variable is unset), the item is still shown but marked `(unresolved —
-host variable not set)` so the user knows the mount will be skipped at
-launch.
+**Values are expanded for display only.** `SensitiveItem.Value` carries
+the pre-expansion (literal template) form, which is what the hash and
+store key on. The prompt function expands `Value` against the host
+environment for display — the user sees the actual host path that will
+mount (`/run/user/1000/wayland-0`), not the opaque
+`{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}` template. The
+choice the dialog returns is keyed by `SensitiveItem.Key` (the
+unexpanded key), so it maps directly onto the store without translation.
+This preserves the stable-identity property: a changed `$DISPLAY` does
+not invalidate approvals, even though the dialog shows the new expansion.
+
+If expansion produced an empty string (an optional mount whose host
+variable is unset), the item is still shown but marked
+`(unresolved — host variable not set)` so the user knows the mount will
+be skipped at launch. The store still keys on the unexpanded form, so a
+later launch with the variable set reuses the same approval.
 
 ```
 tpd: myagent wants the following from core/creds/ssh
@@ -680,7 +686,7 @@ tpd: myagent wants the following from core/creds/ssh
 tpd: myagent wants the following from core/gui
   [ ] /dev/dri                  (device)
   [ ] /tmp/.X11-unix            (mount, optional)
-  [ ] /run/user/1000/wayland-0  (mount, optional)
+  [ ] /run/user/1000/wayland-0  (mount, optional — expanded from {{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }})
 
 tpd: myagent wants the following from core/services/podman
   [ ] privileged: true          (service capability)
@@ -690,8 +696,9 @@ tpd: myagent wants the following from core/services/podman
 ```
 
 (Exact rendering TBD at implementation; the contract is: per-item toggle,
-default off, prior-approved keys pre-checked, expanded values shown, an
-explicit abort path.)
+default off, prior-approved keys pre-checked, **expanded values shown for
+display but choices keyed on the unexpanded form**, an explicit abort
+path.)
 
 ### Abort
 
@@ -821,8 +828,10 @@ Manual smoke test: `tpd <sensitive-profile>` on a fresh state dir.
 - **`MergeProfiles` signature:** no change needed. `child.FullName()` is
   already available inside the merge; parent keys keep their previously
   recorded provenance. See §2 "No MergeProfiles signature change."
-- **Hash granularity:** post-template-expansion, to align with the dialog
-  display. See §4 "Hash" and the note there on the design change.
+- **Hash granularity:** pre-template-expansion. The hash and store key
+  on the profile-declared (literal template) form, so a changed host env
+  var does not invalidate approvals. The dialog expands values for
+  display only. See §4 "Hash" and §6 "Rendering."
 - **State file key:** the resolved catalog `FullName`, not the display
   name. See §4 "State file."
 
