@@ -1,12 +1,35 @@
 version: 1
 tools:
+  docker-cli: latest
   podman: latest
   docker-compose: latest
   hadolint: latest
+services:
+  podman:
+    image: debian:13-slim
+    packages:
+      - podman
+      - nftables
+      - iptables
+      - iproute2
+      - catatonit
+      - ca-certificates
+    privileged: true
+    caches:
+      podman-storage:
+        - /var/lib/containers/storage
+    command:
+      - podman
+      - system
+      - service
+      - -t
+      - "0"
+      - unix:///run/podman/podman.sock
+    exposes:
+      podman: /run/podman/podman.sock
 mounts:
   /var/run/docker.sock:
-    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}'
-    read_only: false
-    optional: true
+    service: podman
+    socket: podman
 environment:
   DOCKER_HOST: unix:///var/run/docker.sock

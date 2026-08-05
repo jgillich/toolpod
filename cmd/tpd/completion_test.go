@@ -77,13 +77,13 @@ func TestCompletionRun(t *testing.T) {
 func TestCompletionShow(t *testing.T) {
 	isolateConfig(t)
 	// show accepts profiles and fragments.
-	containsAll(t, runCompletion(t, "show", ""), "bash", "docker")
+	containsAll(t, runCompletion(t, "show", ""), "bash", "docker-host")
 }
 
 func TestCompletionShowPrefix(t *testing.T) {
 	isolateConfig(t)
 	names := runCompletion(t, "show", "doc")
-	containsAll(t, names, "docker")
+	containsAll(t, names, "docker-host")
 }
 
 func TestCompletionPassthroughAfterProfile(t *testing.T) {
@@ -96,7 +96,7 @@ func TestCompletionPassthroughAfterProfile(t *testing.T) {
 
 func TestCompletionInitExtends(t *testing.T) {
 	isolateConfig(t)
-	containsAll(t, runCompletion(t, "init", "--extends", ""), "bash", "docker")
+	containsAll(t, runCompletion(t, "init", "--extends", ""), "bash", "docker-host")
 }
 
 func TestCompletionTolerantLoad(t *testing.T) {

@@ -136,9 +136,9 @@ func TestExitCodeFor(t *testing.T) {
 }
 
 func TestShowDockerPrintsSensitiveAdvisory(t *testing.T) {
-	out, err := runTpd(t, "show", "docker")
+	out, err := runTpd(t, "show", "docker-host")
 	if err != nil {
-		t.Fatalf("show docker: %v\n%s", err, out)
+		t.Fatalf("show docker-host: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "warning:") {
 		t.Errorf("expected advisory warning on stderr, got:\n%s", out)
@@ -154,9 +154,9 @@ func TestEditDockerPrintsSensitiveAdvisory(t *testing.T) {
 		"XDG_CONFIG_HOME=" + cfg,
 		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
 	}
-	out, err := runTpdEnv(t, env, "edit", "docker")
+	out, err := runTpdEnv(t, env, "edit", "docker-host")
 	if err != nil {
-		t.Fatalf("edit docker: %v\n%s", err, out)
+		t.Fatalf("edit docker-host: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "warning:") {
 		t.Errorf("expected advisory warning on stderr, got:\n%s", out)

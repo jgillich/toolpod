@@ -1,6 +1,7 @@
 package catalog_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jgillich/tpd/internal/catalog"
@@ -17,15 +18,88 @@ const guiWaylandMount = "{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{
 // pinning versions, so the built-in profiles must still load and validate
 // with a bare `latest` (no checksum).
 func TestAdvisory(t *testing.T) {
-	for _, name := range []string{"docker", "podman", "gui", "gui-runtime", "ssh", "netrc", "aws", "azure", "gcloud", "github", "gitlab", "vault"} {
+	for _, name := range []string{"docker-host", "podman-host", "gui", "gui-runtime", "ssh", "netrc", "aws", "azure", "gcloud", "github", "gitlab", "vault"} {
 		if got := catalog.Advisory(name); got == "" {
 			t.Errorf("Advisory(%q) should be non-empty", name)
 		}
 	}
-	for _, name := range []string{"javascript", "go", "gitconfig", "bash", "mise", ""} {
+	for _, name := range []string{"podman", "javascript", "go", "gitconfig", "bash", "mise", ""} {
 		if got := catalog.Advisory(name); got != "" {
 			t.Errorf("Advisory(%q) = %q, want empty", name, got)
 		}
+	}
+}
+
+// TestPodmanNestedFragment is the canary for the fragment split: `podman` now
+// wires an isolated nested engine as a service (no host socket), while
+// `podman-host`/`docker-host` keep the host engine socket.
+func TestPodmanNestedFragment(t *testing.T) {
+	cat, err := profile.LoadProfiles("")
+	if err != nil {
+		t.Fatalf("LoadProfiles: %v", err)
+	}
+
+	host, err := profile.ResolveFragment(cat, "podman-host")
+	if err != nil {
+		t.Fatalf("ResolveFragment(podman-host): %v", err)
+	}
+	if len(host.Services) != 0 {
+		t.Error("podman-host must not declare services")
+	}
+
+	cfg, err := profile.ResolveFragment(cat, "podman")
+	if err != nil {
+		t.Fatalf("ResolveFragment(podman): %v", err)
+	}
+	if len(cfg.Mounts) != 1 {
+		t.Fatalf("podman mounts = %v, want only the service-socket mount", cfg.Mounts)
+	}
+	svcMount, ok := cfg.Mounts["/var/run/docker.sock"]
+	if !ok {
+		t.Fatal("podman should mount /var/run/docker.sock from the service")
+	}
+	if svcMount.Service != "podman" || svcMount.Socket != "podman" || svcMount.Source != "" {
+		t.Errorf("socket mount = %+v, want service=podman socket=podman with no host source", svcMount)
+	}
+
+	svc, ok := cfg.Services["podman"]
+	if !ok {
+		t.Fatal("podman fragment should declare a service named podman")
+	}
+	if svc.Image != "debian:13-slim" {
+		t.Errorf("service image = %q, want debian:13-slim", svc.Image)
+	}
+	if len(svc.Command) == 0 {
+		t.Error("service command must be set (podman system service)")
+	}
+	if len(svc.Exposes) != 1 || svc.Exposes["podman"] != "/run/podman/podman.sock" {
+		t.Errorf("service exposes = %v, want podman -> /run/podman/podman.sock", svc.Exposes)
+	}
+	if len(svc.Packages) == 0 {
+		t.Error("service should install podman via packages")
+	}
+	if len(svc.Caches["podman-storage"]) == 0 {
+		t.Error("service should cache the nested engine's image store")
+	}
+	// An unprivileged service container cannot run a nested engine (kernel
+	// blocks the nested userns's /proc mount, and there is no /dev/net/tun),
+	// so the fragment opts into a privileged rootful sidecar. The service
+	// runs podman as root directly — no user/subuid/setpriv machinery.
+	if !svc.Privileged {
+		t.Error("service must be privileged for the nested rootful engine")
+	}
+	if len(svc.Files) != 0 {
+		t.Errorf("service should need no config files, got %v", svc.Files)
+	}
+	cmd := strings.Join(svc.Command, " ")
+	if !strings.Contains(cmd, "podman system service") {
+		t.Error("service command should run `podman system service`")
+	}
+	if strings.Contains(cmd, "setpriv") || strings.Contains(cmd, "useradd") {
+		t.Error("rootful service must not set up a drop-privilege user")
+	}
+	if cfg.Env["DOCKER_HOST"] != "unix:///var/run/docker.sock" {
+		t.Errorf("DOCKER_HOST = %q, want unix:///var/run/docker.sock", cfg.Env["DOCKER_HOST"])
 	}
 }
 

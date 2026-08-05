@@ -8,10 +8,10 @@ package catalog
 // specifically declined them.
 func Advisory(name string) string {
 	switch name {
-	case "docker":
-		return "mounts the Docker socket read-write — container processes can administer the daemon (host-root access on a rootful daemon)"
-	case "podman":
-		return "mounts the Podman socket read-write — container processes can control the container engine"
+	case "docker-host":
+		return "mounts the host Docker socket read-write — container processes can administer the daemon (host-root access on a rootful daemon)"
+	case "podman-host":
+		return "mounts the host Podman socket read-write — container processes can control the container engine"
 	case "gui":
 		return "exposes the host display, /dev/dri, and X11/Wayland sockets to container processes"
 	case "gui-runtime":

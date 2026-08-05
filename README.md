@@ -215,6 +215,8 @@ Profiles are user-owned configuration, but they can grant substantial host acces
 
 GUI support is split into two fragments: `gui` mounts the display, `/dev/dri`, and the specific Wayland socket, while `gui-runtime` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `gui` alone unless the app needs the runtime dir.
 
+Container engines are split the same way: `docker-host` and `podman-host` expose your host engine's socket to the profile (read-write — with great power...), while `podman` runs an isolated **nested** Podman engine as a service inside the container, with no host daemon access. The nested sidecar runs privileged (required: an unprivileged sidecar cannot run a nested engine — the kernel blocks the nested user namespace's `/proc` mount), but in a rootless engine that privilege stays inside the container's user namespace. Extend `podman` when you want a self-contained engine that persists between launches; extend `podman-host`/`docker-host` only when the profile genuinely needs your host containers.
+
 See [the security model](docs/2026-08-03-security-model.md) for the trust model, ownership labels and prune semantics, the AppImage digest-verification policy, and the accepted trade-offs (extrepo TLS trust anchor, SELinux `label=disable`, setpriv-absent root fallback, host-port allocation).
 
 ## Runtime modes

@@ -595,13 +595,13 @@ func TestScaffoldPrintsAdvisoryForSensitiveFragments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "opencode",
-		Extends:    []string{"docker"},
+		Extends:    []string{"docker-host"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "note: docker grants:") {
+	if !strings.Contains(stderr.String(), "note: docker-host grants:") {
 		t.Errorf("expected advisory note on stderr, got: %q", stderr.String())
 	}
 

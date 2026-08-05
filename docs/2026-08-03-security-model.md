@@ -20,11 +20,23 @@ into the container:
 
 | Fragment | Host access granted |
 | --- | --- |
-| `docker` | Docker socket, read-write — container processes can administer the daemon (host-root access on a rootful daemon). |
-| `podman` | Podman socket, read-write — container processes can control the container engine. |
+| `docker-host` | Docker socket, read-write — container processes can administer the daemon (host-root access on a rootful daemon). |
+| `podman-host` | Podman socket, read-write — container processes can control the container engine. |
 | `gui` | Host display, `/dev/dri`, X11 socket, and the specific Wayland socket named by `$WAYLAND_DISPLAY`. |
 | `gui-runtime` | The entire `$XDG_RUNTIME_DIR` — audio, compositor, notification, and agent sockets. |
 | `ssh`, `netrc`, `aws`, `azure`, `gcloud`, `github`, `gitlab`, `vault` | Host credentials, mounted read-only — any process in the profile can read them. |
+
+The `podman` fragment is the complement: it grants **no host** access. Its
+service sidecar runs an isolated **nested rootful Podman engine** and exposes
+that engine's socket to the main container. The sidecar is launched
+`privileged: true`, which in a rootless engine grants `CAP_SYS_ADMIN` plus all
+devices *inside the container's user namespace* — it does not escape to the host
+(a privileged rootless container is not host root). The privilege is required:
+an unprivileged sidecar cannot run a nested engine (the kernel blocks the nested
+user namespace's `/proc` mount, and there is no `/dev/net/tun` for networking).
+Everything the nested engine builds or runs is contained in the sidecar; it
+never touches the host daemon. It carries no advisory because there is no host
+capability to warn about.
 
 The sensitive fragments each carry a one-line advisory (`catalog.Advisory`,
 `internal/catalog/advisories.go`) that `tpd show`, `tpd edit`, and `tpd init`
