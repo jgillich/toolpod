@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -126,13 +128,26 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		return 3, fmt.Errorf("create container: %w", err)
 	}
 
-	defer func() {
+	// cleanupMu serializes removal attempts and only records success, so a
+	// failed signal-triggered removal can be retried during normal teardown.
+	var cleanupMu sync.Mutex
+	removed := false
+	runDone := make(chan struct{})
+	cleanupOnce := func() {
+		cleanupMu.Lock()
+		defer cleanupMu.Unlock()
+		if removed {
+			return
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
 			fmt.Fprintf(os.Stderr, "tpd: warning: remove container %s: %v\n", resp.ID, err)
+			return
 		}
-	}()
+		removed = true
+	}
+	defer cleanupOnce()
 
 	if len(spec.Files) > 0 {
 		if err := writeContainerFiles(ctx, d.cli, resp.ID, spec.Files, hostUID, hostGID); err != nil {
@@ -166,27 +181,40 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	}
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer func() {
-		signal.Stop(sigCh)
-		close(sigCh)
-	}()
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	var winCh chan os.Signal
+	var stopCh chan os.Signal
+	var signalWG sync.WaitGroup
+	var fallbackWG sync.WaitGroup
+	var shuttingDown atomic.Bool
 
 	if tty {
-		winCh := make(chan os.Signal, 1)
+		winCh = make(chan os.Signal, 1)
 		signal.Notify(winCh, syscall.SIGWINCH)
-		defer func() {
-			signal.Stop(winCh)
-			close(winCh)
+		signalWG.Add(1)
+		go func() {
+			defer signalWG.Done()
+			d.handleResize(ctx, resp.ID, winCh)
 		}()
-		go d.handleResize(ctx, resp.ID, winCh)
 	}
 
+	signalWG.Add(1)
 	go func() {
+		defer signalWG.Done()
 		for sig := range sigCh {
-			if s, ok := sig.(syscall.Signal); ok {
-				_ = d.cli.ContainerKill(ctx, resp.ID, strconv.Itoa(int(s)))
+			if shuttingDown.Load() {
+				continue
 			}
+			s, ok := sig.(syscall.Signal)
+			if !ok {
+				continue
+			}
+			// Forward the signal so the app can exit gracefully; if it
+			// doesn't within the grace period, force-remove so a killed tpd
+			// never orphans a running container (e.g. closed terminal = SIGHUP).
+			forwardSignalThenFallback(&fallbackWG, signalTeardownGrace, runDone,
+				func() { _ = d.cli.ContainerKill(ctx, resp.ID, strconv.Itoa(int(s))) },
+				cleanupOnce)
 		}
 	}()
 
@@ -195,19 +223,93 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// arrives. Without it, a TUI in the container that stops itself on
 	// Ctrl+Z (opencode's suspend keybind) leaves this process holding a raw
 	// terminal the shell can never regain.
+	var inputGateMu sync.Mutex
+	inputReady := make(chan struct{})
+	close(inputReady)
+	inputPaused := false
+	pauseInput := func() {
+		inputGateMu.Lock()
+		defer inputGateMu.Unlock()
+		if inputPaused {
+			return
+		}
+		inputPaused = true
+		inputReady = make(chan struct{})
+		_ = unix.SetNonblock(int(os.Stdin.Fd()), true)
+	}
+	resumeInput := func() {
+		inputGateMu.Lock()
+		defer inputGateMu.Unlock()
+		if !inputPaused {
+			return
+		}
+		inputPaused = false
+		close(inputReady)
+	}
+	var resumeOutputMu sync.Mutex
+	var resumeOutput chan struct{}
+	armResumeOutput := func() <-chan struct{} {
+		resumeOutputMu.Lock()
+		defer resumeOutputMu.Unlock()
+		resumeOutput = make(chan struct{})
+		return resumeOutput
+	}
+	noteResumeOutput := func() {
+		resumeOutputMu.Lock()
+		defer resumeOutputMu.Unlock()
+		if resumeOutput != nil {
+			close(resumeOutput)
+			resumeOutput = nil
+		}
+	}
+	suspendGate := make(chan struct{}, 1)
+	suspendGate <- struct{}{}
+	suspend := func(waitForApp bool) {
+		if shuttingDown.Load() {
+			return
+		}
+		<-suspendGate
+		defer func() { suspendGate <- struct{}{} }()
+		if shuttingDown.Load() {
+			return
+		}
+		pauseInput()
+		defer resumeInput()
+		d.suspendSession(ctx, resp.ID, oldState, waitForApp, armResumeOutput)
+	}
 	if oldState != nil {
-		stopCh := make(chan os.Signal, 1)
+		stopCh = make(chan os.Signal, 1)
 		signal.Notify(stopCh, syscall.SIGTSTP)
-		defer func() {
-			signal.Stop(stopCh)
-			close(stopCh)
-		}()
+		signalWG.Add(1)
 		go func() {
+			defer signalWG.Done()
 			for range stopCh {
-				d.suspendSession(ctx, resp.ID, oldState)
+				if shuttingDown.Load() {
+					continue
+				}
+				suspend(false)
 			}
 		}()
 	}
+
+	defer func() {
+		shuttingDown.Store(true)
+		signal.Stop(sigCh)
+		close(sigCh)
+		if winCh != nil {
+			signal.Stop(winCh)
+			close(winCh)
+		}
+		if stopCh != nil {
+			signal.Stop(stopCh)
+			close(stopCh)
+		}
+		signalWG.Wait()
+		close(runDone)
+		fallbackWG.Wait()
+		<-suspendGate
+		suspendGate <- struct{}{}
+	}()
 
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return 3, fmt.Errorf("start container: %w", err)
@@ -224,14 +326,16 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// Pump streams AFTER start. This blocks until the container exits and
 	// the output stream closes.
 	pumpDone := make(chan struct{})
+	stdout := notifyingWriter{Writer: os.Stdout, notify: noteResumeOutput}
 	go func() {
 		defer close(pumpDone)
+		defer noteResumeOutput()
 		if tty {
-			if _, err := io.Copy(os.Stdout, hijacked.Reader); err != nil {
+			if _, err := io.Copy(stdout, hijacked.Reader); err != nil {
 				fmt.Fprintf(os.Stderr, "stdout pump: %v\n", err)
 			}
 		} else {
-			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, hijacked.Reader); err != nil {
+			if _, err := stdcopy.StdCopy(stdout, os.Stderr, hijacked.Reader); err != nil {
 				fmt.Fprintf(os.Stderr, "stdout pump: %v\n", err)
 			}
 		}
@@ -241,19 +345,30 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	// it guards writes with a mutex so that shutdown can close the
 	// connection without the goroutine writing to a closed socket (which
 	// produces "broken pipe" / "use of closed network connection" errors).
-	// In raw mode Ctrl+Z is a plain 0x1A byte, so the pump intercepts it and
-	// suspends the whole session; forwarding it would let a TUI that stops
-	// itself on Ctrl+Z hang the terminal.
+	// Ctrl+Z is a byte in raw mode. Forward it so TUIs can run their own
+	// suspend cleanup before tpd yields the terminal to the shell.
 	var connMu sync.Mutex
 	connClosed := false
+	waitForInput := func() {
+		inputGateMu.Lock()
+		ready := inputReady
+		inputGateMu.Unlock()
+		<-ready
+	}
 	writeConn := func(b []byte) bool {
 		connMu.Lock()
 		defer connMu.Unlock()
 		if connClosed {
 			return false
 		}
-		_, err := hijacked.Conn.Write(b)
-		return err == nil
+		for len(b) > 0 {
+			n, err := hijacked.Conn.Write(b)
+			if err != nil || n == 0 {
+				return false
+			}
+			b = b[n:]
+		}
+		return true
 	}
 	stdinDone := make(chan struct{})
 	go func() {
@@ -262,9 +377,16 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		for {
 			n, readErr := os.Stdin.Read(buf)
 			if n > 0 {
+				waitForInput()
+				if oldState == nil {
+					if !writeConn(buf[:n]) {
+						return
+					}
+					continue
+				}
 				rest := buf[:n]
 				for {
-					i := bytes.IndexByte(rest, ctrlZ)
+					i := suspendSequenceIndex(rest)
 					if i < 0 {
 						if !writeConn(rest) {
 							return
@@ -274,13 +396,25 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 					if i > 0 && !writeConn(rest[:i]) {
 						return
 					}
-					if oldState != nil {
-						d.suspendSession(ctx, resp.ID, oldState)
+					if rest[i] == ctrlZByte {
+						if !writeConn(rest[i : i+1]) {
+							return
+						}
+						rest = rest[i+1:]
+					} else {
+						if !writeConn(rest[i : i+len(kittyCtrlZ)]) {
+							return
+						}
+						rest = rest[i+len(kittyCtrlZ):]
 					}
-					rest = rest[i+1:]
+					suspend(true)
 				}
 			}
 			if readErr != nil {
+				if errors.Is(readErr, syscall.EAGAIN) {
+					waitForInput()
+					continue
+				}
 				return
 			}
 		}
@@ -308,33 +442,168 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	}
 }
 
-// ctrlZ is the raw-mode byte produced by Ctrl+Z; with ISIG off the kernel
+// ctrlZByte is the raw-mode byte produced by Ctrl+Z; with ISIG off the kernel
 // does not turn it into SIGTSTP.
-const ctrlZ = 0x1A
+const ctrlZByte = 0x1A
+
+var kittyCtrlZ = []byte("\x1b[122;5u")
+
+func suspendSequenceIndex(b []byte) int {
+	byteIndex := bytes.IndexByte(b, ctrlZByte)
+	kittyIndex := bytes.Index(b, kittyCtrlZ)
+	if byteIndex < 0 {
+		return kittyIndex
+	}
+	if kittyIndex < 0 || byteIndex < kittyIndex {
+		return byteIndex
+	}
+	return kittyIndex
+}
+
+// signalTeardownGrace is how long a forwarded signal gets to stop the container
+// before tpd force-removes it, so a terminating tpd (terminal close, SIGKILL
+// fallback) never leaves a running container behind.
+const signalTeardownGrace = 10 * time.Second
+
+// forwardSignalThenFallback forwards a signal to the container and, if it
+// hasn't stopped within grace (runDone signals normal exit), force-removes it.
+func forwardSignalThenFallback(wg *sync.WaitGroup, grace time.Duration, runDone <-chan struct{}, forward func(), cleanupOnce func()) {
+	forward()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			cleanupOnce()
+		case <-runDone:
+		}
+	}()
+}
 
 // suspendSession hands the terminal back to the shell and stops this process
-// (and the container command) so the session can be backgrounded with Ctrl+Z
-// and resumed with fg. Without it, a TUI in the container that stops itself
-// on Ctrl+Z (opencode's suspend keybind) leaves tpd holding a raw terminal
-// with nothing to wake it. The terminal is restored before stopping so the
-// shell can repaint; on resume we re-enter raw mode and continue the
-// container.
-func (d *DockerRuntime) suspendSession(ctx context.Context, containerID string, oldState *term.State) {
+// so the session can be backgrounded with Ctrl+Z and resumed with fg. When the
+// TUI received Ctrl+Z itself, wait for its cleanup before stopping tpd.
+func (d *DockerRuntime) suspendSession(ctx context.Context, containerID string, oldState *term.State, waitForApp bool, armResumeOutput func() <-chan struct{}) {
 	if oldState == nil {
 		return
 	}
-	_ = term.Restore(int(os.Stdin.Fd()), oldState)
-	// Pause the container command too (tini forwards SIGTSTP); best effort,
-	// the container may already have exited.
-	_ = d.cli.ContainerKill(ctx, containerID, strconv.Itoa(int(syscall.SIGTSTP)))
+	if waitForApp {
+		if !d.waitForContainerProcessStopped(ctx, containerID, 500*time.Millisecond) {
+			_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP)
+		}
+	} else {
+		_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP)
+	}
+	disableMouseModes(os.Stdout)
+	if err := term.Restore(int(os.Stdin.Fd()), oldState); err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: restore terminal: %v\n", err)
+	}
 	// SIGSTOP cannot be caught, so fg resumes us right after this call.
 	_ = unix.Kill(unix.Getpid(), unix.SIGSTOP)
-	_, _ = term.MakeRaw(int(os.Stdin.Fd()))
-	_ = d.cli.ContainerKill(ctx, containerID, strconv.Itoa(int(syscall.SIGCONT)))
-	rows, cols := terminalSize()
-	if rows > 0 && cols > 0 {
-		_ = d.cli.ContainerResize(ctx, containerID, container.ResizeOptions{Height: rows, Width: cols})
+	if err := waitForForegroundTerminal(int(os.Stdin.Fd())); err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: reclaim terminal: %v\n", err)
 	}
+	if _, err := term.MakeRaw(int(os.Stdin.Fd())); err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: restore raw terminal: %v\n", err)
+	}
+	_ = unix.SetNonblock(int(os.Stdin.Fd()), false)
+	resumeOutputReady := armResumeOutput()
+	_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGCONT)
+	<-resumeOutputReady
+	// fg may apply the shell's saved job settings after delivering SIGCONT.
+	if _, err := term.MakeRaw(int(os.Stdin.Fd())); err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: reassert raw terminal: %v\n", err)
+	}
+}
+
+func waitForForegroundTerminal(fd int) error {
+	processGroup := unix.Getpgrp()
+	for {
+		foregroundGroup, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+		if err != nil {
+			return err
+		}
+		if foregroundGroup == processGroup {
+			return nil
+		}
+		if err := unix.Kill(unix.Getpid(), unix.SIGTTIN); err != nil {
+			return err
+		}
+	}
+}
+
+func (d *DockerRuntime) waitForContainerProcessStopped(ctx context.Context, containerID string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		top, err := d.cli.ContainerTop(ctx, containerID, nil)
+		if err == nil {
+			statIndex := -1
+			pidIndex := -1
+			for i, title := range top.Titles {
+				switch strings.ToUpper(title) {
+				case "STAT":
+					statIndex = i
+				case "PID":
+					pidIndex = i
+				}
+			}
+			if statIndex >= 0 {
+				for _, process := range top.Processes {
+					if statIndex >= len(process) || (pidIndex >= 0 && pidIndex < len(process) && process[pidIndex] == "1") {
+						continue
+					}
+					if strings.Contains(process[statIndex], "T") {
+						return true
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (d *DockerRuntime) signalContainerForegroundGroup(ctx context.Context, containerID string, sig syscall.Signal) error {
+	execResp, err := d.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          []string{"kill", "-" + strconv.Itoa(int(sig)), "--", "-2"},
+		AttachStdin:  false,
+		AttachStdout: true,
+		AttachStderr: true,
+		User:         "0",
+	})
+	if err != nil {
+		return err
+	}
+	// Attaching provides the completion barrier that local job control gets
+	// from kill(2), so input cannot race ahead of SIGCONT delivery.
+	attached, err := d.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return err
+	}
+	defer attached.Close()
+	_, err = io.Copy(io.Discard, attached.Reader)
+	return err
+}
+
+func disableMouseModes(dst io.Writer) {
+	_, _ = io.WriteString(dst, "\x1b[?1000;1002;1003;1004;1006l")
+}
+
+type notifyingWriter struct {
+	io.Writer
+	notify func()
+}
+
+func (w notifyingWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if n > 0 {
+		w.notify()
+	}
+	return n, err
 }
 
 // tarFiles renders the container-file tar stream: one regular file entry per

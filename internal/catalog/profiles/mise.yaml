@@ -6,6 +6,8 @@ repos:
     extrepo: mise
 packages:
   - mise
+  - bsdextrautils
+  - file
   - curl
   - git
   - build-essential
@@ -20,6 +22,7 @@ packages:
   - gettext
   - openssl
   - gdb
+  - strace
 mounts:
   /etc/mise:
     source: ~/.config/mise

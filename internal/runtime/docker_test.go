@@ -629,6 +629,80 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	}
 }
 
+func TestIntegrationSignalTeardown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("DOCKER_HOST") == "" {
+		t.Skip("DOCKER_HOST not set")
+	}
+	rt, err := NewDockerRuntime()
+	if err != nil {
+		t.Fatalf("NewDockerRuntime: %v", err)
+	}
+	// The command traps the forwarded signal, so only the grace-period
+	// force-remove can stop the container — the SIGHUP-on-terminal-close
+	// scenario where tpd dies and would otherwise orphan a running container.
+	spec := Spec{
+		ProfileName: "test-teardown",
+		Image:       integrationImage,
+		Command:     []string{"sh", "-c", `trap '' HUP TERM INT; sleep 3600`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
+		RuntimeHome: "/root",
+		Network:     "none",
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := rt.Run(context.Background(), spec)
+		done <- err
+	}()
+	id := waitRunningContainer(t, rt, "test-teardown")
+	if err := unix.Kill(unix.Getpid(), unix.SIGHUP); err != nil {
+		t.Fatalf("send SIGHUP: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return after SIGHUP")
+	}
+	containers, err := rt.cli.ContainerList(context.Background(), container.ListOptions{All: true})
+	if err != nil {
+		t.Fatalf("ContainerList: %v", err)
+	}
+	for _, c := range containers {
+		if c.ID == id {
+			t.Errorf("container %s still present after SIGHUP teardown", id)
+		}
+	}
+}
+
+// waitRunningContainer returns the ID of the first running tpd-<profile>-*
+// container, failing the test if none appears within a deadline.
+func waitRunningContainer(t *testing.T, rt *DockerRuntime, profileName string) string {
+	t.Helper()
+	prefix := "tpd-" + profileName + "-"
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		containers, err := rt.cli.ContainerList(context.Background(), container.ListOptions{})
+		if err == nil {
+			for _, c := range containers {
+				if c.State != "running" {
+					continue
+				}
+				for _, name := range c.Names {
+					if strings.HasPrefix(name, "/"+prefix) || strings.HasPrefix(name, prefix) {
+						return c.ID
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("container for profile %s not running within deadline", profileName)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
 // containerIPOf resolves the bridge IP of the newest running container for
 // profileName. The container is named tpd-<profile>-<randomID> by Run.
 // Stale (exited) containers matching the prefix are skipped.

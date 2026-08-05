@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+func TestSuspendSequenceIndex(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"plain", -1},
+		{"a\x1ab", 1},
+		{"a\x1b[122;5ub", 1},
+		{"\x1b[122;5u\x1a", 0},
+	}
+	for _, tt := range tests {
+		if got := suspendSequenceIndex([]byte(tt.input)); got != tt.want {
+			t.Errorf("suspendSequenceIndex(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestTarFiles(t *testing.T) {
 	files := []FileSpec{
 		{Target: "/root/.config/foo", Content: "hello\n", Mode: 0o600},
