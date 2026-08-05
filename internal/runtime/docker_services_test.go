@@ -390,8 +390,8 @@ func TestStartServicesRecreatesOnHashChangeZeroConsumers(t *testing.T) {
 	}
 }
 
-func TestStartServicesWarnsOnHashChangeWithConsumers(t *testing.T) {
-	overrideServicePaths(t)
+func TestStartServicesRecreatesOnHashChangeWithConsumers(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
 	daemon := newFakeServicesDaemon()
 	daemon.containers = []types.Container{{
 		ID:     "old-svc",
@@ -405,21 +405,30 @@ func TestStartServicesWarnsOnHashChangeWithConsumers(t *testing.T) {
 		State:  "running",
 		Labels: map[string]string{UsesServiceLabel: "db"},
 	}}
+	daemon.sockets = map[string][]string{
+		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
 	rt := newServicesTestRuntime(t, daemon)
 
 	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
-	_, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
-	if err == nil {
-		t.Fatal("StartServices with a live consumer and a changed config must fail")
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices with a live consumer and a changed config must recreate, not fail: %v", err)
 	}
-	if !strings.Contains(err.Error(), "db") || !strings.Contains(err.Error(), "tpd-profile-abc123") {
-		t.Errorf("error %q should name the service and the consumer container", err)
+	defer bindings.Release()
+
+	if daemon.stopCount != 1 {
+		t.Errorf("ContainerStop calls = %d, want 1 (old service must be stopped)", daemon.stopCount)
 	}
-	if len(daemon.removed) != 0 {
-		t.Errorf("live service must not be removed; removed = %v", daemon.removed)
+	if !containsString(daemon.removed, "old-svc") {
+		t.Errorf("old service container not removed despite live consumers; removed = %v", daemon.removed)
 	}
-	if daemon.createCount != 0 {
-		t.Errorf("no fresh container must be created on consumer conflict; created %d", daemon.createCount)
+	if daemon.createCount != 1 {
+		t.Errorf("ContainerCreate calls = %d, want 1", daemon.createCount)
+	}
+	want := filepath.Join(runDir, "db", "run", "db.sock")
+	if got := bindings.Sockets["db/port"]; got != want {
+		t.Errorf("binding db/port = %q, want %q", got, want)
 	}
 }
 

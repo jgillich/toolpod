@@ -166,18 +166,16 @@ differently) do not churn the hash and recreate a live shared daemon.
 4. If one exists but the hash differs:
    - Under the service lock, count running main containers labeled
      `tpd.uses-service` that include `<name>`.
-   - **Zero consumers:** stop+remove the old container, create fresh.
-     Cache volumes persist and warm the new instance.
-   - **One or more consumers:** warn to stderr ("service <name> is
-     running with a different config; reusing. The new config will
-     apply on the next launch after the current consumers exit.") and
-     reuse the running instance as-is.
+   - Stop+remove the old container, create fresh. Cache volumes persist
+     and warm the new instance. If other consumers are still attached, a
+     warning names them — the old daemon is replaced regardless,
+     accepting a brief outage for those consumers so the new launch gets
+     the updated service immediately instead of being blocked by them.
 
 This rule is uniform across same-profile-config-edits and
-cross-profile-name-collisions: if other consumers are attached, the
-running daemon is never killed mid-session; if nobody is attached, the
-new config takes effect immediately. No profile-identity label is
-needed — the consumer count is the only safety gate.
+cross-profile-name-collisions: a changed config always wins on the next
+launch, and consumers of a stale daemon are notified via the warning
+rather than silently kept on it. No profile-identity label is needed.
 
 ### Lifecycle
 

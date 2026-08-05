@@ -147,14 +147,15 @@ func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc Service
 		fillBindings(bindings, name, spec.Workspace.Mode, svc)
 		return nil
 	default:
-		// A shared daemon must never be killed under a live consumer. Only
-		// recreate when nobody is attached.
+		// The new config wins immediately even under a live consumer: the
+		// old daemon is replaced, accepting a brief outage for consumers
+		// rather than blocking the launch on the stale config.
 		consumers, err := serviceConsumers(ctx, d.cli, name)
 		if err != nil {
 			return err
 		}
 		if len(consumers) > 0 {
-			return fmt.Errorf("service %s is running with a different config and is in use by container(s) %s; stop them or rename the service", name, strings.Join(consumers, ", "))
+			fmt.Fprintf(os.Stderr, "tpd: warning: recreating service %s with a new config while in use by %s (brief downtime)\n", name, strings.Join(consumers, ", "))
 		}
 		if err := d.cli.ContainerStop(ctx, existing.ID, container.StopOptions{}); err != nil {
 			return fmt.Errorf("stop service container %s: %w", existing.ID, err)
