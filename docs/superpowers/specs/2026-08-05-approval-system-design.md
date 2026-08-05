@@ -325,9 +325,16 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
    but **missing from the new key set** are dropped from the state. If
    the reconciled state differs from the loaded state, `Filter` writes it
    back via `store.Save` **before returning**, regardless of whether a
-   prompt follows — otherwise a removed-then-re-added key with unchanged
-   content would match the old hash and silently restore its approval.
-   Keys still present keep their prior allowed/denied choice and feed
+   prompt follows. This is the carry-forward cleanup: after a hash
+   change, the dialog/`--yes`/`--no` merge carried the old state into the
+   new hash, and the re-filter's reconcile drops keys that no longer
+   exist in the profile; it also cleans hand-edited state files. Note the
+   reconcile does **not** prevent a removed-then-re-added key from
+   restoring its approval: removing a key changes the hash, so the
+   `st.Hash == current hash` guard skips reconciliation for that change,
+   and re-adding identical content matches the old hash and restores the
+   choice — benign, since the user approved identical content. Keys still
+   present keep their prior allowed/denied choice and feed
    `PriorChoices`.
 5. For each key whose provenance is a **non-user** entry:
    - **Approved** (stored, hash matches) → keep in the profile.
@@ -353,12 +360,18 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 ### Dialog return shape
 
 The dialog returns the final `map[field]set[key]bool` of allowed keys for
-this hash (the union of prior choices and new toggles, with new toggles
-overriding on conflict). `--yes` sets every item's key to true; `--no`
-sets every item's key to false. `Launch` then:
+this hash. For each **decided field** the set is the complete allowed-set
+for that field — prior-approved keys arrive pre-checked (from
+`PriorChoices`) and are included unless the user un-toggles them, so the
+returned set **replaces** the stored choices for that field, it does not
+union with them. `--yes` sets every item's key to true; `--no` sets
+every item's key to false. `Launch` then:
 
-1. Writes the combined choices to the store (`store.Save`) under the
-   current hash.
+1. Merges the choices **per-field** into the loaded prior state via
+   `mergeChoicesIntoState`: decided fields replace their stored keys;
+   fields not present in the current item set keep their stored choices
+   untouched. Writes the merged state to the store (`store.Save`) under
+   the current hash.
 2. Re-runs `Filter` with the now-populated store. Because every item now
    has a stored choice for the current hash, `PromptRequest.Items` is
    empty and `Filter` returns the filtered profile directly.
@@ -708,12 +721,16 @@ mode).
 ### DryRun
 
 `--dry-run` is a read-only inspection command: it must not write approval
-state or block on input. If a prompt would be required (there are
-unapproved sensitive items and neither `--yes` nor `--no` was passed),
-DryRun errors with exit code 2 and the same "requires --yes or --no"
-message as non-interactive mode — it does not invoke the dialog and does
-not persist state. With `--yes` or `--no`, DryRun applies the choice
-through an **ephemeral in-memory store** (see step 4 of the flow): the
+state or block on input. The whole dry-run flow runs against a
+**`ReadOnlyStore`** (Load delegates to the real store, Save is a no-op),
+so the initial `Filter` can read stored approvals — an already-approved
+profile must not prompt — while its reconciliation write-back never
+touches disk. If a prompt would be required (there are unapproved
+sensitive items and neither `--yes` nor `--no` was passed), DryRun errors
+with exit code 2 and the same "requires --yes or --no" message as
+non-interactive mode — it does not invoke the dialog and does not persist
+state. With `--yes` or `--no`, DryRun applies the choice through an
+**ephemeral in-memory overlay store** (see step 4 of the flow): the
 re-filter sees the choices without a `Save`, so the printed spec reflects
 denied fields actually removed. No state file is written. This keeps
 `--dry-run` side-effect-free while showing what would launch.
@@ -818,16 +835,30 @@ The flags are passed through `runLaunch` → `tpd.LaunchOpts.AssumeYes` /
 
 ### Semantics: prior denials persist
 
-`--yes` and `--no` only decide **currently-unapproved items** (keys in
-`promptReq.Items` with no stored choice for the current hash). A key that
-was previously **denied** (stored, hash matches, key absent from the
-approved list) stays denied — `--yes` does not override prior denials, and
-`--no` does not re-deny keys that are already approved. This makes the
-flags idempotent and script-safe: a pipeline running `tpd --yes <profile>`
-does not silently re-approve a key the user explicitly denied on an
-earlier interactive launch. To un-deny a previously-denied key, the user
-edits the state file (or deletes it to reset). A future
-`tpd approval reset` command is out of scope here.
+**When the stored hash matches the current hash**, `--yes` and `--no`
+only decide **currently-unapproved items** (keys in `promptReq.Items`
+with no stored choice for this hash). A key previously **denied**
+(stored, hash matches, key absent from the approved list) stays denied —
+`--yes` does not override prior denials, and `--no` does not re-deny
+keys that are already approved. This makes the flags idempotent and
+script-safe: a pipeline running `tpd --yes <profile>` does not silently
+re-approve a key the user explicitly denied on an earlier interactive
+launch.
+
+**When the hash changes**, every key is treated as undecided (the design
+re-prompts with prior choices pre-checked in `PriorChoices`), so `--yes`
+also approves keys that were denied under the old hash — the denial was
+made against the old definition and does not carry to the new one. The
+dialog path has the same shape: prior-approved keys are re-decided as
+pre-checked items, and the user's final per-field selection **replaces**
+the stored choices for that field (pre-checked items the user un-toggles
+become denied). Fields not present in the current item set keep their
+stored choices untouched (see §3 "Dialog return shape" — the merge is
+per-field, preserving fields the dialog didn't decide).
+
+To un-deny a previously-denied key without a hash change, the user edits
+the state file (or deletes it to reset). A future `tpd approval reset`
+command is out of scope here.
 
 ## 8. Advisory removal
 

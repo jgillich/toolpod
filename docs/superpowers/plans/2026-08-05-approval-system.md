@@ -23,7 +23,7 @@
 - Hash and store key on **pre-expansion** (literal template) values. A changed host env var must not invalidate approvals.
 - State file keyed by resolved catalog `FullName`, not the display name.
 - Provenance stores `Contributor{FullName, Namespace}`; `Trusted()` = `Namespace == ""`.
-- `--dry-run` never persists state and never prompts; uses an ephemeral in-memory store for the re-filter.
+- `--dry-run` never persists state and never prompts; the whole flow runs against a `ReadOnlyStore` (Load delegates, Save no-ops) and the `--yes`/`--no` re-filter uses an ephemeral in-memory overlay.
 - Partial dialog results fail closed (exit 2, no Save).
 
 ---
@@ -1291,6 +1291,10 @@ func TestStateMarshalNestsDbusOnly(t *testing.T) {
 	if contains(s, "services.podman.") {
 		t.Errorf("YAML should not contain nested services.<name>.<field> keys:\n%s", s)
 	}
+	// Map fields marshal as bare lists (mounts: [~/.ssh]), not nested under keys:.
+	if contains(s, "keys:") {
+		t.Errorf("YAML should not contain a nested keys: field (map fields are bare lists):\n%s", s)
+	}
 	// Round-trip preserves the flat keyed State.
 	var back State
 	if err := yaml.Unmarshal(data, &back); err != nil {
@@ -1353,19 +1357,30 @@ type yamlApproved struct {
 	Services *yamlField `yaml:"services,omitempty"`
 }
 
-type yamlField struct {
-	Keys []string `yaml:"keys,omitempty"`
+// yamlField is a pointer-wrapped []string so the three-state distinction
+// survives round-trip: a nil pointer (the field is absent from yamlApproved)
+// means "never decided"; a non-nil pointer with an empty slice means
+// "field present, all denied"; a non-nil pointer with items means
+// "approved". It marshals as a bare YAML list (not nested under keys:) to
+// match the spec's human-readable on-disk shape (mounts: [~/.ssh], not
+// mounts: {keys: [~/.ssh]}).
+type yamlField []string
+
+// ptrField wraps an ApprovedField's Keys in a non-nil *yamlField so
+// "present, all denied" (empty slice) emits an explicit key rather than
+// being omitted by omitempty on the parent pointer.
+func ptrField(af ApprovedField) *yamlField {
+	f := yamlField(af.Keys)
+	return &f
+}
+
+func (f *yamlField) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	return unmarshal((*[]string)(f))
 }
 
 type yamlDbus struct {
 	Talk *yamlField `yaml:"talk,omitempty"`
 	Own  *yamlField `yaml:"own,omitempty"`
-}
-
-// ptrField wraps a yamlField in a non-nil pointer so "present, all denied"
-// (empty Keys) emits an explicit key rather than being omitted by omitempty.
-func ptrField(af ApprovedField) *yamlField {
-	return &yamlField{Keys: af.Keys}
 }
 
 func (s State) MarshalYAML() (interface{}, error) {
@@ -1411,29 +1426,29 @@ func (s *State) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	s.Approved = map[string]ApprovedField{}
 	a := y.Approved
 	if a.Mounts != nil {
-		s.Approved["mounts"] = ApprovedField{Keys: a.Mounts.Keys}
+		s.Approved["mounts"] = ApprovedField{Keys: *a.Mounts}
 	}
 	if a.Devices != nil {
-		s.Approved["devices"] = ApprovedField{Keys: a.Devices.Keys}
+		s.Approved["devices"] = ApprovedField{Keys: *a.Devices}
 	}
 	if a.Env != nil {
-		s.Approved["env"] = ApprovedField{Keys: a.Env.Keys}
+		s.Approved["env"] = ApprovedField{Keys: *a.Env}
 	}
 	if a.Ports != nil {
-		s.Approved["ports"] = ApprovedField{Keys: a.Ports.Keys}
+		s.Approved["ports"] = ApprovedField{Keys: *a.Ports}
 	}
 	if a.Network != nil {
 		s.Approved["network"] = ApprovedField{Network: a.Network}
 	}
 	if a.Services != nil {
-		s.Approved["services"] = ApprovedField{Keys: a.Services.Keys}
+		s.Approved["services"] = ApprovedField{Keys: *a.Services}
 	}
 	if a.Dbus != nil {
 		if a.Dbus.Talk != nil {
-			s.Approved["dbus.talk"] = ApprovedField{Keys: a.Dbus.Talk.Keys}
+			s.Approved["dbus.talk"] = ApprovedField{Keys: *a.Dbus.Talk}
 		}
 		if a.Dbus.Own != nil {
-			s.Approved["dbus.own"] = ApprovedField{Keys: a.Dbus.Own.Keys}
+			s.Approved["dbus.own"] = ApprovedField{Keys: *a.Dbus.Own}
 		}
 	}
 	return nil
@@ -1467,7 +1482,7 @@ git commit -m "feat(approval): add FSStore with three-state YAML and path valida
 
 **Interfaces:**
 - Consumes: `profile.Resolved` (Task 3), `ComputeApprovalHash` (Task 4), `Store`/`State` (Task 5).
-- Produces: `SensitiveItem`, `PromptRequest`, `Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, error)`, `EphemeralStore`.
+- Produces: `SensitiveItem`, `PromptRequest`, `Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, error)`, `EphemeralStore`, `ReadOnlyStore`.
 
 - [ ] **Step 1: Write the failing test for the no-prompt short-circuit**
 
@@ -1822,6 +1837,12 @@ Add the per-field `apply*Field` functions and helpers below to `internal/approva
 // decide is the shared keep/drop/prompt decision for one non-user key.
 // Returns keep=true if the key should remain in the filtered profile, and
 // appends a SensitiveItem to req.Items when the user must still decide.
+//
+// NOTE: a missing provenance entry (c is the zero value, Trusted()) is
+// treated as user-trusted and skips the gate. This is deliberate fail-open
+// — a provenance bug must not brick launches — but it means a provenance
+// regression in the merge would silently bypass the approval gate. The
+// provenance unit tests in internal/profile guard against that.
 func decide(field, key, value string, c profile.Contributor, st State, req PromptRequest) (bool, PromptRequest) {
 	if c.Trusted() {
 		return true, req
@@ -2186,7 +2207,7 @@ func TestEphemeralStoreDoesNotPersist(t *testing.T) {
 }
 ```
 
-- [ ] **Step 11: Implement EphemeralStore**
+- [ ] **Step 11: Implement EphemeralStore and ReadOnlyStore**
 
 Add to `internal/approval/approval.go`:
 
@@ -2206,14 +2227,48 @@ func NewEphemeralStore(base Store, overlay State) *EphemeralStore {
 
 func (e *EphemeralStore) Load(string) (State, error) { return e.overlay, nil }
 func (e *EphemeralStore) Save(string, State) error   { return nil }
+
+// ReadOnlyStore wraps a base Store: Load delegates to the base; Save is a
+// no-op. Used for the whole --dry-run flow so the initial Filter can read
+// stored approvals (an approved profile must not prompt) but a
+// reconciliation write-back never touches disk.
+type ReadOnlyStore struct {
+	base Store
+}
+
+func NewReadOnlyStore(base Store) *ReadOnlyStore {
+	return &ReadOnlyStore{base: base}
+}
+
+func (r *ReadOnlyStore) Load(name string) (State, error) { return r.base.Load(name) }
+func (r *ReadOnlyStore) Save(string, State) error        { return nil }
 ```
 
-- [ ] **Step 12: Run the full approval package suite**
+- [ ] **Step 12: Write the test for ReadOnlyStore**
+
+Append to `approval_test.go`:
+
+```go
+func TestReadOnlyStoreDelegatesLoadButNotSave(t *testing.T) {
+	base := &memStore{state: map[string]State{"p": {Hash: "h"}}}
+	ro := NewReadOnlyStore(base)
+	got, err := ro.Load("p")
+	if err != nil || got.Hash != "h" {
+		t.Fatalf("Load should delegate to base, got %+v err=%v", got, err)
+	}
+	_ = ro.Save("p", State{Hash: "other"})
+	if base.state["p"].Hash != "h" {
+		t.Error("Save should not persist to base store")
+	}
+}
+```
+
+- [ ] **Step 13: Run the full approval package suite**
 
 Run: `go test ./internal/approval/ -v`
 Expected: PASS.
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
 git add internal/approval/approval.go internal/approval/approval_test.go
@@ -2312,6 +2367,17 @@ func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[st
 		groups[src] = append(groups[src], it)
 	}
 	sort.Strings(order)
+	// Items within a group arrive in map-iteration order (nondeterministic);
+	// sort by (Field, Key) so the dialog renders deterministically.
+	for src := range groups {
+		sort.Slice(groups[src], func(i, j int) bool {
+			a, b := groups[src][i], groups[src][j]
+			if a.Field != b.Field {
+				return a.Field < b.Field
+			}
+			return a.Key < b.Key
+		})
+	}
 
 	// Pre-select any item whose key PriorChoices marks approved.
 	preSelected := map[string]bool{}
@@ -2415,7 +2481,7 @@ func IsTTYReader(r io.Reader) bool {
 }
 ```
 
-Then update `internal/scaffold/scaffold.go`: delete the local `IsTTY` function (lines ~405-413) and replace its call site (in `scaffold.Run` or wherever `scaffold.IsTTY(os.Stdin)` is called) with `ui.IsTTYReader`. Add `"github.com/jgillich/tpd/internal/ui"` to scaffold's imports. Verify no other `scaffold.IsTTY` references remain.
+Then update `internal/scaffold/scaffold.go`: delete the local `IsTTY` function (lines ~405-413) and replace its call site (in `scaffold.Run` or wherever `scaffold.IsTTY(os.Stdin)` is called) with `ui.IsTTYReader`. Add `"github.com/jgillich/tpd/internal/ui"` to scaffold's imports, and **drop `"golang.org/x/term"`** — `term` is only referenced inside the deleted `IsTTY`, so leaving it is an unused-import compile error. Verify no other `scaffold.IsTTY` references remain.
 
 - [ ] **Step 5: Run the contract test and scaffold tests**
 
@@ -2439,7 +2505,7 @@ git commit -m "feat(approval): add huh-based DefaultPrompt; move IsTTY to ui.IsT
 - Modify: `pkg/tpd/launch_test.go`
 
 **Interfaces:**
-- Consumes: `approval.Filter`, `approval.Store`, `approval.Prompt`, `approval.NewEphemeralStore`, `profile.ResolveProfileWithProv`, `ui.IsTTYReader`.
+- Consumes: `approval.Filter`, `approval.Store`, `approval.Prompt`, `approval.NewEphemeralStore`, `approval.NewReadOnlyStore`, `profile.ResolveProfileWithProv`, `ui.IsTTYReader`.
 - Produces: `LaunchOpts` with new fields; `LaunchWithWriter` runs the gate.
 
 - [ ] **Step 1: Add fields to LaunchOpts**
@@ -2494,6 +2560,20 @@ func TestLaunchApprovalNonInteractiveErrors(t *testing.T) {
 func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	// Fixture guard: a dry-run without --yes must error, proving the gate
+	// fires. If the embedded catalog loses core/mise's mount, this fails
+	// loudly instead of the test silently passing as a no-op.
+	guard := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		DryRun:        true,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+	}, &bytes.Buffer{})
+	if guard.Err == nil || guard.ExitCode != 2 {
+		t.Fatalf("fixture guard: expected exit 2 for unapproved dry-run (embedded catalog changed?), got %+v", guard)
+	}
 	storeDir := t.TempDir()
 	store := approval.NewFSStore(storeDir)
 	opts := LaunchOpts{
@@ -2517,6 +2597,129 @@ func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
 	}
 }
 
+func TestLaunchApprovalInteractiveApprove(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			choices := map[string]map[string]bool{}
+			for _, it := range req.Items {
+				set := map[string]bool{}
+				choices[it.Field] = set
+				set[it.Key] = true
+			}
+			return choices, nil
+		},
+		Runtime: fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("interactive approve should launch, got %+v", res)
+	}
+	if fr.RanSpec == nil || len(fr.RanSpec.Mounts) == 0 {
+		t.Errorf("approved mounts should survive filtering (RunSpec mounts = %+v)", fr.RanSpec)
+	}
+}
+
+func TestLaunchApprovalInteractiveDeny(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			choices := map[string]map[string]bool{}
+			for _, it := range req.Items {
+				set := map[string]bool{}
+				choices[it.Field] = set
+				set[it.Key] = false
+			}
+			return choices, nil
+		},
+		Runtime: fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("interactive deny should launch (drop-and-continue), got %+v", res)
+	}
+	if fr.RanSpec != nil && len(fr.RanSpec.Mounts) != 0 {
+		t.Errorf("denied mounts should be dropped from the run spec, got %d mounts", len(fr.RanSpec.Mounts))
+	}
+}
+
+func TestLaunchApprovalAssumeNoPersistsAndProceeds(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	storeDir := t.TempDir()
+	store := approval.NewFSStore(storeDir)
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: store,
+		AssumeNo:      true,
+		Runtime:       fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("--no should launch with denied fields dropped, got %+v", res)
+	}
+	// --no persists: the state file exists with the mounts field present
+	// but empty (all denied).
+	data, err := os.ReadFile(filepath.Join(storeDir, "approvals", "myagent.yaml"))
+	if err != nil {
+		t.Fatalf("--no should persist state: %v", err)
+	}
+	if !bytes.Contains(data, []byte("mounts:")) {
+		t.Errorf("state should contain the mounts field (present, all denied):\n%s", data)
+	}
+	if fr.RanSpec != nil && len(fr.RanSpec.Mounts) != 0 {
+		t.Errorf("denied mounts should be dropped, got %d mounts", len(fr.RanSpec.Mounts))
+	}
+}
+
+func TestLaunchApprovalPartialPromptFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	storeDir := t.TempDir()
+	store := approval.NewFSStore(storeDir)
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: store,
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			if len(req.Items) < 2 {
+				t.Fatalf("fixture must produce at least 2 gated items, got %d (embedded catalog changed?)", len(req.Items))
+			}
+			// Decide only the first item; leave the rest undecided.
+			it := req.Items[0]
+			return map[string]map[string]bool{it.Field: {it.Key: true}}, nil
+		},
+		Runtime: &runtime.FakeRuntime{ExitCode: 0},
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err == nil || res.ExitCode != 2 {
+		t.Fatalf("partial prompt should fail closed with exit 2, got %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "myagent.yaml")); !os.IsNotExist(err) {
+		t.Errorf("partial prompt should not persist state")
+	}
+}
+
 func writeProfile(t *testing.T, dir, name string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
@@ -2525,7 +2728,9 @@ func writeProfile(t *testing.T, dir, name string, data []byte) {
 }
 ```
 
-(Add imports: `"bytes"`, `"context"`, `"io"`, `"os"`, `"path/filepath"`, `"github.com/jgillich/tpd/internal/approval"`. The `"github.com/jgillich/tpd/internal/profile"` import is not needed by these three tests — `LaunchOpts` is in the same package — so do not add it unless other tests in the file already require it.)
+(Add imports: `"bytes"`, `"context"`, `"io"`, `"os"`, `"path/filepath"`, `"github.com/jgillich/tpd/internal/approval"`, `"github.com/jgillich/tpd/internal/runtime"` (for `runtime.FakeRuntime`). The `"github.com/jgillich/tpd/internal/profile"` import is not needed by these tests.)
+
+The e2e tests are load-bearing on the embedded catalog (`core/opencode` → `core/mise` must keep the `~/.config/mise` mount). They fail loudly, not silently: the non-interactive/partial tests assert exit 2 (degrade → exit 0 → FAIL), and the deny/`--no` tests assert `RanSpec.Mounts` is empty (no gated mounts → mounts present → FAIL). The interactive tests assert mounts survive/are dropped. A catalog edit that removes all mounts from `core/mise` breaks these tests visibly; keep them in sync with the embedded catalog.
 
 - [ ] **Step 3: Run test to verify it fails**
 
@@ -2547,6 +2752,13 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 	if store == nil {
 		store = approval.NewFSStore(defaultApprovalDir())
 	}
+	// In dry-run the store is read-only: the initial Filter must read
+	// stored approvals (so an already-approved profile doesn't prompt)
+	// but its reconciliation write-back must never touch disk.
+	gateStore := store
+	if opts.DryRun {
+		gateStore = approval.NewReadOnlyStore(store)
+	}
 	isTTY := opts.IsTTY
 	if isTTY == nil {
 		isTTY = ui.IsTTYReader
@@ -2556,7 +2768,7 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 		in = os.Stdin
 	}
 
-	cfg, promptReq, err := approval.Filter(resolved, store)
+	cfg, promptReq, err := approval.Filter(resolved, gateStore)
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
 	}
@@ -2564,11 +2776,11 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 	if len(promptReq.Items) > 0 {
 		if opts.AssumeYes || opts.AssumeNo {
 			choices := buildChoices(promptReq, opts.AssumeYes)
-			prior, _ := store.Load(resolved.FullName)
+			prior, _ := gateStore.Load(resolved.FullName)
 			merged := mergeChoicesIntoState(prior, promptReq, choices)
-			effectiveStore := store
+			effectiveStore := gateStore
 			if opts.DryRun {
-				effectiveStore = approval.NewEphemeralStore(store, merged)
+				effectiveStore = approval.NewEphemeralStore(gateStore, merged)
 			} else {
 				if err := store.Save(resolved.FullName, merged); err != nil {
 					return Result{ExitCode: 2, Err: err}
@@ -2592,7 +2804,7 @@ Modify `pkg/tpd/launch.go`. Replace the block at lines 71-74 (`cfg, err := profi
 			if incomplete(promptReq, choices) {
 				return Result{ExitCode: 2, Err: fmt.Errorf("approval incomplete: %s", summarizeUndecided(promptReq, choices))}
 			}
-			prior, _ := store.Load(resolved.FullName)
+			prior, _ := gateStore.Load(resolved.FullName)
 			merged := mergeChoicesIntoState(prior, promptReq, choices)
 			if err := store.Save(resolved.FullName, merged); err != nil {
 				return Result{ExitCode: 2, Err: err}
@@ -2635,7 +2847,9 @@ func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bo
 }
 
 // mergeChoicesIntoState folds the dialog's per-field choices into the prior
-// stored state. Fields not present in choices keep their stored choices. For
+// stored state, merging per-field: a decided field REPLACES its stored
+// ApprovedField (the dialog returned the complete allowed-set for it);
+// fields not present in choices keep their stored choices untouched. For
 // map fields (mounts, devices, env, ports, dbus.talk, dbus.own, services),
 // Keys is the approved set (denied = absent). For the scalar "network"
 // field, the choice is stored in ApprovedField.Network (*bool): true → &true,
@@ -2803,7 +3017,7 @@ Expected: PASS.
 - [ ] **Step 5: Remove advisory call sites from cli.go**
 
 In `cmd/tpd/cli.go`, delete:
-- The `if msg := catalog.Advisory(advisoryName(key)); msg != "" { ... }` blocks in `runShow` (around lines 160 and 174) and `runEdit` (around lines 185 and 228).
+- The `if msg := catalog.Advisory(advisoryName(key)); msg != "" { ... }` blocks. `runShow` has THREE (lines 160, 174, and 185 — note line 185 is the non-`--resolved` branch of `runShow`, not `runEdit`); `runEdit` has ONE (line 228).
 - The `advisoryName` helper (around lines 551-554).
 - Keep the `"github.com/jgillich/tpd/internal/catalog"` import — `runEdit` still uses `catalog.Profiles`/`catalog.Fragments` (cli.go:241,244) to seed built-in edits. Only the `catalog.Advisory` calls are removed.
 
