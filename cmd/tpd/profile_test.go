@@ -257,6 +257,59 @@ func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 	}
 }
 
+func TestProfileEditBrokenUserFileStillOpens(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Duplicate keys are a YAML unmarshal error; the editor must still open.
+	if err := os.WriteFile(target, []byte("version: 1\nextends: core/mise\nextends: core/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# fixed by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "bash")
+	if err != nil {
+		t.Fatalf("edit broken bash shadow should open the editor: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("broken user file must remain: %v", err)
+	}
+	if !strings.Contains(string(data), "# fixed by test") {
+		t.Errorf("expected the editor to open the broken file, got:\n%s", data)
+	}
+}
+
+func TestProfileEditBrokenUserOnlyFileStillOpens(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpd", "profiles", "myprof.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("version: 1\nextends: core/mise\nextends: core/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# fixed by test\\n' >> \"$1\"\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "myprof")
+	if err != nil {
+		t.Fatalf("edit broken user-only profile should open the editor: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("broken user file must remain: %v", err)
+	}
+	if !strings.Contains(string(data), "# fixed by test") {
+		t.Errorf("expected the editor to open the broken file, got:\n%s", data)
+	}
+}
+
 // A write can leave the mtime unchanged on overlayfs under load; the saved
 // check must fall back to content so a real save is not mistaken for a quit.
 func TestEditSavedDetectsContentChangeWithUnchangedMtime(t *testing.T) {

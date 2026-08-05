@@ -9,7 +9,8 @@ import (
 
 // loadCatalog loads the merged catalog tolerantly: a malformed user file must
 // not break completion, only hide that profile's completions. Commands that
-// must surface catalog errors (show, edit, list) load strictly themselves.
+// must surface catalog errors (show, list) load strictly themselves; edit
+// loads tolerantly too so a broken file can still be opened for repair.
 func loadCatalog() (profile.Catalog, error) {
 	return profile.LoadProfilesTolerant(profile.DefaultProfileDir(), func(string) {})
 }
