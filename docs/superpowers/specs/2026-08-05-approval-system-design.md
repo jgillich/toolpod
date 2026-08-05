@@ -31,16 +31,34 @@ The security-model doc must be updated to record this shift.
 
 `mounts`, `devices`, `environment`, `ports`, `dbus`, `network`.
 
-`services:` are flattened: each service's sensitive sub-fields roll up into
-the same approval set, addressed as `services.<name>.<field>`.
+`services:` are flattened: each service's sensitive sub-fields roll up
+into the same approval set, addressed as `services.<name>.<field>`. The
+service sub-fields that are gated are the same six as the top level
+(`Mounts`, `Devices`, `Env`, `Ports`, `Dbus`, `Network`) **plus two
+service-only fields**:
+
+- `services.<name>.privileged` — the single most consequential service
+  capability. The built-in `podman` sidecar is `privileged: true`
+  (`internal/catalog/fragments/services/podman.yaml`); a privileged
+  rootless sidecar gains `CAP_SYS_ADMIN` plus all devices inside its user
+  namespace. Gating `privileged` forces an explicit approval before that
+  capability is granted.
+- `services.<name>.exposes` — the host-adjacent sockets a service
+  publishes and the main container binds. A service that exposes a socket
+  is a service that grants the main container access to something the
+  service owns (e.g. a nested Podman engine socket). Gating `exposes`
+  makes that grant visible at approval time.
+
+Both are gated as scalars/maps under `services.<name>.*` and rendered in
+the dialog alongside the service's other fields.
 
 ### Non-gated (intentionally excluded)
 
 `packages`, `tools`, `image`, `command`, `labels`, `resources`, `caches`,
 `files`, `repos`.
 
-Rationale: they affect the container or the derived-image build, not the host
-directly. `files` and `repos` are the closest calls:
+Rationale: they affect the container or the derived-image build, not the
+host directly. `files` and `repos` are the closest calls:
 
 - `files` writes into the container fs (not the host).
 - `repos` feeds the derived-image build; its trust anchor is already the
@@ -90,14 +108,10 @@ type DbusProvenance struct {
     Own  map[string]string // bus name -> contributor FullName
 }
 
-type ServiceProvenance struct {
-    Mounts  map[string]string
-    Devices map[string]string
-    Env     map[string]string
-    Ports   map[string]string
-    Dbus    DbusProvenance
-    Network string
-}
+// ServiceProvenance is collapsed to a single string: services merge
+// shallowly and cannot extends, so a whole service always has exactly one
+// contributor. See §2 "Services".
+type ServiceProvenance = string
 ```
 
 `Network` is a scalar (single slot, last-writer-wins like `image`), so its
@@ -118,12 +132,35 @@ This requires `MergeProfiles` to receive the contributors' `FullName`s.
 `parent.FullName()` and `rc.FullName()` into the merge, and the merge
 writes them into the parallel `Provenance` on the output `RawProfile`.
 
+### No MergeProfiles signature change
+
+`resolveChain` (merge.go:83-102) calls `MergeProfiles(merged, parent)`
+then `MergeProfiles(merged, rc)`. In both calls the `child` argument is a
+`RawProfile` with valid `Namespace`/`Name`, so `child.FullName()` is
+available inside the merge without threading new parameters. Parent keys
+already have their provenance recorded from prior merges (the accumulated
+`merged` carries the provenance built up across the chain), so the merge
+only needs to stamp `child.FullName()` onto keys copied from `child` and
+leave parent-contributed provenance untouched. No signature change to
+`MergeProfiles`.
+
 ### Storage on RawProfile
 
 Add `Provenance Provenance `yaml:"-"`` to `RawProfile` (non-YAML, like
 `Namespace` / `Name` / `Path`). The existing `Profile` type does **not**
 carry provenance (it's a YAML-shaped struct); `ResolveProfile` returns a
 new `(Profile, Provenance)` pair via a wrapper — see §3.
+
+### Map aliasing
+
+`MergeProfiles` starts with `out := parent` (merge.go:121), which copies
+the struct header. The value maps are rebuilt fresh by `mergeMap` /
+`mergeStringMap` (`make(...)` at merge.go:183, 242), so value maps are
+safe. The provenance maps must follow the same pattern: every merge
+helper allocates a fresh provenance map and copies entries from `parent`'s
+provenance for retained keys, then writes `child.FullName()` for keys
+copied from `child`. Provenance maps are never mutated in place on
+`parent`, or the shallow copy would alias and corrupt the parent's view.
 
 ### User-wins-when-shadowing
 
@@ -136,21 +173,22 @@ model (the user explicitly opted into this value).
 
 ### Services
 
-`ServiceProvenance` mirrors `Service`'s sensitive sub-fields. The service's
-own merge path (`mergeMap` for `Services`) records who contributed the
-service entry; within the service, the same per-field provenance rule
-applies to its `Mounts` / `Devices` / `Env` / `Ports` / `Dbus` / `Network`.
-A service is itself a value in `cfg.Services`, so its provenance is one
-entry in `Provenance.Services`.
+Services merge shallowly via `mergeMap(parent.Services, ...)`
+(merge.go:158) and a service may not `extends` (validate.go:309), so a
+whole service value always comes from exactly one contributor — per-field
+provenance inside a service can never diverge. `Provenance.Services` is
+therefore collapsed to `map[string]string` (service name → contributor
+FullName). The approval filter treats a service as gated if its
+contributor is non-user, and gates the service's sensitive sub-fields
+(`Mounts`, `Devices`, `Env`, `Ports`, `Dbus`, `Network`, `Privileged`,
+`Exposes` — see §1) as a unit under that one contributor.
 
 ### Cost
 
 ~6 small map operations added to `MergeProfiles`, all following the
-existing merge pattern. `mergeMap` / `mergeStringMap` grow a `contributor
-string` parameter. `mergeDbus` and `mergeServices` get parallel provenance
-writes. Tests in `internal/profile/merge_test.go` and
-`internal/profile/extends_test.go` extend to assert provenance on the
-merged result.
+existing merge pattern. No signature change. Tests in
+`internal/profile/merge_test.go` and `internal/profile/extends_test.go`
+extend to assert provenance on the merged result.
 
 ## 3. Resolve API and the approval filter
 
@@ -219,19 +257,25 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 1. Walk `Prov` and `Profile` together over the gated fields.
 2. Compute the hash (§4) from the non-user sensitive fields of the
    resolved profile (pre-filter).
-3. Load the stored `State` for `profileName`.
+3. Load the stored `State` for the resolved `FullName` (not the display
+   name — see §4).
 4. If the stored hash == current hash: reconcile stored choices against
    the current non-user sensitive key set. Keys present in the stored set
-   but **missing from the new key set** are dropped from state (your
-   "fields that are missing are dropped from the state" rule). Keys still
-   present keep their prior allowed/denied choice and feed `PriorChoices`.
+   but **missing from the new key set** are dropped from the in-memory
+   state used by this filter run. The on-disk file is only rewritten on
+   the next `Save` (which happens when a prompt occurs and choices are
+   persisted); until then, stale keys linger in the file harmlessly. Keys
+   still present keep their prior allowed/denied choice and feed
+   `PriorChoices`.
 5. For each key whose provenance is a **non-user** entry:
    - **Approved** (stored, hash matches) → keep in the profile.
-   - **Denied** (stored, hash matches) → drop from the profile
+   - **Denied** (field present in stored state, key absent from its
+     approved list, hash matches) → drop from the profile
      (drop-and-continue).
-   - **No stored choice for this hash** → add to `PromptRequest.Items`.
+   - **No stored choice for this hash** (field absent from stored state,
+     or hash differs and the key is new) → add to `PromptRequest.Items`.
      The key's current value stays in the profile *for now*; the dialog
-     returns the final allowed-set and the filter applies it.
+     returns the final allowed-set and the filter is re-run.
 6. For each key whose provenance is a **user** entry → keep, no gate.
 7. Return the filtered `Profile` and the `PromptRequest`.
 
@@ -264,9 +308,22 @@ at all.
 ### Where Filter is called
 
 Inside `pkg/tpd.LaunchWithWriter`, immediately after
-`ResolveProfileWithProv` and before `buildSpec`. The filtered `Profile`
-flows into `buildSpec`; the original `Resolved` is discarded. The DryRun
-path uses the same filter so `--dry-run` reflects the approved set.
+`ResolveProfileWithProv` and **after `ResolveTildes`**, so the dialog can
+render template-expanded values (e.g. the actual
+`/run/user/1000/wayland-0` instead of the literal
+`{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}` — the trust
+decision is meaningless against an opaque template string). The filtered
+`Profile` flows into `buildSpec`; the original `Resolved` is discarded.
+The DryRun path uses the same filter so `--dry-run` reflects the approved
+set.
+
+`ResolveTildes` currently runs inside `buildSpec` (spec.go:30) after port
+allocation. To make expanded values available to the filter, the launch
+flow is reordered: port allocation and `ResolveTildes` move out of
+`buildSpec` into `LaunchWithWriter`, before the filter. `buildSpec`
+receives an already-expanded `Profile`. This is a refactor of existing
+code, not new logic — `ResolveTildes` is already a pure function
+(`internal/profile/paths.go:69`).
 
 ## 4. Hash, state file, and Store interface
 
@@ -274,8 +331,9 @@ path uses the same filter so `--dry-run` reflects the approved set.
 
 New `internal/approval/hash.go` (parallel to
 `internal/profile/hash.go`'s `computeServiceHash`). The hash covers
-**non-user sensitive fields only**, pre-template-expansion, of the
-resolved profile:
+**non-user sensitive fields only**, post-template-expansion, of the
+resolved profile (the same expanded form the filter and dialog see — see
+§3 "Where Filter is called"):
 
 ```go
 func ComputeApprovalHash(res profile.Resolved) string
@@ -287,11 +345,15 @@ func ComputeApprovalHash(res profile.Resolved) string
 - `value-canonical` is the explicit-field write form used by
   `computeServiceHash` (e.g. for a Mount: `mount %s %s %s %s %v %v %v\n`
   with target, source, service, socket, readOnly, optional, create).
-  Templates stay as literal `{{ ... }}` strings.
+  Values are **expanded** — the key and canonical value are the
+  post-`ResolveTildes` form, so a mount whose template expanded to
+  `/run/user/1000/wayland-0` hashes under that key, not under the literal
+  template. This keeps the hash, the dialog display, and the approval
+  keys all aligned on the same expanded identity.
 - `network` is a scalar: emit `network\n<value>\n` if non-user-contributed
   and non-empty.
 - Services: emit `services.<name>.<field>\n<key>\n<value>\n` per sensitive
-  sub-field.
+  sub-field (including `privileged` and `exposes` — see §1).
 - Return `hex.EncodeToString(sum[:])[:12]` (12 chars, same as service
   hash).
 
@@ -301,49 +363,93 @@ removing it from the hash input → hash changes → reprompt, but the new
 item set has fewer items (that key is no longer gated). Prior choices for
 that key are dropped via the reconciliation rule.
 
+**Trade-off accepted:** the hash now depends on the host environment
+(e.g. `$DISPLAY`, `$XDG_RUNTIME_DIR`). Two machines with different
+runtime dirs will hash the same profile differently and reprompt
+independently. This is correct: the expanded path *is* the thing being
+approved, and `/run/user/1000/wayland-0` is a different trust decision
+than `/run/user/1001/wayland-0`. The state file is per-machine anyway
+(it lives under `~/.local/share`).
+
+> **Note (design change from initial Q&A):** the brainstorming Q&A
+> originally chose pre-template hashing. Post-review, this was flipped
+> to post-template because the approval dialog must show the actual host
+> path being approved (issue 8: "the trust decision is made on an opaque
+> string"). The hash, the dialog display, and the approval keys must all
+> align on the same expanded identity, so the hash moved to
+> post-expansion with them.
+
 ### State file
 
-`~/.local/share/tpd/approvals/<profile-name>.yaml`, one file per profile,
-nested by `/` (so `lang/go` → `approvals/lang/go.yaml`). The profile name
-is the **display name** (unqualified, what the user typed), not the
-resolved `FullName`, so `tpd opencode` and a user `opencode` shadow share
-state only if they share a display name — which the catalog already
-treats as one resolvable entry. Parent dirs are created with `0o700`; the
-file is `0o600` (it records trust decisions).
+`~/.local/share/tpd/approvals/<profile-key>.yaml`, one file per profile,
+nested by `/`. The `<profile-key>` is the **resolved catalog `FullName`**
+(e.g. `core/opencode`, `lang/go`, `myagent`), **not** the display name the
+user typed. `tpd core/opencode` and `tpd opencode` (when no user shadow
+exists) both resolve to `core/opencode` and must share one approval file;
+keying by `opts.ProfileName` would split state across invocations of the
+same resolvable entry. The `FullName` is what `Catalog.ResolveRef` returns
+(ref.go:59-69) and is the stable identity of the resolved entry.
+
+Parent dirs are created with `0o700`; the file is `0o600` (it records
+trust decisions). `FullName`s containing `/` map to a nested path
+(`lang/go` → `approvals/lang/go.yaml`); `..` is already rejected by
+`ValidateName`, so no path-escape risk.
 
 ```yaml
-# ~/.local/share/tpd/approvals/ssh.yaml
+# ~/.local/share/tpd/approvals/core/creds/ssh.yaml
 profile: ssh          # display name, for human readers
 hash: a1b2c3d4e5f6    # current approved hash
 approved:
   mounts:
     - ~/.ssh
     - ~/.ssh/known_hosts
-  devices: []         # empty list = none approved (field present, all off)
+  devices:            # absent key = field present in profile, all denied
   env:
     - DOCKER_HOST
-  ports: []
+  ports:              # absent key = field present in profile, all denied
   dbus:
     talk: [org.freedesktop.portal.Desktop]
-    own: []
+    own:              # absent key = sub-field present, all denied
   network: true       # scalar: bool, approved or not
   services:
     podman:
+      privileged: true
+      exposes: [registry]
       mounts: [/var/run/podman.sock]
-      env: []
+      env:            # absent key = sub-field present, all denied
 ```
 
-Semantics of the YAML:
+### State semantics (three-state, round-trippable)
 
-- A **missing field** in `approved:` = "no choice recorded for this
-  field" (treated as all-off by the filter, but the missing-key
-  reconciliation only drops keys that are *also* missing from the new
-  item set; a field that newly appears in the profile prompts for its
-  keys).
-- An **empty list** (`[]`) = "field present, all keys denied".
-- `network: false` = explicitly denied; `network:` absent = never decided
-  (prompts).
-- `network: true` = approved.
+Each gated field has three states that must survive a YAML round-trip:
+**approved** (key listed), **denied** (field present in profile but key
+absent from the list), and **never decided** (field absent from the
+profile, so the key is not in the list and not in the profile either —
+the filter treats this as "not applicable, no prompt"). The distinction
+that matters for the filter is:
+
+- A key **in the approved list** for a field → kept.
+- A key **absent from the approved list** while the field key is present
+  in the profile → denied (dropped).
+- A field **absent from the `approved:` map entirely** while the field is
+  present in the profile → no stored choice for any of its keys → all its
+  keys prompt.
+
+`gopkg.in/yaml.v3` marshals nil and empty slices identically (both as
+`[]`), so a flat `map[string][]string` cannot distinguish "field present,
+all denied" from "field absent, never decided." The design therefore uses
+a custom `MarshalYAML`/`UnmarshalYAML` on `State` that:
+
+1. Emits a field key with an empty value (or `[]`) when the field is
+   present in the `approved` map with an empty `Keys` slice (denied).
+2. Omits the field key entirely when the field is absent from the
+   `approved` map (never decided).
+3. Nests `services.<name>.<field>` under a `services:` map in the YAML
+   (the Go struct is flat — `Approved["services.podman.mounts"]` — but the
+   on-disk shape is nested for human readability, as the example shows).
+
+The `Network` scalar uses `*bool`: `nil` omits the key (never decided),
+`true`/`false` emit the bool.
 
 ### Store interface
 
@@ -369,6 +475,9 @@ type State struct {
 // ApprovedField represents one field's approved set. Map fields use Keys;
 // the scalar `network` uses Network: a pointer to distinguish three states
 // (nil = never decided → prompts; true = approved; false = denied).
+//
+// The three-state distinction is preserved on disk via custom
+// MarshalYAML/UnmarshalYAML on State — see "State semantics" above.
 type ApprovedField struct {
     Keys    []string // for map fields: mounts, devices, env, ports,
                      // dbus.talk, dbus.own, services.<name>.<field>
@@ -427,27 +536,34 @@ The CLI wires the real huh-based prompt (§6); tests wire a fake.
 
 ### LaunchWithWriter flow
 
+### LaunchWithWriter flow
+
 ```
 1. LoadProfiles
 2. ResolveProfileWithProv  -> Resolved{Profile, Prov}
-3. filteredProfile, promptReq, err := approval.Filter(resolved, store)
-4. if promptReq.Items empty:
+3. allocate ports; ResolveTildes(expandedProfile, ...) -> expanded Resolved
+4. filteredProfile, promptReq, err := approval.Filter(expandedResolved, store)
+5. if promptReq.Items empty:
        proceed to buildSpec with filteredProfile
    else if AssumeYes:
-       choices = every item's key = true, merged with prior; store.Save; filteredProfile = re-filter
+       choices = every item's key = true, merged with prior
+       if !DryRun: store.Save(choices)
+       filteredProfile = re-filter
    else if AssumeNo:
-       choices = every item's key = false, merged with prior; store.Save; filteredProfile = re-filter
-   else if !isTTY(stdin):
-       return Result{ExitCode: 2, Err: "non-interactive launch requires --yes or --no for unapproved sensitive fields: <list>"}
+       choices = every item's key = false, merged with prior
+       if !DryRun: store.Save(choices)
+       filteredProfile = re-filter
+   else if DryRun || !isTTY(stdin):
+       return Result{ExitCode: 2, Err: "unapproved sensitive fields require --yes or --no: <list>"}
    else:
        choices := ApprovalPrompt(promptReq, stdin, stdout)
        if aborted: return Result{ExitCode: 2, Err: "approval declined"}
-       merge choices with prior; store.Save; filteredProfile = re-filter
-5. buildSpec(filteredProfile, ...)
-6. ... existing Prepare/Run pipeline ...
+       store.Save(choices); filteredProfile = re-filter
+6. buildSpec(filteredProfile, ...)
+7. ... existing Prepare/Run pipeline ...
 ```
 
-"re-filter" in step 4 means a second `approval.Filter(resolved, store)`
+"re-filter" in step 5 means a second `approval.Filter(expandedResolved, store)`
 call. Because the store now has a choice for every item under the current
 hash, the second call returns `promptReq.Items` empty and the filtered
 profile ready for `buildSpec`. This mirrors the dialog-return shape in
@@ -459,10 +575,14 @@ changed hash re-prompts (or re-errors in non-interactive mode).
 
 ### DryRun
 
-The DryRun path uses the same filter, so `tpd run --dry-run <profile>`
-prints the spec with denied fields already dropped. If a prompt would be
-required and the launch is non-interactive, DryRun also errors (a dry run
-that silently invents approvals would mislead).
+`--dry-run` is a read-only inspection command: it must not write approval
+state or block on input. If a prompt would be required (there are
+unapproved sensitive items and neither `--yes` nor `--no` was passed),
+DryRun errors with exit code 2 and the same "requires --yes or --no"
+message as non-interactive mode — it does not invoke the dialog and does
+not persist state. With `--yes` or `--no`, DryRun applies the choice
+in-memory only (no `store.Save`) and prints the resulting spec. This
+keeps `--dry-run` side-effect-free while still showing what would launch.
 
 ## 6. Dialog (huh-based)
 
@@ -481,6 +601,14 @@ confirms. Default state: **all off** (per your spec), unless a key was
 previously approved and the hash changed (then `PriorChoices` pre-checks
 it).
 
+Values are rendered **post-template-expansion** because the filter runs
+after `ResolveTildes` (§3). The user sees the actual host path that will
+mount, not the opaque `{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}`
+template. If expansion produced an empty string (an optional mount whose
+host variable is unset), the item is still shown but marked `(unresolved —
+host variable not set)` so the user knows the mount will be skipped at
+launch.
+
 ```
 tpd: myagent wants the following from core/creds/ssh
   [x] ~/.ssh                    (mount, read-only)
@@ -490,13 +618,18 @@ tpd: myagent wants the following from core/creds/ssh
 tpd: myagent wants the following from core/gui
   [ ] /dev/dri                  (device)
   [ ] /tmp/.X11-unix            (mount, optional)
-  [ ] {{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}  (mount, optional, templated)
+  [ ] /run/user/1000/wayland-0  (mount, optional)
+
+tpd: myagent wants the following from core/services/podman
+  [ ] privileged: true          (service capability)
+  [ ] /var/run/podman.sock      (service expose: registry)
 
   <Approve>  <Abort>
 ```
 
 (Exact rendering TBD at implementation; the contract is: per-item toggle,
-default off, prior-approved keys pre-checked, an explicit abort path.)
+default off, prior-approved keys pre-checked, expanded values shown, an
+explicit abort path.)
 
 ### Abort
 
@@ -528,6 +661,19 @@ short flags and to keep the trust decision deliberate.
 
 The flags are passed through `runLaunch` → `tpd.LaunchOpts.AssumeYes` /
 `AssumeNo`.
+
+### Semantics: prior denials persist
+
+`--yes` and `--no` only decide **currently-unapproved items** (keys in
+`promptReq.Items` with no stored choice for the current hash). A key that
+was previously **denied** (stored, hash matches, key absent from the
+approved list) stays denied — `--yes` does not override prior denials, and
+`--no` does not re-deny keys that are already approved. This makes the
+flags idempotent and script-safe: a pipeline running `tpd --yes <profile>`
+does not silently re-approve a key the user explicitly denied on an
+earlier interactive launch. To un-deny a previously-denied key, the user
+edits the state file (or deletes it to reset). A future
+`tpd approval reset` command is out of scope here.
 
 ## 8. Advisory removal
 
@@ -606,9 +752,14 @@ Manual smoke test: `tpd <sensitive-profile>` on a fresh state dir.
   core for gating).
 - A TUI test harness (fake Prompt covers the contract).
 
-## 11. Open questions for the implementation plan
+## 11. Resolved design questions
 
-None at design time. The implementation plan may surface concrete
-signature choices for `MergeProfiles` (whether to thread `FullName`s as
-two string params or wrap them in a small struct), but the design is
-agnostic to that.
+- **`MergeProfiles` signature:** no change needed. `child.FullName()` is
+  already available inside the merge; parent keys keep their previously
+  recorded provenance. See §2 "No MergeProfiles signature change."
+- **Hash granularity:** post-template-expansion, to align with the dialog
+  display. See §4 "Hash" and the note there on the design change.
+- **State file key:** the resolved catalog `FullName`, not the display
+  name. See §4 "State file."
+
+No open questions remain at design time.
