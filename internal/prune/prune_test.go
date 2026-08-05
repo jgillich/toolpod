@@ -506,6 +506,38 @@ command: ["echo"]
 	}
 }
 
+func TestComputeUsedServices(t *testing.T) {
+	// A profile declaring a service with its own caches and packages must keep
+	// the service's cache volumes and derived image.
+	writeUserProfiles(t, map[string]string{"myagent": `version: 1
+image: mybase:latest
+command: ["echo", "hi"]
+services:
+  db:
+    image: mysvcbase:latest
+    command: ["postgres"]
+    packages:
+      - postgresql
+    caches:
+      svccache: /cache
+`})
+	const svcBaseID = "sha256:svcbaseid"
+	svcTag := runtime.DerivedTag(svcBaseID, []string{"postgresql"}, nil)
+	fc := &fakeClient{
+		inspects: map[string]string{"mybase:latest": "sha256:baseid", "mysvcbase:latest": svcBaseID},
+	}
+	usedV, usedI, err := computeUsed(context.Background(), fc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usedV["tpd-cache-svccache"] {
+		t.Errorf("service cache tpd-cache-svccache should be marked used; got %v", usedV)
+	}
+	if !usedI[svcTag] {
+		t.Errorf("service derived image %q should be marked used; got %v", svcTag, usedI)
+	}
+}
+
 func equalSlice(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

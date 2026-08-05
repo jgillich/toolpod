@@ -256,6 +256,27 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 		for cacheName := range cfg.Caches {
 			usedVolumes["tpd-cache-"+cacheName] = true
 		}
+		for _, svc := range cfg.Services {
+			for cacheName := range svc.Caches {
+				usedVolumes["tpd-cache-"+cacheName] = true
+			}
+			if len(svc.Packages) > 0 || len(svc.Repos) > 0 {
+				if svc.Image == "" {
+					continue
+				}
+				inspect, _, err := cli.ImageInspectWithRaw(ctx, svc.Image)
+				if err != nil {
+					continue
+				}
+				svcRepos := make(map[string]runtime.Repo, len(svc.Repos))
+				for rname, r := range svc.Repos {
+					svcRepos[rname] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+				}
+				if tag := runtime.DerivedTag(inspect.ID, svc.Packages, svcRepos); tag != "" {
+					usedImages[tag] = true
+				}
+			}
+		}
 		if (len(cfg.Packages) == 0 && len(cfg.Repos) == 0) || cfg.Image == "" {
 			continue
 		}

@@ -277,9 +277,36 @@ func checkLeakedContainers(ctx context.Context, rt *dockerRT) Check {
 	if err != nil {
 		return Check{Name: "leaked containers", Status: Warn, Message: err.Error()}
 	}
+
+	consumedServices := map[string]bool{}
+	for _, c := range containers {
+		// Count non-exited containers (running/created/paused) as consumers —
+		// a created-state main container is a real consumer (same fix as
+		// StopServices). This prevents doctor from flagging a healthy
+		// sidecar during the concurrent-create window.
+		if c.State == "exited" || c.State == "dead" {
+			continue
+		}
+		if c.Labels[runtime.ServiceRoleLabel] == runtime.ServiceRoleSidecar {
+			continue
+		}
+		if uses := c.Labels[runtime.UsesServiceLabel]; uses != "" {
+			for _, name := range strings.Split(uses, ",") {
+				consumedServices[strings.TrimSpace(name)] = true
+			}
+		}
+	}
+
 	var leaked []string
 	for _, c := range containers {
-		leaked = append(leaked, strings.Join(c.Names, ","))
+		if c.Labels[runtime.ServiceRoleLabel] == runtime.ServiceRoleSidecar {
+			if c.State == "running" && consumedServices[c.Labels[runtime.ServiceLabel]] {
+				continue
+			}
+			leaked = append(leaked, strings.Join(c.Names, ","))
+		} else {
+			leaked = append(leaked, strings.Join(c.Names, ","))
+		}
 	}
 	sort.Strings(leaked)
 	if len(leaked) == 0 {

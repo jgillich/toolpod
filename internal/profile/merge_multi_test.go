@@ -184,3 +184,49 @@ func TestResolveFragmentNoValidate(t *testing.T) {
 		t.Errorf("resolved fragment tools = %v, want inherited node + biome", resolved.Tools)
 	}
 }
+
+func TestMergeServicesChildReplacesParent(t *testing.T) {
+	parent := RawProfile{Profile: Profile{
+		Services: map[string]Service{
+			"registry": {Image: "debian:12", Command: []string{"registry"}},
+		},
+	}}
+	child := RawProfile{Profile: Profile{
+		Services: map[string]Service{
+			"registry": {Image: "debian:13-slim", Command: []string{"registry", "serve"}},
+		},
+	}}
+	merged := MergeProfiles(parent, child)
+	if got := merged.Services["registry"].Image; got != "debian:13-slim" {
+		t.Errorf("merged service image = %q, want debian:13-slim (child replaces parent)", got)
+	}
+	if got := len(merged.Services["registry"].Command); got != 2 {
+		t.Errorf("merged service command len = %d, want 2 (child replaces parent, not deep-merge)", got)
+	}
+}
+
+func TestMergeServicesNullDeletes(t *testing.T) {
+	parent := RawProfile{Profile: Profile{
+		Services: map[string]Service{
+			"registry": {Image: "debian:12", Command: []string{"registry"}},
+			"other":    {Image: "ubuntu", Command: []string{"sleep"}},
+		},
+	}}
+	child := RawProfile{
+		Profile: Profile{
+			Services: map[string]Service{
+				"other": {Image: "alpine", Command: []string{"sleep"}},
+			},
+		},
+		NullKeys: map[string]map[string]bool{
+			"services": {"registry": true},
+		},
+	}
+	merged := MergeProfiles(parent, child)
+	if _, ok := merged.Services["registry"]; ok {
+		t.Error("null-deleted service 'registry' should not be in merged result")
+	}
+	if _, ok := merged.Services["other"]; !ok {
+		t.Error("service 'other' should survive merge")
+	}
+}

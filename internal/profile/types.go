@@ -107,6 +107,32 @@ type Profile struct {
 	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
 	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
+	Services    map[string]Service    `yaml:"services,omitempty"`
+}
+
+// Service is a companion container started alongside the launch container.
+type Service struct {
+	Image       string                `yaml:"image,omitempty"`
+	Packages    []string              `yaml:"packages,omitempty"`
+	Repos       map[string]Repo       `yaml:"repos,omitempty"`
+	Files       map[string]File       `yaml:"files,omitempty"`
+	Command     []string              `yaml:"command,omitempty"`
+	Caches      map[string]CachePaths `yaml:"caches,omitempty"`
+	Mounts      map[string]Mount      `yaml:"mounts,omitempty"`
+	Env         map[string]string     `yaml:"environment,omitempty"`
+	Labels      map[string]string     `yaml:"labels,omitempty"`
+	Exposes     map[string]string     `yaml:"exposes,omitempty"`
+	Version     int                   `yaml:"version,omitempty"`
+	ExtendsList ExtendsList           `yaml:"extends,omitempty"`
+	Network     string                `yaml:"network,omitempty"`
+	TTY         string                `yaml:"tty,omitempty"`
+	Resources   *Resources            `yaml:"resources,omitempty"`
+	Tools       map[string]Tool       `yaml:"tools,omitempty"`
+	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
+	Ports       map[string]PortBind   `yaml:"ports,omitempty"`
+	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
+	Services    map[string]Service    `yaml:"services,omitempty"`
+	Hash        string                `yaml:"-"`
 }
 
 // Tool is a single mise tool: the version plus optional verification
@@ -172,14 +198,17 @@ type DbusConfig struct {
 }
 
 type Mount struct {
-	Source   string `yaml:"source"`
-	ReadOnly bool   `yaml:"read_only"`
-	Optional bool   `yaml:"optional"`
+	Source   string `yaml:"source,omitempty"`
+	Service  string `yaml:"service,omitempty"`
+	Socket   string `yaml:"socket,omitempty"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
+	Optional bool   `yaml:"optional,omitempty"`
 	Create   bool   `yaml:"create,omitempty"` // mkdir the source if missing (directories only)
 }
 
-// UnmarshalYAML defaults read_only to true, so a mount without an explicit
-// read_only key is read-only rather than read-write.
+// UnmarshalYAML defaults read_only to true for bind mounts and false for
+// service-socket mounts, so a mount without an explicit read_only key gets
+// the kind-appropriate default.
 func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
 	type plain Mount
 	var raw plain
@@ -188,6 +217,9 @@ func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*m = Mount(raw)
 	m.ReadOnly = true
+	if m.Service != "" {
+		m.ReadOnly = false
+	}
 	if value.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(value.Content); i += 2 {
 			if value.Content[i].Value == "read_only" {
@@ -201,22 +233,29 @@ func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// MarshalYAML omits the default read_only: true, keeping only explicit
-// read_only: false for writable mounts.
+// MarshalYAML omits read_only when it equals the per-kind default, keeping
+// only explicit overrides.
 func (m Mount) MarshalYAML() (interface{}, error) {
-	type plain Mount
 	out := struct {
-		Source   string `yaml:"source"`
+		Source   string `yaml:"source,omitempty"`
+		Service  string `yaml:"service,omitempty"`
+		Socket   string `yaml:"socket,omitempty"`
 		ReadOnly *bool  `yaml:"read_only,omitempty"`
 		Optional bool   `yaml:"optional"`
 		Create   bool   `yaml:"create,omitempty"`
 	}{
 		Source:   m.Source,
+		Service:  m.Service,
+		Socket:   m.Socket,
 		Optional: m.Optional,
 		Create:   m.Create,
 	}
-	if !m.ReadOnly {
-		ro := false
+	defaultRO := true
+	if m.Service != "" {
+		defaultRO = false
+	}
+	if m.ReadOnly != defaultRO {
+		ro := m.ReadOnly
 		out.ReadOnly = &ro
 	}
 	return out, nil

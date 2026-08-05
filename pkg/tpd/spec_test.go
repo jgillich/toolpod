@@ -369,3 +369,57 @@ func TestBuildSpecFilesDefaultMode(t *testing.T) {
 		t.Errorf("default mode = %o, want 644", spec.Files[0].Mode)
 	}
 }
+
+func TestBuildSpecServices(t *testing.T) {
+	cfg := profile.Profile{
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Services: map[string]profile.Service{
+			"registry": {
+				Hash:    "abcd1234",
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Caches: map[string]profile.CachePaths{
+					"data": {"/var/lib/registry"},
+				},
+				Exposes: map[string]string{"registry": "/run/registry/registry.sock"},
+				Labels:  map[string]string{"custom": "val"},
+			},
+		},
+		Mounts: map[string]profile.Mount{
+			"/sock": {Service: "registry", Socket: "registry"},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "test"}, cfg, workspace.ModeRootless, "/home/user", "/home/user")
+	if err != nil {
+		t.Fatalf("buildSpec: %v", err)
+	}
+	if len(spec.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(spec.Services))
+	}
+	svc := spec.Services[0]
+	if svc.Name != "registry" || svc.Hash != "abcd1234" || svc.Image != "debian:13-slim" {
+		t.Errorf("service = %+v", svc)
+	}
+	if svc.Labels["custom"] != "val" {
+		t.Errorf("service label custom = %q, want val", svc.Labels["custom"])
+	}
+	if svc.Labels[runtime.OwnershipLabel] != "true" {
+		t.Error("service should carry tpd.managed=true label")
+	}
+	if svc.Labels[runtime.ServiceLabel] != "registry" {
+		t.Error("service should carry tpd.service=registry label")
+	}
+	if spec.Labels[runtime.UsesServiceLabel] != "registry" {
+		t.Errorf("main container should carry tpd.uses-service=registry, got %q", spec.Labels[runtime.UsesServiceLabel])
+	}
+	var foundSock bool
+	for _, m := range spec.Mounts {
+		if m.Target == "/sock" && m.Service == "registry" && m.Socket == "registry" {
+			foundSock = true
+		}
+	}
+	if !foundSock {
+		t.Error("service-socket mount not found in spec.Mounts with Service/Socket intact")
+	}
+}

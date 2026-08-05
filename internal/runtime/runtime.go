@@ -32,6 +32,8 @@ type Spec struct {
 	Caches      []CacheSpec
 	Network     string
 	Labels      map[string]string
+	Services    []ServiceSpec
+	SocketPaths []string
 	Workspace   WorkspaceSpec
 	TTY         string
 	RuntimeHome string
@@ -67,6 +69,8 @@ type MountSpec struct {
 	ReadOnly bool
 	Optional bool
 	Create   bool
+	Service  string
+	Socket   string
 }
 
 type PortSpec struct {
@@ -96,6 +100,24 @@ type CacheSpec struct {
 	Subpath string
 }
 
+// ServiceSpec is a service container launched alongside the main container:
+// it shares the profile's packages/repos/files/caches and publishes its
+// service sockets back into the main container.
+type ServiceSpec struct {
+	Name     string
+	Hash     string
+	Image    string
+	Packages []string
+	Repos    map[string]Repo
+	Files    []FileSpec
+	Command  []string
+	Caches   []CacheSpec
+	Mounts   []MountSpec
+	Env      map[string]string
+	Labels   map[string]string
+	Exposes  map[string]string
+}
+
 type WorkspaceSpec struct {
 	HostPath string
 	Target   string
@@ -112,5 +134,20 @@ func (NoopProgressWriter) WriteProgress(string) {}
 
 type Runtime interface {
 	Prepare(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (string, error)
-	Run(ctx context.Context, spec Spec) (int, error)
+	CreateContainer(ctx context.Context, spec Spec) (CreateResult, error)
+	RunContainer(ctx context.Context, spec Spec, created CreateResult) (int, error)
+	StartServices(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (ServiceBindings, error)
+	StopServices(ctx context.Context, spec Spec) error
+}
+
+// ServiceBindings carries the container-side socket paths for each running
+// service (Sockets maps service name to container path) and Release tears the
+// services down when the launch finishes.
+type ServiceBindings struct {
+	Sockets map[string]string
+	Release func()
+}
+
+type CreateResult struct {
+	ContainerID string
 }

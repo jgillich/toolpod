@@ -19,6 +19,10 @@ func ResolveProfile(cat Catalog, name string) (Profile, error) {
 		return Profile{}, err
 	}
 	merged.Path = rc.Path
+	for name, svc := range merged.Services {
+		svc.Hash = computeServiceHash(svc)
+		merged.Services[name] = svc
+	}
 	if err := validate(merged); err != nil {
 		return Profile{}, err
 	}
@@ -151,6 +155,7 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
 	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
 	out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
+	out.Services = mergeMap(parent.Services, child.Services, child.NullKeys["services"])
 
 	if child.Resources != nil {
 		out.Resources = &Resources{}

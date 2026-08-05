@@ -517,6 +517,86 @@ func TestCheckLeakedContainersIgnoresUnlabeled(t *testing.T) {
 	}
 }
 
+func TestCheckLeakedContainersRunningSidecarWithConsumersNotFlagged(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{
+			ID:     "sidecar",
+			Names:  []string{"/tpd-svc-db"},
+			State:  "running",
+			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.ServiceRoleLabel: runtime.ServiceRoleSidecar, runtime.ServiceLabel: "db"},
+		},
+		{
+			ID:     "main",
+			Names:  []string{"/tpd-main"},
+			State:  "running",
+			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.UsesServiceLabel: "db"},
+		},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn (the non-sidecar consumer is still flagged): %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "tpd-main") {
+		t.Errorf("message should still list the non-sidecar consumer; got %q", c.Message)
+	}
+	if strings.Contains(c.Message, "tpd-svc-db") {
+		t.Errorf("running sidecar with a live consumer should not be flagged; got %q", c.Message)
+	}
+}
+
+func TestCheckLeakedContainersRunningSidecarNoConsumersFlagged(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{
+			ID:     "sidecar",
+			Names:  []string{"/tpd-svc-db"},
+			State:  "running",
+			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.ServiceRoleLabel: runtime.ServiceRoleSidecar, runtime.ServiceLabel: "db"},
+		},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	for _, want := range []string{"tpd-svc-db", "docker rm -f"} {
+		if !strings.Contains(c.Message, want) {
+			t.Errorf("message should contain %q; got %q", want, c.Message)
+		}
+	}
+}
+
+func TestCheckLeakedContainersStoppedSidecarFlagged(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{
+			ID:     "sidecar",
+			Names:  []string{"/tpd-svc-db"},
+			State:  "exited",
+			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.ServiceRoleLabel: runtime.ServiceRoleSidecar, runtime.ServiceLabel: "db"},
+		},
+		{
+			ID:     "main",
+			Names:  []string{"/tpd-main"},
+			State:  "running",
+			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.UsesServiceLabel: "db"},
+		},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "tpd-svc-db") {
+		t.Errorf("message should list the stopped sidecar; got %q", c.Message)
+	}
+}
+
 func TestCheckStaleBusSocketsWarns(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)

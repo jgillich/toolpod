@@ -14,7 +14,14 @@ func TestFakeRuntimeImplementsInterface(t *testing.T) {
 	if rt.PreparedSpec == nil {
 		t.Error("Prepare did not record spec")
 	}
-	code, err := rt.Run(context.Background(), Spec{})
+	created, err := rt.CreateContainer(context.Background(), Spec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.CreatedSpec == nil {
+		t.Error("CreateContainer did not record spec")
+	}
+	code, err := rt.RunContainer(context.Background(), Spec{}, created)
 	if err != nil {
 		t.Fatal(err)
 	}

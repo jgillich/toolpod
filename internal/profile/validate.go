@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,12 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateResources(rc); err != nil {
+		return err
+	}
+	if err := validateServices(rc); err != nil {
+		return err
+	}
+	if err := validateMountServices(rc); err != nil {
 		return err
 	}
 	if rc.Network == "host" && len(rc.Ports) > 0 {
@@ -255,6 +262,122 @@ func validateResources(rc RawProfile) error {
 	if rc.Resources.CPUs != "" {
 		if _, err := ParseNanoCPUs(rc.Resources.CPUs); err != nil {
 			return ProfileError{Path: rc.Path, Message: "resources: cpus: " + err.Error()}
+		}
+	}
+	return nil
+}
+
+func validateServices(rc RawProfile) error {
+	for name, svc := range rc.Services {
+		if !profileNameRe.MatchString(name) {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: invalid service name (must match %s)", name, profileNameRe)}
+		}
+		if svc.Image == "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: image is required", name)}
+		}
+		if len(svc.Command) == 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: command is required", name)}
+		}
+		if svc.Network != "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set network", name)}
+		}
+		if svc.TTY != "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set tty", name)}
+		}
+		if svc.Resources != nil {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set resources", name)}
+		}
+		if len(svc.Tools) > 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set tools", name)}
+		}
+		if svc.Dbus != nil {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set dbus", name)}
+		}
+		if len(svc.Ports) > 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set ports", name)}
+		}
+		if len(svc.Devices) > 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set devices", name)}
+		}
+		if len(svc.Services) > 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not declare nested services", name)}
+		}
+		if svc.Version != 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set version", name)}
+		}
+		if len(svc.ExtendsList.Raw) > 0 {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set extends", name)}
+		}
+		// Reuse the existing per-field validators so service packages/repos/env/files
+		// get the same validation as the main profile. Wrap in a synthetic
+		// RawProfile with the service's fields so the existing validators work
+		// unchanged (they take RawProfile and use rc.Path for error messages).
+		svcRC := RawProfile{Profile: Profile{
+			Packages: svc.Packages,
+			Repos:    svc.Repos,
+			Env:      svc.Env,
+			Files:    svc.Files,
+		}, Path: rc.Path}
+		if err := validatePackages(svcRC); err != nil {
+			return err
+		}
+		if err := validateRepos(svcRC); err != nil {
+			return err
+		}
+		if err := validateEnv(svcRC); err != nil {
+			return err
+		}
+		if err := validateFiles(svcRC); err != nil {
+			return err
+		}
+		for socketName, socketPath := range svc.Exposes {
+			if !profileNameRe.MatchString(socketName) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: invalid socket name (must match %s)", name, socketName, profileNameRe)}
+			}
+			if !filepath.IsAbs(socketPath) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: path must be absolute", name, socketName)}
+			}
+		}
+		for mountTarget, m := range svc.Mounts {
+			if m.Service != "" || m.Socket != "" {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: mount %s: must not use service/socket (no inter-service dependencies in v1)", name, mountTarget)}
+			}
+		}
+	}
+	return nil
+}
+
+func validateMountServices(rc RawProfile) error {
+	for target, m := range rc.Mounts {
+		hasService := m.Service != ""
+		hasSocket := m.Socket != ""
+		hasSource := m.Source != ""
+		if hasService && !hasSocket {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: service requires socket", target)}
+		}
+		if hasSocket && !hasService {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: socket requires service", target)}
+		}
+		if hasService && hasSource {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: must not set source with service/socket", target)}
+		}
+		if hasService && m.Create {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: must not set create with service/socket", target)}
+		}
+		if hasService && m.Optional {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: must not set optional with service/socket", target)}
+		}
+		if hasService && m.ReadOnly {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: read_only must be false for service/socket mounts (connect fails on a read-only bind)", target)}
+		}
+		if hasService {
+			svc, ok := rc.Services[m.Service]
+			if !ok {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: service %q not declared", target, m.Service)}
+			}
+			if _, ok := svc.Exposes[m.Socket]; !ok {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("mount %s: socket %q not exposed by service %q", target, m.Socket, m.Service)}
+			}
 		}
 	}
 	return nil

@@ -83,8 +83,16 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 			}
 			// An empty rendered path is a config error (a bind mount with no
 			// source or target fails confusingly later); optional mounts
-			// degrade to absent.
-			if newTarget == "" || m.Source == "" {
+			// degrade to absent. Service-socket mounts have no source by
+			// definition, so only bind mounts are checked for one.
+			isServiceMount := m.Service != ""
+			if newTarget == "" {
+				if m.Optional {
+					continue
+				}
+				return out, fmt.Errorf("mount %q resolved to an empty path after template expansion (is the host variable set?)", target)
+			}
+			if !isServiceMount && m.Source == "" {
 				if m.Optional {
 					continue
 				}
@@ -162,6 +170,101 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 			return out, fmt.Errorf("command: %w", err)
 		}
 		out.Command = rendered
+	}
+
+	if out.Services != nil {
+		const serviceHome = "/root"
+		expanded := make(map[string]Service, len(out.Services))
+		for name, svc := range out.Services {
+			if svc.Mounts != nil {
+				svcMounts := make(map[string]Mount, len(svc.Mounts))
+				for target, m := range svc.Mounts {
+					// Targets are in-container paths; expand against /root.
+					newTarget, err := expandTarget(target, serviceHome, data)
+					if err != nil {
+						return out, err
+					}
+					// Sources are host paths; expand against hostHome.
+					m.Source, err = expandSource(m.Source, hostHome, data)
+					if err != nil {
+						return out, err
+					}
+					if newTarget == "" || m.Source == "" {
+						if m.Optional {
+							continue
+						}
+						return out, fmt.Errorf("service %s mount %q resolved to an empty path after template expansion", name, target)
+					}
+					svcMounts[newTarget] = m
+				}
+				svc.Mounts = svcMounts
+			}
+			if svc.Caches != nil {
+				expandedCaches := make(map[string]CachePaths, len(svc.Caches))
+				for cacheName, paths := range svc.Caches {
+					var exps CachePaths
+					for _, p := range paths {
+						// Cache paths are in-container paths; expand against /root.
+						e, err := expandTarget(p, serviceHome, data)
+						if err != nil {
+							return out, err
+						}
+						if e == "" {
+							return out, fmt.Errorf("service %s cache %s resolved to an empty target", name, cacheName)
+						}
+						exps = append(exps, e)
+					}
+					expandedCaches[cacheName] = exps
+				}
+				svc.Caches = expandedCaches
+			}
+			if svc.Files != nil {
+				expandedFiles := make(map[string]File, len(svc.Files))
+				for target, f := range svc.Files {
+					// File targets are in-container paths; expand against /root.
+					newTarget, err := expandTarget(target, serviceHome, data)
+					if err != nil {
+						return out, err
+					}
+					if newTarget == "" {
+						return out, fmt.Errorf("service %s file %q resolved to an empty target", name, target)
+					}
+					for _, seg := range strings.Split(newTarget, "/") {
+						if seg == ".." {
+							return out, fmt.Errorf("service %s file %q resolved to path %q containing '..'", name, target, newTarget)
+						}
+					}
+					newTarget = filepath.Clean(newTarget)
+					f.Content, err = renderTemplate(f.Content, data)
+					if err != nil {
+						return out, fmt.Errorf("service %s file %s: %w", name, target, err)
+					}
+					expandedFiles[newTarget] = f
+				}
+				svc.Files = expandedFiles
+			}
+			if svc.Env != nil {
+				for k, v := range svc.Env {
+					if !strings.HasPrefix(v, "{{") {
+						continue
+					}
+					rendered, err := renderTemplate(v, data)
+					if err != nil {
+						return out, fmt.Errorf("service %s environment %s: %w", name, k, err)
+					}
+					svc.Env[k] = rendered
+				}
+			}
+			if svc.Command != nil {
+				rendered, err := renderArgs(svc.Command, data)
+				if err != nil {
+					return out, fmt.Errorf("service %s command: %w", name, err)
+				}
+				svc.Command = rendered
+			}
+			expanded[name] = svc
+		}
+		out.Services = expanded
 	}
 
 	return out, nil

@@ -393,3 +393,80 @@ func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
 		t.Fatal("expected error for file target expanding to a '..' path, got nil")
 	}
 }
+
+func TestResolveTildesServices(t *testing.T) {
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Env:     map[string]string{"DATA_DIR": "~/data"},
+				Caches: map[string]CachePaths{
+					"data": {"~/cache"},
+				},
+				Mounts: map[string]Mount{
+					"/config": {Source: "~/.config/registry", ReadOnly: true},
+				},
+			},
+		},
+	}
+	cfg, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/user", "/home/user", nil)
+	if err != nil {
+		t.Fatalf("ResolveTildes: %v", err)
+	}
+	svc := cfg.Services["registry"]
+	// Env values are template-rendered only; ~/data is NOT tilde-expanded
+	// (same as the main profile's env, which only renders {{ }} templates).
+	if svc.Env["DATA_DIR"] != "~/data" {
+		t.Errorf("service env DATA_DIR = %q, want ~/data (env values are not tilde-expanded)", svc.Env["DATA_DIR"])
+	}
+	// Cache paths are in-container paths; ~ expands against /root (service home).
+	if svc.Caches["data"][0] != "/root/cache" {
+		t.Errorf("service cache = %q, want /root/cache (in-container paths expand against /root)", svc.Caches["data"][0])
+	}
+	// Mount sources are host paths; ~ expands against hostHome.
+	if svc.Mounts["/config"].Source != "/home/user/.config/registry" {
+		t.Errorf("service mount source = %q, want /home/user/.config/registry (host path expands against hostHome)", svc.Mounts["/config"].Source)
+	}
+}
+
+func TestResolveTildesServiceSocketMountSkipped(t *testing.T) {
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": "/run/registry/registry.sock"},
+			},
+		},
+		Mounts: map[string]Mount{
+			"/sock": {Service: "registry", Socket: "registry"},
+		},
+	}
+	cfg, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/user", "/home/user", nil)
+	if err != nil {
+		t.Fatalf("ResolveTildes: %v (service-socket mount should be skipped, not fail on empty Source)", err)
+	}
+	m := cfg.Mounts["/sock"]
+	if m.Service == "" {
+		t.Error("service-socket mount should survive ResolveTildes with Service intact")
+	}
+}
+
+func TestResolveTildesServiceFilesRejectDotDot(t *testing.T) {
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Files: map[string]File{
+					"/etc/../etc/passwd": {Content: "x"},
+				},
+			},
+		},
+	}
+	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/user", "/home/user", nil)
+	if err == nil {
+		t.Fatal("expected error for '..' in service file target")
+	}
+}

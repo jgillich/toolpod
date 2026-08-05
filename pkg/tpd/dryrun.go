@@ -37,6 +37,13 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			return err
 		}
 		for _, m := range spec.Mounts {
+			if m.Service != "" {
+				_, err = fmt.Fprintf(w, "  %s <- service:%s socket:%s\n", m.Target, m.Service, m.Socket)
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			ro := "ro"
 			if !m.ReadOnly {
 				ro = "rw"
@@ -109,6 +116,47 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			_, err = fmt.Fprintf(w, "  %s <- %s (%s%s)\n", d.Container, d.Host, d.Perms, suffix)
 			if err != nil {
 				return err
+			}
+		}
+	}
+	if len(spec.Services) > 0 {
+		_, err = fmt.Fprintln(w, "services:")
+		if err != nil {
+			return err
+		}
+		for _, svc := range spec.Services {
+			_, err = fmt.Fprintf(w, "  %s:\n    image: %s\n    command: %v\n", svc.Name, svc.Image, svc.Command)
+			if err != nil {
+				return err
+			}
+			if len(svc.Exposes) > 0 {
+				_, err = fmt.Fprintln(w, "    exposes:")
+				if err != nil {
+					return err
+				}
+				exposeNames := make([]string, 0, len(svc.Exposes))
+				for n := range svc.Exposes {
+					exposeNames = append(exposeNames, n)
+				}
+				sort.Strings(exposeNames)
+				for _, n := range exposeNames {
+					_, err = fmt.Fprintf(w, "      %s: %s\n", n, svc.Exposes[n])
+					if err != nil {
+						return err
+					}
+				}
+			}
+			if len(svc.Caches) > 0 {
+				_, err = fmt.Fprintln(w, "    caches:")
+				if err != nil {
+					return err
+				}
+				for _, c := range svc.Caches {
+					_, err = fmt.Fprintf(w, "      %s -> %s\n", c.Name, c.Target)
+					if err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}

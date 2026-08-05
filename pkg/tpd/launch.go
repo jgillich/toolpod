@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
@@ -147,9 +148,58 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			runSpec.Image = imageRef
 		}
 
-		code, err := rt.Run(ctx, runSpec)
+		// Register stop BEFORE StartServices so it covers the StartServices error path.
+		if len(spec.Services) > 0 {
+			defer func() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := rt.StopServices(stopCtx, spec); err != nil {
+					fmt.Fprintf(os.Stderr, "tpd: warning: stop services: %v\n", err)
+				}
+			}()
+		}
+
+		var serviceBindings runtime.ServiceBindings
+		// Initialize Release to a no-op so the missing-socket-key path can
+		// call it unconditionally before StartServices succeeds.
+		serviceBindings.Release = func() {}
+		if len(spec.Services) > 0 {
+			bindings, err := rt.StartServices(ctx, spec, progress, opts.Pull)
+			if err != nil {
+				return Result{ExitCode: 3, Err: fmt.Errorf("start services: %w", err)}
+			}
+			serviceBindings = bindings
+			for i := range runSpec.Mounts {
+				m := &runSpec.Mounts[i]
+				if m.Service == "" {
+					continue
+				}
+				key := m.Service + "/" + m.Socket
+				hostPath, ok := bindings.Sockets[key]
+				if !ok {
+					serviceBindings.Release()
+					return Result{ExitCode: 3, Err: fmt.Errorf("service socket %s not found in bindings", key)}
+				}
+				runSpec.SocketPaths = append(runSpec.SocketPaths, m.Target)
+				m.Source = hostPath
+				m.Service = ""
+				m.Socket = ""
+			}
+		}
+
+		created, err := rt.CreateContainer(ctx, runSpec)
 		if err != nil {
-			return Result{ExitCode: 3, Err: fmt.Errorf("run: %w", err)}
+			serviceBindings.Release()
+			return Result{ExitCode: 3, Err: fmt.Errorf("create container: %w", err)}
+		}
+
+		// Release service locks now that the main container is created and
+		// labeled with tpd.uses-service — a concurrent stop step can see it.
+		serviceBindings.Release()
+
+		code, err := rt.RunContainer(ctx, runSpec, created)
+		if err != nil {
+			return Result{ExitCode: 3, Err: fmt.Errorf("run container: %w", err)}
 		}
 		return Result{ExitCode: code}
 	}

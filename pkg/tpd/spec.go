@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/jgillich/tpd/internal/mise"
 	"github.com/jgillich/tpd/internal/profile"
@@ -32,14 +33,20 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	}
 
 	mounts := make([]MountSpec, 0, len(cfg.Mounts))
+	usedServices := map[string]bool{}
 	for target, m := range cfg.Mounts {
 		mounts = append(mounts, MountSpec{
 			Target:   target,
 			Source:   m.Source,
+			Service:  m.Service,
+			Socket:   m.Socket,
 			ReadOnly: m.ReadOnly,
 			Optional: m.Optional,
 			Create:   m.Create,
 		})
+		if m.Service != "" {
+			usedServices[m.Service] = true
+		}
 	}
 
 	caches := make([]CacheSpec, 0)
@@ -51,6 +58,66 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 				Subpath: runtime.CacheSubpath(target),
 			})
 		}
+	}
+
+	services := make([]runtime.ServiceSpec, 0, len(cfg.Services))
+	for name, svc := range cfg.Services {
+		svcCaches := make([]runtime.CacheSpec, 0)
+		for cacheName, paths := range svc.Caches {
+			for _, target := range paths {
+				svcCaches = append(svcCaches, runtime.CacheSpec{
+					Name:    "tpd-cache-" + cacheName,
+					Target:  target,
+					Subpath: runtime.CacheSubpath(target),
+				})
+			}
+		}
+		svcMounts := make([]runtime.MountSpec, 0, len(svc.Mounts))
+		for target, m := range svc.Mounts {
+			svcMounts = append(svcMounts, runtime.MountSpec{
+				Target:   target,
+				Source:   m.Source,
+				ReadOnly: m.ReadOnly,
+				Optional: m.Optional,
+				Create:   m.Create,
+			})
+		}
+		svcRepos := make(map[string]Repo, len(svc.Repos))
+		for rname, r := range svc.Repos {
+			svcRepos[rname] = Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+		}
+		svcFiles := make([]runtime.FileSpec, 0, len(svc.Files))
+		for target, f := range svc.Files {
+			mode := f.Mode
+			if mode == 0 {
+				mode = 0o644
+			}
+			svcFiles = append(svcFiles, runtime.FileSpec{Target: target, Content: f.Content, Mode: mode})
+		}
+		sort.Slice(svcFiles, func(i, j int) bool { return svcFiles[i].Target < svcFiles[j].Target })
+
+		svcLabels := make(map[string]string, len(svc.Labels)+3)
+		for k, v := range svc.Labels {
+			svcLabels[k] = v
+		}
+		svcLabels[runtime.OwnershipLabel] = "true"
+		svcLabels[runtime.ServiceLabel] = name
+		svcLabels[runtime.ServiceHashLabel] = svc.Hash
+
+		services = append(services, runtime.ServiceSpec{
+			Name:     name,
+			Hash:     svc.Hash,
+			Image:    svc.Image,
+			Packages: svc.Packages,
+			Repos:    svcRepos,
+			Files:    svcFiles,
+			Command:  svc.Command,
+			Caches:   svcCaches,
+			Mounts:   svcMounts,
+			Env:      svc.Env,
+			Labels:   svcLabels,
+			Exposes:  svc.Exposes,
+		})
 	}
 
 	repos := make(map[string]Repo, len(cfg.Repos))
@@ -88,6 +155,14 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	// profile extending "opencode" should show its own name, not "opencode").
 	labels["profile"] = opts.ProfileName
 	labels[runtime.OwnershipLabel] = "true"
+	if len(usedServices) > 0 {
+		names := make([]string, 0, len(usedServices))
+		for name := range usedServices {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		labels[runtime.UsesServiceLabel] = strings.Join(names, ",")
+	}
 
 	// Workspace mount (CLI, not profile) per spec §4.2
 	wsTarget := opts.Workspace
@@ -137,6 +212,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		Env:         env,
 		Tools:       tools,
 		Caches:      caches,
+		Services:    services,
 		Network:     cfg.Network,
 		Labels:      labels,
 		Workspace:   WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},

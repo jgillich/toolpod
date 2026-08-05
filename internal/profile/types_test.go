@@ -332,3 +332,107 @@ dbus:
 		t.Error("per-name null should clear the inherited talk entry")
 	}
 }
+
+func TestServicesParse(t *testing.T) {
+	var rc RawProfile
+	body := `
+version: 1
+image: ubuntu
+command: ["sh"]
+services:
+  registry:
+    image: debian:13-slim
+    command: ["registry", "serve", "/etc/docker/registry/config.yml"]
+    caches:
+      registry-data:
+        - /var/lib/registry
+    exposes:
+      registry: /run/registry/registry.sock
+    network: host
+`
+	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(rc.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(rc.Services))
+	}
+	svc := rc.Services["registry"]
+	if svc.Image != "debian:13-slim" {
+		t.Errorf("service image = %q, want debian:13-slim", svc.Image)
+	}
+	if svc.Network != "host" {
+		t.Errorf("service network = %q, want host (rejected field must be captured by YAML)", svc.Network)
+	}
+	if len(svc.Command) != 3 || svc.Command[0] != "registry" {
+		t.Errorf("service command = %v, want [registry serve /etc/docker/registry/config.yml]", svc.Command)
+	}
+	if len(svc.Caches["registry-data"]) != 1 || svc.Caches["registry-data"][0] != "/var/lib/registry" {
+		t.Errorf("service cache = %v, want [/var/lib/registry]", svc.Caches["registry-data"])
+	}
+	if svc.Exposes["registry"] != "/run/registry/registry.sock" {
+		t.Errorf("service expose = %q, want /run/registry/registry.sock", svc.Exposes["registry"])
+	}
+}
+
+func TestMountServiceSocketParses(t *testing.T) {
+	var rc RawProfile
+	body := `
+version: 1
+image: ubuntu
+command: ["sh"]
+services:
+  registry:
+    image: debian:13-slim
+    command: ["registry"]
+    exposes:
+      registry: /run/registry/registry.sock
+mounts:
+  /run/registry/registry.sock:
+    service: registry
+    socket: registry
+  /data:
+    source: /host/data
+    read_only: false
+`
+	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	svcMount := rc.Mounts["/run/registry/registry.sock"]
+	if svcMount.Service != "registry" {
+		t.Errorf("service mount Service = %q, want registry", svcMount.Service)
+	}
+	if svcMount.Socket != "registry" {
+		t.Errorf("service mount Socket = %q, want registry", svcMount.Socket)
+	}
+	if svcMount.Source != "" {
+		t.Errorf("service mount Source = %q, want empty", svcMount.Source)
+	}
+	if svcMount.ReadOnly {
+		t.Error("service mount ReadOnly = true, want false (default for service-socket mounts)")
+	}
+	bindMount := rc.Mounts["/data"]
+	if bindMount.Source != "/host/data" {
+		t.Errorf("bind mount Source = %q, want /host/data", bindMount.Source)
+	}
+	if bindMount.ReadOnly {
+		t.Error("bind mount ReadOnly = true, want false (explicitly set)")
+	}
+}
+
+func TestMountBindReadOnlyDefaultsTrue(t *testing.T) {
+	var rc RawProfile
+	body := `
+version: 1
+image: ubuntu
+command: ["sh"]
+mounts:
+  /data:
+    source: /host/data
+`
+	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !rc.Mounts["/data"].ReadOnly {
+		t.Error("bind mount without read_only should default to true")
+	}
+}

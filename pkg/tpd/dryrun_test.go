@@ -1,6 +1,7 @@
 package tpd
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -61,5 +62,42 @@ func TestRenderSpecPortsAndDevices(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("dry-run output missing %q; got:\n%s", want, output)
 		}
+	}
+}
+
+func TestRenderSpecServices(t *testing.T) {
+	var buf bytes.Buffer
+	spec := Spec{
+		ProfileName: "test",
+		Image:       "ubuntu",
+		Command:     []string{"sh"},
+		Services: []runtime.ServiceSpec{
+			{
+				Name:    "registry",
+				Hash:    "abcd1234",
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": "/run/registry/registry.sock"},
+				Caches: []runtime.CacheSpec{
+					{Name: "tpd-cache-data", Target: "/var/lib/registry"},
+				},
+			},
+		},
+		Mounts: []runtime.MountSpec{
+			{Target: "/sock", Service: "registry", Socket: "registry"},
+		},
+	}
+	if err := RenderSpec(&buf, spec); err != nil {
+		t.Fatalf("RenderSpec: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "services:") {
+		t.Error("expected 'services:' section in output")
+	}
+	if !strings.Contains(out, "registry:") {
+		t.Error("expected service name 'registry' in output")
+	}
+	if !strings.Contains(out, "service:registry socket:registry") {
+		t.Error("expected service-socket mount rendered with service/socket")
 	}
 }

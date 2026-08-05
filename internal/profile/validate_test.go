@@ -449,3 +449,188 @@ func TestValidateNetwork(t *testing.T) {
 		}
 	}
 }
+
+func validServiceProfile() RawProfile {
+	return RawProfile{Profile: Profile{
+		Version: 1,
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": "/run/registry/registry.sock"},
+			},
+		},
+	}}
+}
+
+func TestValidateServicesOK(t *testing.T) {
+	rc := validServiceProfile()
+	if err := validate(rc); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateServicesMissingImage(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Image = ""
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: image is required") {
+		t.Fatalf("expected image-required error, got: %v", err)
+	}
+}
+
+func TestValidateServicesMissingCommand(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Command = nil
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: command is required") {
+		t.Fatalf("expected command-required error, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectNetwork(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Network = "host"
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: must not set network") {
+		t.Fatalf("expected rejected-field error for network, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectPorts(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Ports = map[string]PortBind{"8080": {}}
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: must not set ports") {
+		t.Fatalf("expected rejected-field error for ports, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectDevices(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Devices = map[string]DeviceBind{"/dev/fuse": {}}
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: must not set devices") {
+		t.Fatalf("expected rejected-field error for devices, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectNestedServices(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Services = map[string]Service{"inner": {Image: "x", Command: []string{"x"}}}
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: must not declare nested services") {
+		t.Fatalf("expected nested-services error, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectServiceSocketMount(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Mounts = map[string]Mount{
+		"/sock": {Service: "other", Socket: "x"},
+	}
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: mount /sock: must not use service/socket") {
+		t.Fatalf("expected service-socket-in-service error, got: %v", err)
+	}
+}
+
+func TestValidateServicesExposesMustBeAbsolute(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Exposes = map[string]string{"registry": "relative/sock"}
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: exposes registry: path must be absolute") {
+		t.Fatalf("expected absolute-path error, got: %v", err)
+	}
+}
+
+func TestValidateServiceNameRegex(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Services["bad/name"] = rc.Services["registry"]
+	delete(rc.Services, "registry")
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: bad/name: invalid service name") {
+		t.Fatalf("expected invalid-name error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceWithoutSocket(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "registry"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: service requires socket") {
+		t.Fatalf("expected service-requires-socket error, got: %v", err)
+	}
+}
+
+func TestValidateMountSocketWithoutService(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Socket: "registry"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: socket requires service") {
+		t.Fatalf("expected socket-requires-service error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceSocketWithSource(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "registry", Socket: "registry", Source: "/host"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: must not set source with service/socket") {
+		t.Fatalf("expected no-source-with-service error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceSocketWithCreate(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "registry", Socket: "registry", Create: true}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: must not set create with service/socket") {
+		t.Fatalf("expected no-create-with-service error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceSocketWithOptional(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "registry", Socket: "registry", Optional: true}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: must not set optional with service/socket") {
+		t.Fatalf("expected no-optional-with-service error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceMissingService(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "nonexistent", Socket: "registry"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: service \"nonexistent\" not declared") {
+		t.Fatalf("expected missing-service error, got: %v", err)
+	}
+}
+
+func TestValidateMountServiceMissingSocket(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Mounts = map[string]Mount{"/sock": {Service: "registry", Socket: "nonexistent"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount /sock: socket \"nonexistent\" not exposed by service \"registry\"") {
+		t.Fatalf("expected missing-socket error, got: %v", err)
+	}
+}

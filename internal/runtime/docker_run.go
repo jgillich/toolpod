@@ -30,7 +30,7 @@ import (
 	"golang.org/x/term"
 )
 
-func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
+func (d *DockerRuntime) CreateContainer(ctx context.Context, spec Spec) (CreateResult, error) {
 	runtimeHome := spec.RuntimeHome
 
 	// Run an init process (tini) as PID 1 so SIGINT/SIGTERM forwarded to the
@@ -67,6 +67,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	for _, c := range spec.Caches {
 		writable = append(writable, c.Target)
 	}
+	writable = append(writable, spec.SocketPaths...)
 	writable = append(writable, homeParents(runtimeHome, mountTargets(spec))...)
 	writable = append(writable, homeParents(runtimeHome, fileTargets(spec))...)
 	bootstrap := fmt.Sprintf("mkdir -p %s && chown %d:%d %s", shq(runtimeHome), hostUID, hostGID, quoteJoin(writable))
@@ -74,7 +75,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 
 	mounts, err := buildMounts(spec, runtimeHome, d.subpathSupported(ctx))
 	if err != nil {
-		return 3, fmt.Errorf("build mounts: %w", err)
+		return CreateResult{}, fmt.Errorf("build mounts: %w", err)
 	}
 	envList := buildEnv(spec, runtimeHome)
 	containerName := "tpd-" + spec.ProfileName + "-" + randomID(8)
@@ -84,15 +85,6 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	cgroupRules := buildDeviceCgroupRules(spec)
 
 	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
-
-	var oldState *term.State
-	if tty && term.IsTerminal(int(os.Stdin.Fd())) {
-		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			return 3, fmt.Errorf("set raw mode: %w", err)
-		}
-		defer term.Restore(int(os.Stdin.Fd()), oldState)
-	}
 
 	resp, err := d.cli.ContainerCreate(ctx, &container.Config{
 		Image:        spec.Image,
@@ -125,9 +117,25 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		},
 	}, &network.NetworkingConfig{}, nil, containerName)
 	if err != nil {
-		return 3, fmt.Errorf("create container: %w", err)
+		return CreateResult{}, fmt.Errorf("create container: %w", err)
 	}
 
+	if len(spec.Files) > 0 {
+		if err := writeContainerFiles(ctx, d.cli, resp.ID, spec.Files, hostUID, hostGID); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true})
+			return CreateResult{}, fmt.Errorf("write profile files: %w", err)
+		}
+	}
+
+	return CreateResult{ContainerID: resp.ID}, nil
+}
+
+// RunContainer attaches, starts, waits on, and removes a container created by
+// CreateContainer. The deferred removal is the primary cleanup: it covers the
+// whole attach/start/wait lifecycle and normal exit.
+func (d *DockerRuntime) RunContainer(ctx context.Context, spec Spec, created CreateResult) (int, error) {
 	// cleanupMu serializes removal attempts and only records success, so a
 	// failed signal-triggered removal can be retried during normal teardown.
 	var cleanupMu sync.Mutex
@@ -141,25 +149,33 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := d.cli.ContainerRemove(cleanupCtx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
-			fmt.Fprintf(os.Stderr, "tpd: warning: remove container %s: %v\n", resp.ID, err)
+		if err := d.cli.ContainerRemove(cleanupCtx, created.ContainerID, container.RemoveOptions{Force: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: warning: remove container %s: %v\n", created.ContainerID, err)
 			return
 		}
 		removed = true
 	}
 	defer cleanupOnce()
 
-	if len(spec.Files) > 0 {
-		if err := writeContainerFiles(ctx, d.cli, resp.ID, spec.Files, hostUID, hostGID); err != nil {
-			return 3, fmt.Errorf("write profile files: %w", err)
+	// CreateResult carries only the container ID, so tty is re-derived here
+	// for the raw-mode setup.
+	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
+
+	var oldState *term.State
+	if tty && term.IsTerminal(int(os.Stdin.Fd())) {
+		var err error
+		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return 3, fmt.Errorf("set raw mode: %w", err)
 		}
+		defer term.Restore(int(os.Stdin.Fd()), oldState)
 	}
 
 	// Attach BEFORE start so we don't miss early output (spec §3.3).
 	// attachAndPump would block until the stream closes, but the container
 	// hasn't started yet — that's a deadlock. So we split: attach here,
 	// start the container, then pump in a goroutine.
-	hijacked, err := d.cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+	hijacked, err := d.cli.ContainerAttach(ctx, created.ContainerID, container.AttachOptions{
 		Stream: true,
 		Stdin:  true,
 		Stdout: true,
@@ -173,7 +189,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 	if tty {
 		rows, cols := terminalSize()
 		if rows > 0 && cols > 0 {
-			_ = d.cli.ContainerResize(ctx, resp.ID, container.ResizeOptions{
+			_ = d.cli.ContainerResize(ctx, created.ContainerID, container.ResizeOptions{
 				Height: rows,
 				Width:  cols,
 			})
@@ -194,7 +210,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		signalWG.Add(1)
 		go func() {
 			defer signalWG.Done()
-			d.handleResize(ctx, resp.ID, winCh)
+			d.handleResize(ctx, created.ContainerID, winCh)
 		}()
 	}
 
@@ -213,7 +229,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 			// doesn't within the grace period, force-remove so a killed tpd
 			// never orphans a running container (e.g. closed terminal = SIGHUP).
 			forwardSignalThenFallback(&fallbackWG, signalTeardownGrace, runDone,
-				func() { _ = d.cli.ContainerKill(ctx, resp.ID, strconv.Itoa(int(s))) },
+				func() { _ = d.cli.ContainerKill(ctx, created.ContainerID, strconv.Itoa(int(s))) },
 				cleanupOnce)
 		}
 	}()
@@ -275,7 +291,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		}
 		pauseInput()
 		defer resumeInput()
-		d.suspendSession(ctx, resp.ID, oldState, waitForApp, armResumeOutput)
+		d.suspendSession(ctx, created.ContainerID, oldState, waitForApp, armResumeOutput)
 	}
 	if oldState != nil {
 		stopCh = make(chan os.Signal, 1)
@@ -311,7 +327,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		suspendGate <- struct{}{}
 	}()
 
-	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if err := d.cli.ContainerStart(ctx, created.ContainerID, container.StartOptions{}); err != nil {
 		return 3, fmt.Errorf("start container: %w", err)
 	}
 
@@ -429,7 +445,7 @@ func (d *DockerRuntime) Run(ctx context.Context, spec Spec) (int, error) {
 		connMu.Unlock()
 	}
 
-	statusCh, errCh := d.cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	statusCh, errCh := d.cli.ContainerWait(ctx, created.ContainerID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		<-pumpDone

@@ -532,7 +532,11 @@ func TestIntegrationRunShellEcho(t *testing.T) {
 	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	code, err := rt.Run(context.Background(), spec)
+	created, err := rt.CreateContainer(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, err := rt.RunContainer(context.Background(), spec, created)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -577,7 +581,12 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	spec.Image = imageRef
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.Run(context.Background(), spec)
+		created, err := rt.CreateContainer(context.Background(), spec)
+		if err != nil {
+			done <- err
+			return
+		}
+		_, err = rt.RunContainer(context.Background(), spec, created)
 		done <- err
 	}()
 
@@ -653,7 +662,12 @@ func TestIntegrationSignalTeardown(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.Run(context.Background(), spec)
+		created, err := rt.CreateContainer(context.Background(), spec)
+		if err != nil {
+			done <- err
+			return
+		}
+		_, err = rt.RunContainer(context.Background(), spec, created)
 		done <- err
 	}()
 	id := waitRunningContainer(t, rt, "test-teardown")
@@ -843,14 +857,19 @@ func TestIntegrationPrepareBuildsDerivedImage(t *testing.T) {
 		t.Errorf("second Prepare returned %q, want same %q (cache reuse)", imageRef2, imageRef)
 	}
 	// Run a container from the derived image to prove hello is installed.
-	code, err := rt.Run(context.Background(), Spec{
+	runSpec := Spec{
 		ProfileName: "test-packages",
 		Image:       imageRef,
 		Command:     []string{"sh", "-c", `command -v hello >/dev/null && hello | grep -q "Hello"`},
 		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
 		RuntimeHome: "/root",
 		Network:     "none",
-	})
+	}
+	created, err := rt.CreateContainer(context.Background(), runSpec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, err := rt.RunContainer(context.Background(), runSpec, created)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -893,7 +912,7 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 	// The resolved repo must have produced a deb822 .sources and signing key
 	// in the derived image (the extrepo reimplementation path), and the repo
 	// must have let apt install mise from the mise repo.
-	code, err := rt.Run(context.Background(), Spec{
+	created, err := rt.CreateContainer(context.Background(), Spec{
 		ProfileName: "test-repos",
 		Image:       imageRef,
 		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version && test -f /etc/apt/keyrings/mise.asc && grep -q "Signed-By: /etc/apt/keyrings/mise.asc" /etc/apt/sources.list.d/extrepo_mise.sources`},
@@ -901,6 +920,17 @@ func TestIntegrationReposEnablesMiseRepo(t *testing.T) {
 		RuntimeHome: "/root",
 		Network:     "none",
 	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, err := rt.RunContainer(context.Background(), Spec{
+		ProfileName: "test-repos",
+		Image:       imageRef,
+		Command:     []string{"sh", "-c", `test -x /usr/bin/mise && mise --version && test -f /etc/apt/keyrings/mise.asc && grep -q "Signed-By: /etc/apt/keyrings/mise.asc" /etc/apt/sources.list.d/extrepo_mise.sources`},
+		Workspace:   WorkspaceSpec{HostPath: "/tmp", Target: "/workspace", Mode: workspace.ModeRootful},
+		RuntimeHome: "/root",
+		Network:     "none",
+	}, created)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -942,7 +972,11 @@ func TestIntegrationFilesWrittenIntoContainer(t *testing.T) {
 	if _, err := rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	code, err := rt.Run(context.Background(), spec)
+	created, err := rt.CreateContainer(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, err := rt.RunContainer(context.Background(), spec, created)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
