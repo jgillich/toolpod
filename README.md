@@ -151,6 +151,7 @@ Every launchable profile needs `version`, `image`, and `command`. Fragments only
 | `files` | map | Files written into the container at launch, keyed by target path. Each entry: `content` (inline, `{{ }}` templates), `mode` (default `0644`). |
 | `command` | string[] | Command to run. User args on the CLI replace the default args. |
 | `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true`), `optional`, `create`. `~` in `source` → host `$HOME`; `~` as key → runtime home. |
+| `services` | map | Companion daemon containers that start before the main container and stop after it, exposing sockets the main container mounts. See [Companion services](#companion-services-services). |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
 | `tools` | map | mise-managed tools, keyed by name; value is the version. `appimage:` tools stay on `latest` and are digest-verified at install (against GitHub's per-asset digest or a checksum sidecar); an explicit `sha256` or per-arch `sha256: {amd64, aarch64}` is optional. |
 | `environment` | map | Env vars. Forward a host variable with `'{{ .Env.FOO }}'`. |
@@ -192,6 +193,33 @@ repos: null
 ### Writing files at launch (`files:`)
 
 `files:` writes inline-content files into the ephemeral container before the command runs — owned by the execution user, gone when the container exits. Targets are absolute or `~`-prefixed; content is a `{{ }}` template (`.Env`, `uid`, `.Ports`).
+
+### Companion services (`services:`)
+
+A profile can declare companion containers that run alongside the main one: they start before it, keep running while it does, and are stopped after it exits. Use them for background daemons your tools need — a package registry, a database, a proxy:
+
+```yaml
+services:
+  registry:
+    image: registry:2
+    command: ["registry", "serve", "/etc/docker/registry/config.yml"]
+    caches:
+      registry-data: /var/lib/registry
+    exposes:
+      registry: /run/registry/registry.sock
+mounts:
+  /run/registry/registry.sock:
+    service: registry
+    socket: registry
+```
+
+A service is a mini-profile with its own `image`, `command`, `packages`/`repos`, `caches`, `mounts`, `environment`, `labels`, and `files`. Each `exposes:` entry declares a socket the service creates: tpd prepares the path on the host under `/run/user/<uid>/tpd-svc-<name>/` and bind-mounts the parent directory into the service container, so the socket the daemon creates in the container appears on the host. The main profile then references it with `mounts:` keys that use `service: <name>` and `socket: <key>` instead of `source:`.
+
+- Services are **rootless-only**; a launch in rootful mode fails with a clear message.
+- Service containers never see your workspace.
+- `network`, `tty`, `resources`, `tools`, `dbus`, `ports`, `devices`, `version`, `extends`, and nested `services` are rejected inside a service.
+- Service caches share the same `tpd-cache-<name>` volumes as the main profile and other services.
+- A running service is reused while its definition hash matches. If the definition changes and the old service still has a live consumer, the launch fails naming the blocking container instead of silently replacing it under a running consumer.
 
 ### Inspecting profiles
 
