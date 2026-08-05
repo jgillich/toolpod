@@ -36,6 +36,7 @@ CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd
 
 ## Runtime notes
 - Primary target is rootless Podman on Linux (workspace mounted at host absolute path, runs as host user). Docker/rootful Podman work but mount at `/workspace` as root.
+- `services:` work in both modes; rootful service sockets live in `/tmp/tpd-svc-<name>-<uid>/` and are chowned to the host user at probe time.
 - `tpd doctor` reports active mode, volumes, mise, and config.
 
 ## Workspace rules

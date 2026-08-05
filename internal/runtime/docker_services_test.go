@@ -55,6 +55,10 @@ type fakeServicesDaemon struct {
 
 	sockets   map[string][]string
 	listeners []net.Listener
+
+	execCreates  int
+	execCmds     [][]string
+	execExitCode int
 }
 
 type fakeBuildReq struct {
@@ -80,7 +84,7 @@ func (f *fakeServicesDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.serveContainerList(w, r)
 	case p == "containers/create" && r.Method == http.MethodPost:
 		f.serveContainerCreate(w, r)
-	case r.Method == http.MethodPost && strings.HasSuffix(p, "/start"):
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "containers/") && strings.HasSuffix(p, "/start"):
 		f.startCount++
 		id := strings.TrimPrefix(strings.TrimSuffix(p, "/start"), "containers/")
 		f.createSockets(f.nameByID[id])
@@ -108,6 +112,17 @@ func (f *fakeServicesDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.imagePresent = true
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"Pull complete"}`+"\n")
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "containers/") && strings.HasSuffix(p, "/exec"):
+		var execReq struct{ Cmd []string }
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &execReq)
+		f.execCreates++
+		f.execCmds = append(f.execCmds, execReq.Cmd)
+		fmt.Fprintf(w, `{"Id":"exec%d"}`, f.execCreates)
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "exec/") && strings.HasSuffix(p, "/start"):
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "exec/") && strings.HasSuffix(p, "/json"):
+		fmt.Fprintf(w, `{"Running":false,"ExitCode":%d}`, f.execExitCode)
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/json"):
 		if !strings.HasPrefix(p, "images/") {
 			fmt.Fprintf(w, `{"Id":%q}`, f.imageID)
@@ -859,19 +874,139 @@ func TestStartServicesReleasesLocksOnProbeTimeout(t *testing.T) {
 	}
 }
 
-func TestStartServicesRejectsRootful(t *testing.T) {
+func TestStartServicesRootfulLifecycle(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	svcName := fmt.Sprintf("tpd-svc-db-%d", os.Getuid())
+	daemon.sockets = map[string][]string{
+		svcName: {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	spec.Workspace.Mode = workspace.ModeRootful
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if daemon.createCount != 1 {
+		t.Fatalf("ContainerCreate calls = %d, want 1", daemon.createCount)
+	}
+	if daemon.createdNames[0] != svcName {
+		t.Errorf("rootful service container name = %q, want %q", daemon.createdNames[0], svcName)
+	}
+	want := filepath.Join(runDir, "db", "run", "db.sock")
+	if got := bindings.Sockets["db/port"]; got != want {
+		t.Errorf("binding db/port = %q, want %q", got, want)
+	}
+}
+
+func TestStopServicesRootful(t *testing.T) {
 	overrideServicePaths(t)
 	daemon := newFakeServicesDaemon()
+	svcName := fmt.Sprintf("tpd-svc-db-%d", os.Getuid())
+	daemon.containers = []types.Container{{
+		ID:     "svc-1",
+		Names:  []string{"/" + svcName},
+		State:  "running",
+		Labels: map[string]string{ServiceHashLabel: "hash123"},
+	}}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	spec.Workspace.Mode = workspace.ModeRootful
+	if err := rt.StopServices(context.Background(), spec); err != nil {
+		t.Fatalf("StopServices: %v", err)
+	}
+	if daemon.stopCount != 1 {
+		t.Errorf("ContainerStop calls = %d, want 1", daemon.stopCount)
+	}
+	if !containsString(daemon.removed, "svc-1") {
+		t.Errorf("rootful service container not removed; removed = %v", daemon.removed)
+	}
+}
+
+func TestStartServicesRootfulChownsSocket(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	svcName := fmt.Sprintf("tpd-svc-db-%d", os.Getuid())
+	daemon.sockets = map[string][]string{
+		svcName: {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	spec.Workspace.Mode = workspace.ModeRootful
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	wantUID := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	if len(daemon.execCmds) != 2 {
+		t.Fatalf("exec calls = %v, want exactly one chown + one chmod", daemon.execCmds)
+	}
+	if daemon.execCmds[0][0] != "chown" || daemon.execCmds[0][1] != wantUID || daemon.execCmds[0][2] != "/run/db.sock" {
+		t.Errorf("first exec = %v, want chown %s /run/db.sock", daemon.execCmds[0], wantUID)
+	}
+	if daemon.execCmds[1][0] != "chmod" || daemon.execCmds[1][1] != "0770" || daemon.execCmds[1][2] != "/run/db.sock" {
+		t.Errorf("second exec = %v, want chmod 0770 /run/db.sock", daemon.execCmds[1])
+	}
+}
+
+func TestStartServicesRootfulChownFailure(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	overrideProbeTimeout(t, time.Second)
+	daemon := newFakeServicesDaemon()
+	daemon.execExitCode = 127
+	svcName := fmt.Sprintf("tpd-svc-db-%d", os.Getuid())
+	daemon.sockets = map[string][]string{
+		svcName: {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
 	rt := newServicesTestRuntime(t, daemon)
 
 	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
 	spec.Workspace.Mode = workspace.ModeRootful
 	_, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
-	if err == nil || !strings.Contains(err.Error(), "rootful") {
-		t.Fatalf("StartServices must reject rootful mode, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "chown") || !strings.Contains(err.Error(), "exit code 127") {
+		t.Fatalf("a failing chown exec must surface as an error, got %v", err)
 	}
-	if daemon.createCount != 0 {
-		t.Errorf("no service container must be created in rootful mode; created %d", daemon.createCount)
+}
+
+func TestServiceRunDirPaths(t *testing.T) {
+	uid := os.Getuid()
+	if got := serviceRunDir("db", workspace.ModeRootless); got != fmt.Sprintf("/run/user/%d/tpd-svc-db/", uid) {
+		t.Errorf("rootless run dir = %q, want /run/user/%d/tpd-svc-db/", got, uid)
+	}
+	if got := serviceRunDir("db", workspace.ModeRootful); got != fmt.Sprintf("/tmp/tpd-svc-db-%d/", uid) {
+		t.Errorf("rootful run dir = %q, want /tmp/tpd-svc-db-%d/", got, uid)
+	}
+}
+
+func TestEnsureServiceRunDir(t *testing.T) {
+	base := t.TempDir()
+	if err := ensureServiceRunDir(filepath.Join(base, "ok")); err != nil {
+		t.Fatalf("fresh dir must be accepted: %v", err)
+	}
+	if err := ensureServiceRunDir(filepath.Join(base, "ok")); err != nil {
+		t.Fatalf("existing own dir must be accepted: %v", err)
+	}
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureServiceRunDir(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("a regular file must be rejected, got %v", err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(filepath.Join(base, "ok"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureServiceRunDir(link); err == nil {
+		t.Error("a symlink must be rejected (Lstat, not Stat)")
 	}
 }
 

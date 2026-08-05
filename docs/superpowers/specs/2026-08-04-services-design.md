@@ -134,9 +134,11 @@ shared daemon) and labeled `tpd.managed=true`, `tpd.service=<name>`,
 `tpd.service-role=sidecar`, `tpd.service-hash=<hash>`.
 
 **Multi-user rootful is not supported.** The primary target is
-single-user rootless Podman on Linux. The rootful `<uid>` suffix
-prevents name/socket-dir collisions if two users happen to share a
-rootful daemon, but tpd does not test or support that configuration.
+single-user rootless Podman on Linux. Rootful services are reachable in
+the single-user case (see "Socket ownership in rootful mode"). The
+rootful `<uid>` suffix prevents name/socket-dir collisions if two users
+happen to share a rootful daemon, but tpd does not test or support that
+multi-user configuration.
 
 Service caches are regular shared named volumes
 (`tpd-cache-<cachename>`), shared across all launches that use the
@@ -308,7 +310,9 @@ fails to create after the service started.
 Each service gets a deterministic host run-dir:
 
 - Rootless: `/run/user/<uid>/tpd-svc-<name>/`
-- Rootful: `/run/tpd-svc-<name>-<uid>/`
+- Rootful: `/tmp/tpd-svc-<name>-<uid>/` (user-writable — the host tpd is not
+  root; `/tmp` is transient, and the `<uid>` suffix keeps it distinct from a
+  concurrent rootless run sharing `/run/user/<uid>`)
 
 For each expose entry `<socket-name>: <container-path>`, tpd:
 
@@ -325,12 +329,26 @@ For each expose entry `<socket-name>: <container-path>`, tpd:
 Stale cleanup (step 2.2.4 above) unlinks `<run-dir><container-path>`
 if it exists before the service starts.
 
-**Socket ownership in rootful mode:** the service runs as root and
-creates the socket as root; the main container's bootstrap runs as
-root before dropping to the host user via setpriv, so the bootstrap
-can `chown` the socket to the host user before the drop. tpd performs
-this chown as part of the main container's bootstrap, alongside the
-existing `mkdir -p && chown` for `$HOME` and cache targets.
+**Socket ownership in rootful mode:** a rootful service creates its socket
+`root:root`, which the host tpd (a non-root user) cannot `connect()` to. On
+first start, before the probe, tpd execs `chown <hostUID>:<hostGID>` +
+`chmod 0770` inside the service container (running as root against the
+bind-mounted file) the first time the host socket appears, so the existing
+`connect()` probe works as in rootless. The chown's coverage is best-effort and
+first-start-only: reuse never probes (see Lifecycle), and the main container's
+bootstrap `chown` of its socket mount targets grants the consumer (host user
+after setpriv) access regardless of the socket's state at mount time — that
+bootstrap chown is what covers a daemon recreating its socket between launches.
+The probe-time chown is not skipped for `privileged` services: privileges and
+socket ownership are orthogonal. A failed chown exec (e.g. an image without
+`chown`) fails the launch with the exec's exit code.
+
+The run-dir is verified after creation (`ensureServiceRunDir`): a pre-existing
+symlink or a directory owned by another user is rejected, since `/tmp` is
+world-writable. systemd-tmpfiles may clear `/tmp` after ~10 days; a service
+kept alive across launches that long would lose its socket dir (the daemon
+keeps its bound socket, but the next launch's bind mount breaks). tpd services
+are disposable, so this is accepted and documented rather than worked around.
 
 ### Template and tilde resolution
 

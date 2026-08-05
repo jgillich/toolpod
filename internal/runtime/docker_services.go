@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -32,7 +33,10 @@ var serviceRunDir = func(name string, mode workspace.Mode) string {
 	if mode == workspace.ModeRootless {
 		return fmt.Sprintf("/run/user/%d/tpd-svc-%s/", os.Getuid(), name)
 	}
-	return fmt.Sprintf("/run/tpd-svc-%s-%d/", name, os.Getuid())
+	// Rootful sockets must live where the host tpd (a non-root user) can
+	// create, unlink, and probe them; /tmp is user-writable and transient, and
+	// the uid suffix keeps this tree distinct from a concurrent rootless run.
+	return fmt.Sprintf("/tmp/tpd-svc-%s-%d/", name, os.Getuid())
 }
 
 var serviceProbeTimeout = 30 * time.Second
@@ -68,15 +72,34 @@ func acquireServiceLock(name string) (*os.File, error) {
 	return f, nil
 }
 
+// ensureServiceRunDir creates the host run-dir and rejects a pre-existing
+// symlink or a directory owned by another user: /tmp is world-writable, so a
+// malicious local user could otherwise redirect sockets or drop files. Expose
+// parent dirs sit inside the verified dir (0700, ours), so they need no check.
+func ensureServiceRunDir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	st, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("service run dir %s is not a directory", path)
+	}
+	stat, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Getuid() {
+		return fmt.Errorf("service run dir %s is not owned by the current user", path)
+	}
+	return nil
+}
+
 // StartServices finds-or-starts every service in spec.Services, holding the
 // per-service lockfiles (acquired in sorted name order to prevent deadlock)
 // until the caller invokes the returned Release. Locks are only released on
 // error or via Release; Run's container-create must stay under the lock so a
 // concurrent stop step can't see "zero consumers" mid-launch.
 func (d *DockerRuntime) StartServices(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (ServiceBindings, error) {
-	if spec.Workspace.Mode == workspace.ModeRootful {
-		return ServiceBindings{Sockets: map[string]string{}, Release: func() {}}, fmt.Errorf("services are not supported in rootful mode; use rootless podman")
-	}
 	if len(spec.Services) == 0 {
 		return ServiceBindings{Sockets: map[string]string{}, Release: func() {}}, nil
 	}
@@ -220,7 +243,7 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 	// The host run-dir holds each exposed socket; the service writes the
 	// socket into a bind-mounted parent dir, which appears on the host at
 	// runDir+exposePath where the probe and the main container reach it.
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
+	if err := ensureServiceRunDir(runDir); err != nil {
 		return fmt.Errorf("create service run dir: %w", err)
 	}
 	// Two exposes sharing a parent dir produce one bind mount, not two.
@@ -311,9 +334,9 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 	}
 
 	for socketName, exposePath := range svc.Exposes {
-		if err := waitForServiceSocket(ctx, serviceSocketPath(name, mode, exposePath)); err != nil {
+		if err := d.waitForServiceSocket(ctx, containerID, serviceSocketPath(name, mode, exposePath), exposePath, mode == workspace.ModeRootful); err != nil {
 			cleanup()
-			return fmt.Errorf("service %s did not expose socket %s within %s", name, socketName, serviceProbeTimeout)
+			return fmt.Errorf("service %s did not expose socket %s within %s: %w", name, socketName, serviceProbeTimeout, err)
 		}
 		bindings[name+"/"+socketName] = serviceSocketPath(name, mode, exposePath)
 	}
@@ -438,20 +461,91 @@ func containerDisplayName(c types.Container) string {
 
 // waitForServiceSocket probes a unix socket with connect() (a stale file or a
 // touched-but-not-accepting socket both fail the dial) until it accepts, the
-// deadline passes, or the context is canceled.
-func waitForServiceSocket(ctx context.Context, path string) error {
+// deadline passes, or the context is canceled. In rootful mode the socket is
+// created root-owned and is unconnectable by the host user, so the first time
+// the host path appears as a socket we exec chown/chmod inside the service
+// (running as root) to make it host-user-connectable before dialing.
+func (d *DockerRuntime) waitForServiceSocket(ctx context.Context, containerID, hostPath, containerPath string, rootful bool) error {
 	deadline := time.Now().Add(serviceProbeTimeout)
 	dialer := net.Dialer{Timeout: time.Second}
+	chowned := false
 	for {
-		conn, err := dialer.DialContext(ctx, "unix", path)
+		if rootful && !chowned {
+			if st, err := os.Lstat(hostPath); err == nil && st.Mode()&os.ModeSocket != 0 {
+				if err := d.chownServiceSocket(ctx, containerID, containerPath); err != nil {
+					return err
+				}
+				chowned = true
+			}
+		}
+		conn, err := dialer.DialContext(ctx, "unix", hostPath)
 		if err == nil {
 			conn.Close()
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("socket %s did not appear", path)
+			return fmt.Errorf("socket %s did not appear", hostPath)
 		}
 		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// chownServiceSocket makes the socket file host-user-connectable. Rootful
+// services create the socket root-owned; exec runs as root inside the service
+// against the bind-mounted file. Safe: root keeps the bound socket, and peer
+// credentials come from the connecting process, not the inode owner. Runs once
+// per socket (see the caller); chmod 0770 is stricter than the daemon's 0755
+// and still lets the owning host user connect.
+func (d *DockerRuntime) chownServiceSocket(ctx context.Context, containerID, containerPath string) error {
+	uidGid := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	for _, cmd := range [][]string{
+		{"chown", uidGid, containerPath},
+		{"chmod", "0770", containerPath},
+	} {
+		if err := d.runServiceExec(ctx, containerID, cmd); err != nil {
+			return fmt.Errorf("exec %v: %w", cmd, err)
+		}
+	}
+	return nil
+}
+
+// runServiceExec runs a command in a running container and waits for it to
+// finish, surfacing a non-zero exit (e.g. a chown binary missing from an exotic
+// service image) instead of silently proceeding. ContainerExecAttach can't be
+// used for the wait: it doesn't report the exit code and needs a hijacked
+// stream.
+func (d *DockerRuntime) runServiceExec(ctx context.Context, containerID string, cmd []string) error {
+	// Pin the exec to root so the socket chown keeps working even if a future
+	// user: field on services changes the container's own user.
+	execResp, err := d.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{Cmd: cmd, User: "0:0"})
+	if err != nil {
+		return err
+	}
+	if err := d.cli.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{}); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		inspect, err := d.cli.ContainerExecInspect(ctx, execResp.ID)
+		if err != nil {
+			return err
+		}
+		if !inspect.Running {
+			if inspect.ExitCode != 0 {
+				return fmt.Errorf("exit code %d", inspect.ExitCode)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("exec %v: did not finish within 10s", cmd)
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -466,9 +560,6 @@ func waitForServiceSocket(ctx context.Context, path string) error {
 // the per-service lock serializes the stop decision, and All: true consumer
 // lookup counts a created-but-not-started main container as a live consumer.
 func (d *DockerRuntime) StopServices(ctx context.Context, spec Spec) error {
-	if spec.Workspace.Mode == workspace.ModeRootful {
-		return nil
-	}
 	names := make([]string, 0, len(spec.Services))
 	for _, svc := range spec.Services {
 		names = append(names, svc.Name)
