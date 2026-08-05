@@ -1,4 +1,6 @@
 version: 1
+extends: mise
+command: ["trivy"]
 caches:
   trivy: ~/.cache/trivy
 mounts:
