@@ -76,13 +76,11 @@ The first launch pulls the base image, builds the profile's derived image when s
 
 ![](assets/init.gif)
 
-
-
-The generated file extends the chosen bases live and embeds the fully resolved profile below as a commented reference, so you can see exactly what the container will get (like `tpd edit` seeds).
+The generated file extends the chosen bases; when none of them provides a command, it defaults to `bash` so the profile runs. `tpd show --resolved <name>` prints the fully merged result, so you can see exactly what the container will get.
 
 ### `tpd edit`
 
-`tpd edit <name>` opens the user file for a profile or fragment in `$EDITOR` (default `vi`). If no user file exists yet, tpd seeds one in `profiles/` (or `fragments/`): a stub that `extends:` the built-in, with the resolved definition below as a commented reference. Settings you write are merged on top of the built-in per the [merge semantics](#merge-semantics), so change only what you need. Closing without saving removes the seed, leaving no shadow file behind.
+`tpd edit <name>` opens the user file for a profile or fragment in `$EDITOR` (default `nano`). If no user file exists yet, tpd seeds one in `profiles/` (or `fragments/`): a stub that `extends:` the built-in. Settings you write are merged on top of the built-in per the [merge semantics](#merge-semantics), so change only what you need. Closing without saving removes the seed, leaving no shadow file behind.
 
 ### Other commands
 
@@ -252,9 +250,11 @@ Project-local `mise.toml` and `.tool-versions` files are discovered after tpd ch
 
 Profiles are user-owned configuration, but they can grant substantial host access. Review mounts, forwarded environment variables, credential files, devices, published ports, GUI/D-Bus access, and container sockets before launching a profile. `files:` writes only into the ephemeral container; bind mounts and named caches can persist or expose host data.
 
+Because built-in profiles can carry sensitive fields, tpd gates the ones they contribute — mounts, devices, environment variables, ports, D-Bus access, `network`, and `services`. The first launch of a profile with any such field prompts you to approve or deny each item; choices are stored per profile and re-prompted only when the profile changes. Fields your own user profile declares are never gated.
+
 GUI support is split into three capability fragments under `gui/`: `display` mounts the display, `/dev/dri`, and the specific Wayland socket; `portal` wires the filtered D-Bus to the desktop portal (and ships the `xdg-open` wrapper); `session` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `display` (+ `portal` when the app opens URLs) unless the app needs the runtime dir.
 
-Container engines are split the same way: `docker-host` and `podman-host` expose your host engine's socket to the profile (read-write — with great power...), while `podman` runs an isolated **nested** Podman engine as a service inside the container, with no host daemon access. The nested sidecar runs privileged (required: an unprivileged sidecar cannot run a nested engine — the kernel blocks the nested user namespace's `/proc` mount), but in a rootless engine that privilege stays inside the container's user namespace. Extend `podman` when you want a self-contained engine that persists between launches; extend `podman-host`/`docker-host` only when the profile genuinely needs your host containers.
+Container engines are split the same way: `infra/docker` and `infra/podman` expose your host engine's socket to the profile (read-write — with great power...), while `service/podman` runs an isolated **nested** Podman engine as a service inside the container, with no host daemon access. The nested sidecar runs privileged (required: an unprivileged sidecar cannot run a nested engine — the kernel blocks the nested user namespace's `/proc` mount), but in a rootless engine that privilege stays inside the container's user namespace. Extend `service/podman` when you want a self-contained engine that persists between launches; extend `infra/podman`/`infra/docker` only when the profile genuinely needs your host containers.
 
 See [the security model](docs/2026-08-03-security-model.md) for the trust model, ownership labels and prune semantics, the AppImage digest-verification policy, and the accepted trade-offs (extrepo TLS trust anchor, SELinux `label=disable`, setpriv-absent root fallback, host-port allocation).
 

@@ -25,36 +25,34 @@ approved at launch. That gate does not relax the guidance above: the profile's
 own `command`, `files:`, and `packages:` remain trusted configuration, so only
 run profiles you trust.
 
-This is amplified by the built-in fragments. Several mount real host state
-into the container:
+This is amplified by the built-in fragments. They fall into a few categories of
+host access, and because tpd does not sandbox the profile, the broadest category
+wins: any fragment that mounts host state grants it to every process in the
+container.
 
-| Fragment | Host access granted |
-| --- | --- |
-| `docker-host` | Docker socket, read-write — container processes can administer the daemon (host-root access on a rootful daemon). |
-| `podman-host` | Podman socket, read-write — container processes can control the container engine. |
-| `gui/display` | Host display, `/dev/dri`, X11 socket, and the specific Wayland socket named by `$WAYLAND_DISPLAY`. |
-| `gui/portal` | Filtered session D-Bus routed through the launch's `xdg-dbus-proxy` (desktop portal + `xdg-open`). |
-| `gui/session` | The entire `$XDG_RUNTIME_DIR` — audio, compositor, notification, and agent sockets. |
-| `ssh`, `netrc`, `aws`, `azure`, `gcloud`, `github`, `gitlab`, `vault` | Host credentials, mounted read-only — any process in the profile can read them. |
-
-The `podman` fragment is the complement: it grants **no host** access. Its
-service sidecar runs an isolated **nested rootful Podman engine** and exposes
-that engine's socket to the main container. The sidecar is launched
-`privileged: true`, which in a rootless engine grants `CAP_SYS_ADMIN` plus all
-devices *inside the container's user namespace* — it does not escape to the host
-(a privileged rootless container is not host root). The privilege is required:
-an unprivileged sidecar cannot run a nested engine (the kernel blocks the nested
-user namespace's `/proc` mount, and there is no `/dev/net/tun` for networking).
-Everything the nested engine builds or runs is contained in the sidecar; it
-never touches the host daemon. It grants no host capability to approve — the
-service definition itself is core-contributed and still appears in the launch
-dialog.
+- **Container engine sockets**, mounted read-write — a process in the container
+  can administer the host engine; on a rootful daemon that is host-root access.
+- **The desktop session** — the display, `/dev/dri`, and the X11/Wayland
+  sockets, or the entire runtime directory with its audio, compositor,
+  notification, and agent sockets.
+- **Host credentials**, mounted read-only — read-only does not mean hidden: any
+  process in the profile can read the mounted files and tokens.
+- **A nested container engine**, run as an isolated sidecar service. It grants
+  **no host** access: the sidecar runs `privileged: true`, which in a rootless
+  engine grants capabilities only *inside the container's user namespace* and
+  never escapes to the host (a privileged rootless container is not host root).
+  The privilege is required — an unprivileged sidecar cannot run a nested
+  engine — but it stays contained, and everything the nested engine builds or
+  runs remains in the sidecar. Because the service definition is still
+  built-in-contributed, it appears in the launch dialog like any other gated
+  field.
 
 The sensitive fragments are gated by the approval system at launch, not by a
 static advisory: the dialog described in "Sensitive-field approvals" below is
 the single source of sensitivity information, so the capability is decided
-before launch, not discovered after. There is no per-mount risk grading: that
-table would go stale, and the review explicitly declined it.
+before launch, not discovered after. There is no per-fragment risk grading: a
+list of named fragments would go stale as the catalog changes, and the review
+explicitly declined it.
 
 ## Ownership labels and what `prune` removes
 
@@ -218,9 +216,8 @@ re-prompted. `--yes` and `--no` approve or deny every unapproved item for
 non-interactive use; with neither a dialog nor a flag, launch fails closed with
 "unapproved sensitive fields require --yes or --no".
 
-The credentials the gate exists for are unchanged: `ssh`, `netrc`, `aws`,
-`azure`, `gcloud`, `github`, `gitlab`, and `vault` mount host credentials
-**read-only**, but read-only does not mean hidden — any process running in the
-profile can read the mounted files and tokens. Approving one is the same
-decision as the trust model above: a profile that extends `vault` is a profile
-you have just approved to read your Vault token.
+The credentials the gate exists for are unchanged: built-in fragments mount
+host credentials **read-only**, but read-only does not mean hidden — any process
+in the profile can read the mounted files and tokens. Approving one is the same
+decision as the trust model above: a profile that extends a credential fragment
+is a profile you have just approved to read those credentials.
