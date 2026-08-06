@@ -497,9 +497,6 @@ extends:
   - gui/display
   - gui/portal
   - gui/session
-  - opencode
-  - claude
-  - codex
 command: ["t3code", "--no-sandbox", "--disable-dev-shm-usage", "--ozone-platform=wayland"]
 tools:
   "appimage:pingdotgg/t3code": latest
