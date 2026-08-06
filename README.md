@@ -119,6 +119,8 @@ If a project has its own `mise.toml`, tpd's bash profile picks it up as an overr
 
 ### Built-in profiles
 
+The full catalog with source YAML for every built-in profile and fragment is in [docs/catalog.md](docs/catalog.md).
+
 <!-- BEGIN tpd profiles -->
 
 | Profile | What it is |
