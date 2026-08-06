@@ -7,7 +7,7 @@ Date: 2026-08-06
 The `tpd init` wizard's fragment picker currently lists every fragment in one flat list (`promptFragmentsHuh(FragmentNames(), …)` in `internal/scaffold/scaffold.go:176`). Rework it into a folder browser: the root screen shows the top-level directories (`cloud`, `gui`, `infra`, `lang`, `service`, `vcs`, plus any user directories), and entering a directory shows the fragments inside it with an option to go back. Fragments from multiple folders accumulate into the final selection.
 
 Decisions confirmed with the user:
-- **Interaction model:** toggle browser — each screen is a single select listing folders to descend into, fragments to toggle on/off, `Back` to ascend, `Done` to finish.
+- **Interaction model:** two-form drill-down. Levels with subfolders show a folder-navigation form whose single select fires immediately on Enter (descend, ascend, or open the level's own fragments); levels with no subfolders show a fragments form — a multi-select (space toggles) plus `Done`/`Back` buttons.
 - **User fragments:** the picker offers user fragments from `~/.config/tpd/fragments/` in addition to built-ins (currently built-ins only).
 - **Non-TTY prompt:** the text-mode comma-list prompt is unchanged in shape (only its source list widens to include user fragments).
 
@@ -19,18 +19,17 @@ Note: a cross-type collision (user profile `lang/go.yaml` vs built-in fragment `
 
 ## Tree navigation
 
-New file `internal/scaffold/browser.go` with two pieces:
+New file `internal/scaffold/browser.go` with the loop plus two form builders:
 
 - `fragTree(fragNames []string, path []string) (dirs, frags []string)` — pure function. For the current path (e.g. `["lang"]`) it walks the display names and returns the sorted subdirectory segments and the sorted leaf fragment display names directly under it. The root path is empty; a top-level fragment (display name with no `/`) appears at root alongside folders. Works at any nesting depth because it operates on `/`-separated display-name segments. This is the testable core of the browser.
 
-- `promptFragmentsBrowserHuh(fragNames []string, stdin io.Reader, stdout io.Writer) ([]string, error)` — a loop that renders one `huh.Select` per screen:
-  - Title shows the current path and picked count, e.g. `Fragments — /lang (2 selected)`.
-  - Options, in order: folders as `> cloud` (no trailing `/` — huh v1.0.0 Select binds the `/` key to filter mode, so labels must not contain `/`), fragments as `✓ aws` / `  aws`, then `Back` on non-root screens, then `Done` on every screen.
-  - Choice handling: folder → push segment onto path; fragment → toggle in `picked`; `Back` → pop path; `Done` → return sorted `picked` (display names). Sorted output is a deliberate change from the old `MultiSelect`'s toggle order: deterministic `extends:` in the generated file; no test asserts order.
-  - Cursor retention: re-render seeds each screen's value to the option just activated — toggle → same fragment, `Back` → the folder returned from, descend → default first option — so per-toggle re-renders don't reset the cursor to the top of long folders.
-  - `form.Run()` errors (interrupt/Esc) propagate like the other huh prompts.
+- `promptFolderHuh(path, dirs, hasFrags, stdin, stdout)` — the navigation form. A single-field `huh.Select`, so **Enter fires** (the form is the submit): options are subfolders (`▸ name`), `✓ fragments here` (only when the level has fragments), and `← up` (only when not at the root). Returns the chosen action; the caller descends/ascends/opens the fragments form. No trailing `/` in labels — huh v1.0.0 Select binds `/` to filter mode.
 
-Edge case: a fragment and a subfolder sharing a name under one directory (e.g. user `lang/bash.yaml` plus `lang/bash/x.yaml`) renders as separate folder and fragment rows; the distinct markers disambiguate. No special handling required.
+- `promptFragmentsLevelHuh(path, frags, picked, stdin, stdout)` — the fragments form. A single group holding the `huh.MultiSelect` (space toggles) seeded with the current level's already-picked fragments followed by a `huh.Confirm` with `Done`/`Back` buttons (`Back` hidden at the root via an empty negative label, which huh renders as a single button). Being in one group, the group view stacks every field, so the buttons stay visible at the bottom while fragments are toggled. The picked map is updated to the final multi-select state for this level's fragments; the returned bool is true on `Done`.
+
+- `promptFragmentsBrowserHuh(fragNames, stdin, stdout)` — the loop. Each iteration: if the level has subfolders, run `promptFolderHuh` and act (descend → `continue` back to the top, so the deeper level re-runs the loop; `← up` → pop path; `✓ fragments here` → fall through). Otherwise run `promptFragmentsLevelHuh`; `Done` → return sorted `picked` (deterministic `extends:`; no test asserts order), `Back` → pop path and loop. `form.Run()` errors (interrupt/Esc) propagate like the other huh prompts.
+
+Edge case: a fragment and a subfolder sharing a name under one directory (e.g. user `lang/bash.yaml` plus `lang/bash/x.yaml`) — the navigation form lists the subfolder and the fragments form lists the fragment, so they never collide. No special handling required.
 
 ## Wizard wiring
 

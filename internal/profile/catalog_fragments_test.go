@@ -7,15 +7,18 @@ import (
 )
 
 func TestLoadProfilesIncludesFragments(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "ssh" is a built-in fragment, not a profile.
-	// It should be resolvable via Get under its core/creds/ FullName.
-	rc, ok := cat.Get("core/creds/ssh")
+	// "lang/javascript" is a built-in fixture fragment, not a profile.
+	// It should be resolvable via Get under its core/lang/ FullName.
+	rc, ok := cat.Get("core/lang/javascript")
 	if !ok {
-		t.Fatal("fragment 'ssh' not found in catalog")
+		t.Fatal("fragment 'lang/javascript' not found in catalog")
+	}
+	if !cat.IsFragment("core/lang/javascript") {
+		t.Fatal("lang/javascript should be registered as a fragment")
 	}
 	if rc.Path == "" {
 		t.Error("fragment should have a path")
@@ -25,14 +28,14 @@ func TestLoadProfilesIncludesFragments(t *testing.T) {
 func TestFragmentProfileNameCollisionRejected(t *testing.T) {
 	dir := t.TempDir()
 	// Create a user profile named "creds/ssh" that collides with the built-in
-	// core/creds/ssh fragment.
+	// core/creds/ssh fixture fragment.
 	if err := os.MkdirAll(filepath.Join(dir, "creds"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "creds", "ssh.yaml"), []byte("version: 1\nimage: x\ncommand: [sh]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadProfiles(dir)
+	_, err := fixtureCatalog(t, dir)
 	if err == nil {
 		t.Fatal("expected collision error, got nil")
 	}

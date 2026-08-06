@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/jgillich/tpd/internal/catalog"
@@ -242,21 +241,7 @@ func runEdit(name string) error {
 	if _, err := fsys.ReadFile(root + "/" + local + ".yaml"); err != nil {
 		return fmt.Errorf("reading built-in %s: %w", local, err)
 	}
-	var resolved profile.Profile
-	var resolveErr error
-	if kind == "fragment" {
-		resolved, resolveErr = profile.ResolveFragment(cat, key)
-	} else {
-		resolved, resolveErr = profile.ResolveProfile(cat, key)
-	}
-	if resolveErr != nil {
-		return fmt.Errorf("resolving %s: %w", rc.Name, resolveErr)
-	}
-	resolvedYAML, err := yaml.Marshal(resolved)
-	if err != nil {
-		return fmt.Errorf("marshaling resolved %s: %w", rc.Name, err)
-	}
-	data := builtinEditSeed(kind, key, resolvedYAML)
+	data := builtinEditSeed(kind, key)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
 		return fmt.Errorf("creating profile directory: %w", err)
 	}
@@ -285,25 +270,12 @@ func runEdit(name string) error {
 }
 
 // builtinEditSeed renders the file seeded when editing a built-in that has no
-// user file yet: a shadow extending the built-in, then the resolved (merged)
-// profile as a reference comment.
-func builtinEditSeed(kind, canonicalKey string, resolved []byte) []byte {
-	const rule = "# ──────────────────────────────────────────────────────────────────\n"
+// user file yet: a shadow extending the built-in.
+func builtinEditSeed(kind, canonicalKey string) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# This file shadows the built-in %q %s. Settings here are merged on\n", canonicalKey, kind)
 	b.WriteString("# top of the built-in, so only change what you need.\n\n")
-	fmt.Fprintf(&b, "version: 1\nextends: %s\n\n", canonicalKey)
-	b.WriteString(rule)
-	fmt.Fprintf(&b, "# Resolved %s (reference) — snapshot from when this file was created;\n", kind)
-	fmt.Fprintf(&b, "# the built-in may have changed since. Run `tpd show --resolved %s`\n", canonicalKey)
-	fmt.Fprintf(&b, "# for the current resolved %s.\n", kind)
-	b.WriteString(rule)
-	b.WriteString("\n")
-	for _, line := range strings.Split(strings.TrimRight(string(resolved), "\n"), "\n") {
-		b.WriteString("# ")
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
+	fmt.Fprintf(&b, "version: 1\nextends: %s\n", canonicalKey)
 	return b.Bytes()
 }
 

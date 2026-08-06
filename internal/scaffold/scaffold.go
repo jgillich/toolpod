@@ -29,6 +29,11 @@ type Options struct {
 // profile instead of shadowing a built-in.
 const newProfileOption = "New"
 
+// loadCatalog loads the profile catalog Run operates on. Production uses the
+// embedded catalog; tests override it to run against a stable fixture so the
+// wizard never depends on the live catalog contents.
+var loadCatalog = profile.LoadProfiles
+
 func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.Writer) error {
 	userDir := opts.ProfileDir
 	if userDir == "" {
@@ -59,13 +64,13 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	// Full catalog (built-ins + user profiles/fragments) for extends
 	// validation and as wizard base options.
-	cat, err := profile.LoadProfiles(userDir)
+	cat, err := loadCatalog(userDir)
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
 
 	// Built-in-only catalog for the profile picker (extending a built-in).
-	builtinCat, err := profile.LoadProfiles("")
+	builtinCat, err := loadCatalog("")
 	if err != nil {
 		return fmt.Errorf("loading built-in profiles: %w", err)
 	}
@@ -166,15 +171,16 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// Picked fragments are appended to the same extends list as bases, mapped
 	// from their display names to canonical FullNames.
 	if interactive && len(opts.Extends) == 0 {
+		fragNames := cat.FragmentDisplayNames()
 		var picked []string
 		if tty {
-			p, err := promptFragmentsHuh(FragmentNames(), stdin, stdout)
+			p, err := promptFragmentsBrowserHuh(fragNames, stdin, stdout)
 			if err != nil {
 				return err
 			}
 			picked = p
 		} else {
-			picked = promptFragments(FragmentNames(), reader, stderr)
+			picked = promptFragments(fragNames, reader, stderr)
 		}
 		for _, dn := range picked {
 			full, ok := cat.FragmentByDisplayName(dn)
@@ -206,22 +212,15 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	targetPath := filepath.Join(userDir, profileName+".yaml")
 
-	// Resolve the generated profile to generate a summary and validate it.
-	// A brand-new profile without a command/image is written anyway with a
-	// warning — the user is expected to edit it before launching.
-	resolved, resolveErr := resolveGeneratedProfile(content, profileName, cat)
+	// Resolve the generated profile to validate it. A brand-new profile
+	// without a command/image is written anyway with a warning — the user is
+	// expected to edit it before launching.
+	_, resolveErr := resolveGeneratedProfile(content, profileName, cat)
 	if resolveErr != nil {
 		if !isIncompleteProfileErr(resolveErr) {
 			return fmt.Errorf("generated config failed validation: %s: %w", targetPath, resolveErr)
 		}
 		fmt.Fprintf(stderr, "note: %s is not runnable yet (no command or image); edit the file before launching\n", targetPath)
-	} else {
-		// Embed the resolved profile as a comment so the file shows the full
-		// container view, mirroring the edit command's seed.
-		content, err = appendResolvedReference(content, profileName, resolved)
-		if err != nil {
-			return fmt.Errorf("appending resolved reference: %w", err)
-		}
 	}
 
 	if opts.DryRun {
@@ -280,32 +279,6 @@ func generate(name string, extends []string, cat profile.Catalog) (string, error
 		return "", err
 	}
 	return string(data), nil
-}
-
-// appendResolvedReference appends the fully merged profile to the generated
-// content as a commented block, mirroring the edit command's seed, so the file
-// shows the effective container view next to the live extends override.
-func appendResolvedReference(content, profileName string, resolved profile.Profile) (string, error) {
-	data, err := yaml.Marshal(resolved)
-	if err != nil {
-		return "", err
-	}
-	const rule = "# ──────────────────────────────────────────────────────────────────\n"
-	var b strings.Builder
-	b.WriteString(content)
-	b.WriteString("\n")
-	b.WriteString(rule)
-	b.WriteString("# Resolved profile (reference) — snapshot from when this file was\n")
-	b.WriteString("# generated; the built-ins may have changed since. Run\n")
-	fmt.Fprintf(&b, "# `tpd show --resolved %s` for the current resolved profile.\n", profileName)
-	b.WriteString(rule)
-	b.WriteString("\n")
-	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		b.WriteString("# ")
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.String(), nil
 }
 
 // basesProvideCommand reports whether any base in the extends chain provides a
@@ -442,26 +415,6 @@ func promptNewProfileHuh(baseNames []string, stdin io.Reader, stdout io.Writer) 
 		base = "mise"
 	}
 	return name, []string{base}, nil
-}
-
-func promptFragmentsHuh(names []string, stdin io.Reader, stdout io.Writer) ([]string, error) {
-	var selected []string
-	opts := make([]huh.Option[string], len(names))
-	for i, n := range names {
-		opts[i] = huh.NewOption(n, n)
-	}
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title("Select fragments (space to toggle, enter to confirm)").
-				Options(opts...).
-				Value(&selected),
-		),
-	).WithInput(stdin).WithOutput(stdout)
-	if err := form.Run(); err != nil {
-		return nil, err
-	}
-	return selected, nil
 }
 
 func promptConfirm(tty bool, title string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (bool, error) {

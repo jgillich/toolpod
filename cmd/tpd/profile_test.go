@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jgillich/tpd/internal/profile"
 )
 
 // runTpdEnv runs the built binary with the given extra environment variables.
@@ -30,23 +28,62 @@ func writeEditor(t *testing.T, dir, name, body string) string {
 	return path
 }
 
-func TestProfileShowBuiltIn(t *testing.T) {
-	out, err := runTpd(t, "show", "bash")
-	if err != nil {
-		t.Fatalf("profile show bash: %v\n%s", err, out)
+// seedUserConfig writes a user profile and a user fragment under a temp
+// XDG_CONFIG_HOME so CLI assertions target test-owned entries, never the live
+// embedded catalog.
+func seedUserConfig(t *testing.T, cfg string) {
+	t.Helper()
+	profilesDir := filepath.Join(cfg, "tpd", "profiles")
+	fragmentsDir := filepath.Join(cfg, "tpd", "fragments", "misc")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(out, "command:") {
-		t.Errorf("expected raw bash profile to declare command, got:\n%s", out)
+	if err := os.MkdirAll(fragmentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "myapp.yaml"), []byte("version: 1\nimage: x\ncommand: [\"myapp\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragmentsDir, "util.yaml"), []byte("version: 1\ntools:\n  util: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestProfileShowResolved(t *testing.T) {
-	out, err := runTpd(t, "show", "--resolved", "bash")
+func runTpdCfg(t *testing.T, cfg string, args ...string) (string, error) {
+	t.Helper()
+	return runTpdEnv(t, []string{"XDG_CONFIG_HOME=" + cfg}, args...)
+}
+
+func TestProfileShowUser(t *testing.T) {
+	cfg := t.TempDir()
+	seedUserConfig(t, cfg)
+	out, err := runTpdCfg(t, cfg, "show", "myapp")
 	if err != nil {
-		t.Fatalf("profile show --resolved bash: %v\n%s", err, out)
+		t.Fatalf("profile show myapp: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "image:") {
-		t.Errorf("expected resolved bash to inherit image from mise, got:\n%s", out)
+	if !strings.Contains(out, "command:") {
+		t.Errorf("expected raw myapp profile to declare command, got:\n%s", out)
+	}
+}
+
+func TestProfileShowResolvedUser(t *testing.T) {
+	cfg := t.TempDir()
+	profilesDir := filepath.Join(cfg, "tpd", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "base.yaml"), []byte("version: 1\nimage: debian:13-slim\ncommand: [\"sh\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "myapp.yaml"), []byte("version: 1\nextends: base\ncommand: [\"myapp\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runTpdCfg(t, cfg, "show", "--resolved", "myapp")
+	if err != nil {
+		t.Fatalf("profile show --resolved myapp: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "image: debian:13-slim") {
+		t.Errorf("expected resolved myapp to inherit image from base, got:\n%s", out)
 	}
 }
 
@@ -58,175 +95,60 @@ func TestProfileShowNonexistent(t *testing.T) {
 }
 
 func TestProfileList(t *testing.T) {
-	bin := buildTpd(t)
-	out, err := exec.Command(bin, "list").CombinedOutput()
+	cfg := t.TempDir()
+	seedUserConfig(t, cfg)
+	out, err := runTpdCfg(t, cfg, "list")
 	if err != nil {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
 	s := string(out)
 	// Task 5 restores bare display names (no core/ keys) with core source.
-	if strings.Contains(s, "core/bash") {
+	if strings.Contains(s, "core/myapp") {
 		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
 	}
-	if !strings.Contains(s, "bash") {
-		t.Errorf("expected profile list to contain 'bash', got:\n%s", s)
-	}
-	if !strings.Contains(s, "core") {
-		t.Errorf("expected profile list to label core entries, got:\n%s", s)
+	if !strings.Contains(s, "myapp") {
+		t.Errorf("expected profile list to contain 'myapp', got:\n%s", s)
 	}
 	if !strings.Contains(s, "fragment") {
 		t.Errorf("expected profile list to label fragments, got:\n%s", s)
-	}
-	// Regression: built-in fragments must be marked as core (not just
-	// "fragment" with no origin).
-	dockerMarked := false
-	for _, line := range strings.Split(s, "\n") {
-		if strings.Contains(line, "docker-host") {
-			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
-				t.Errorf("docker-host fragment row should be marked 'fragment' 'core', got: %q", line)
-			}
-			dockerMarked = true
-		}
-	}
-	if !dockerMarked {
-		t.Errorf("expected profile list to contain the docker-host fragment")
 	}
 }
 
 func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
 	cfg := t.TempDir()
-	userProfile := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
-	if err := os.MkdirAll(filepath.Dir(userProfile), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userProfile, []byte("version: 1\ncommand: [\"bash\", \"-l\"]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := runTpdEnv(t, []string{"XDG_CONFIG_HOME=" + cfg}, "list")
+	seedUserConfig(t, cfg)
+	out, err := runTpdCfg(t, cfg, "list")
 	if err != nil {
 		t.Fatalf("profile list: %v\n%s", err, out)
 	}
 	s := string(out)
-	if strings.Contains(s, "core/bash") {
+	if strings.Contains(s, "core/myapp") {
 		t.Errorf("expected bare display names, got core/-qualified:\n%s", s)
 	}
-	bashRow, dockerRow := false, false
+	myappRow, utilRow := false, false
 	for _, line := range strings.Split(s, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
 		switch fields[0] {
-		case "bash":
-			if !strings.Contains(line, "profile") || !strings.Contains(line, "user shadow") {
-				t.Errorf("bash row should be 'profile' 'user shadow', got: %q", line)
+		case "myapp":
+			if !strings.Contains(line, "profile") || !strings.Contains(line, "user") {
+				t.Errorf("myapp row should be 'profile' 'user', got: %q", line)
 			}
-			bashRow = true
-		case "services/docker-host":
-			if !strings.Contains(line, "fragment") || !strings.Contains(line, "core") {
-				t.Errorf("services/docker-host row should be 'fragment' 'core', got: %q", line)
+			myappRow = true
+		case "misc/util":
+			if !strings.Contains(line, "fragment") || !strings.Contains(line, "user") {
+				t.Errorf("misc/util row should be 'fragment' 'user', got: %q", line)
 			}
-			dockerRow = true
+			utilRow = true
 		}
 	}
-	if !bashRow {
-		t.Errorf("expected profile list to contain the bash row")
+	if !myappRow {
+		t.Errorf("expected profile list to contain the myapp row")
 	}
-	if !dockerRow {
-		t.Errorf("expected profile list to contain the docker-host fragment row")
-	}
-}
-
-func TestProfileEditBuiltInNoSaveRemovesSeed(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "bash")
-	if err != nil {
-		t.Fatalf("edit bash (no save): %v\n%s", err, out)
-	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpd", "profiles", "bash.yaml")); !os.IsNotExist(err) {
-		t.Errorf("expected no user profile after quitting without saving, stat err: %v", err)
-	}
-}
-
-func TestProfileEditBuiltInSaveCreatesOverride(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "bash")
-	if err != nil {
-		t.Fatalf("edit bash (save): %v\n%s", err, out)
-	}
-	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("expected user override to be created on save: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "extends: core/bash") {
-		t.Errorf("seed must extend the built-in itself, got:\n%s", s)
-	}
-	if !strings.Contains(s, `shadows the built-in "core/bash"`) {
-		t.Errorf("seed must explain the shadow/merge, got:\n%s", s)
-	}
-	if !strings.Contains(s, "Resolved profile (reference)") {
-		t.Errorf("seed must carry a resolved-reference banner, got:\n%s", s)
-	}
-	if !strings.Contains(s, "snapshot from when this file was created") || !strings.Contains(s, `tpd show --resolved core/bash`) {
-		t.Errorf("seed must note the resolved block is a stale snapshot and how to refresh it, got:\n%s", s)
-	}
-	if !strings.Contains(s, "# image: debian:13-slim") {
-		t.Errorf("seed must carry the resolved profile commented out, got:\n%s", s)
-	}
-	if !strings.Contains(s, "# saved by test") {
-		t.Errorf("expected override to carry the editor's write, got:\n%s", s)
-	}
-}
-
-func TestProfileEditBuiltInFragmentNoSaveRemovesSeed(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "services/docker-host")
-	if err != nil {
-		t.Fatalf("edit services/docker-host fragment (no save): %v\n%s", err, out)
-	}
-	if _, err := os.Stat(filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")); !os.IsNotExist(err) {
-		t.Errorf("expected no user fragment after quitting without saving, stat err: %v", err)
-	}
-}
-
-func TestProfileEditBuiltInFragmentSaveCreatesOverride(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "services/docker-host")
-	if err != nil {
-		t.Fatalf("edit services/docker-host fragment (save): %v\n%s", err, out)
-	}
-	target := filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("expected user fragment override to be created on save at %s: %v", target, err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "extends: core/services/docker-host") {
-		t.Errorf("fragment seed must extend the built-in fragment, got:\n%s", s)
-	}
-	if !strings.Contains(s, "Resolved fragment (reference)") {
-		t.Errorf("fragment seed must include the resolved-reference banner, got:\n%s", s)
-	}
-	if !strings.Contains(s, "# saved by test") {
-		t.Errorf("expected fragment override to carry the editor's write, got:\n%s", s)
+	if !utilRow {
+		t.Errorf("expected profile list to contain the misc/util fragment row")
 	}
 }
 
@@ -342,76 +264,16 @@ func (f fakeFileInfo) IsDir() bool        { return false }
 func (f fakeFileInfo) Sys() interface{}   { return nil }
 
 func TestProfileShowResolvedFragment(t *testing.T) {
-	out, err := runTpd(t, "show", "--resolved", "creds/ssh")
+	cfg := t.TempDir()
+	seedUserConfig(t, cfg)
+	out, err := runTpdCfg(t, cfg, "show", "--resolved", "misc/util")
 	if err != nil {
-		t.Fatalf("show --resolved creds/ssh: %v\n%s", err, out)
+		t.Fatalf("show --resolved misc/util: %v\n%s", err, out)
 	}
 	if strings.Contains(out, "is a fragment") {
 		t.Errorf("expected fragment to resolve, got refusal:\n%s", out)
 	}
-	if !strings.Contains(out, "openssh-client") {
-		t.Errorf("expected resolved fragment output to contain ssh content, got:\n%s", out)
-	}
-}
-
-func TestProfileEditCoreMiseSeedsUserMiseYaml(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "core/mise")
-	if err != nil {
-		t.Fatalf("edit core/mise (save): %v\n%s", err, out)
-	}
-	// The namespace prefix is stripped: the seed lands in profiles/mise.yaml.
-	target := filepath.Join(cfg, "tpd", "profiles", "mise.yaml")
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("expected core/mise edit to seed user mise.yaml: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "extends: core/mise") {
-		t.Errorf("seed must extend the built-in core/mise, got:\n%s", s)
-	}
-	if !strings.Contains(s, "# image: debian:13-slim") {
-		t.Errorf("seed must carry the resolved mise profile commented out, got:\n%s", s)
-	}
-	if !strings.Contains(s, "# saved by test") {
-		t.Errorf("expected override to carry the editor's write, got:\n%s", s)
-	}
-}
-
-func TestProfileEditQualifiedBuiltInFragmentSeedsNamespacedPath(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# saved by test\\n' >> \"$1\"\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "core/services/docker-host")
-	if err != nil {
-		t.Fatalf("edit core/services/docker-host: %v\n%s", err, out)
-	}
-	target := filepath.Join(cfg, "tpd", "fragments", "services", "docker-host.yaml")
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("expected seeded override at %s: %v", target, err)
-	}
-	if !strings.Contains(string(data), "extends: core/services/docker-host") {
-		t.Errorf("seed must extend core/services/docker-host, got:\n%s", string(data))
-	}
-}
-
-func TestResolveQualifiedCoreMise(t *testing.T) {
-	cat, err := profile.LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := profile.ResolveProfile(cat, "core/mise")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Image != "debian:13-slim" {
-		t.Errorf("ResolveProfile(core/mise).Image = %q, want debian:13-slim", cfg.Image)
+	if !strings.Contains(out, "util:") {
+		t.Errorf("expected resolved fragment output to contain fragment content, got:\n%s", out)
 	}
 }

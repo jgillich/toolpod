@@ -9,8 +9,6 @@ services:
     image: debian:13-slim
     packages:
       - podman
-      # aardvark-dns is a Recommends of podman, so --no-install-recommends skips
-      # it; without it launch containers have no DNS server.
       - aardvark-dns
       - nftables
       - iptables

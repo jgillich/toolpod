@@ -124,16 +124,21 @@ If a project has its own `mise.toml`, tpd's bash profile picks it up as an overr
 | [`mise`](internal/catalog/profiles/mise.yaml) | Shared base profile: installs the mise toolchain plus common CLI tools (bat, fzf, jq, ripgrep…). Everything else extends it. |
 | [`amp`](internal/catalog/profiles/amp.yaml) | Sourcegraph Amp coding agent |
 | [`opencode`](internal/catalog/profiles/opencode.yaml) | The opencode AI agent |
+| [`opencode-desktop`](internal/catalog/profiles/opencode-desktop.yaml) | The opencode desktop app (GUI) |
 | [`codex`](internal/catalog/profiles/codex.yaml) | OpenAI Codex CLI |
 | [`claude`](internal/catalog/profiles/claude.yaml) | Anthropic Claude Code |
 | [`gemini`](internal/catalog/profiles/gemini.yaml) | Google Gemini CLI |
 | [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent (earendil-works) |
 | [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
+| [`codewhale`](internal/catalog/profiles/codewhale.yaml) | CodeWhale, a terminal coding agent |
+| [`goose`](internal/catalog/profiles/goose.yaml) | Goose, an extensible AI coding agent |
 | [`qwen`](internal/catalog/profiles/qwen.yaml) | Qwen Code CLI (Alibaba) |
 | [`copilot`](internal/catalog/profiles/copilot.yaml) | GitHub Copilot CLI |
 | [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
 | [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
 | [`bash`](internal/catalog/profiles/bash.yaml) | Disposable bash shell. |
+| [`powershell`](internal/catalog/profiles/powershell.yaml) | Disposable PowerShell shell |
+| [`trivy`](internal/catalog/profiles/trivy.yaml) | Trivy vulnerability scanner |
 
 Most agent built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry. `mise` is the shared base and `bash` is the general-purpose shell profile.
 
@@ -150,7 +155,7 @@ Every launchable profile needs `version`, `image`, and `command`. Fragments only
 | `repos` | map | Extra apt sources (`extrepo: <name>`), resolved at build time for the base image's Debian version. v1 supports extrepo entries; custom URL repositories are not yet buildable. |
 | `files` | map | Files written into the container at launch, keyed by target path. Each entry: `content` (inline, `{{ }}` templates), `mode` (default `0644`). |
 | `command` | string[] | Command to run. User args on the CLI replace the default args. |
-| `mounts` | map | Bind mounts, keyed by container target. `source`, `read_only` (default `true`), `optional`, `create`. `~` in `source` → host `$HOME`; `~` as key → runtime home. |
+| `mounts` | map | Bind mounts, keyed by container target. Host binds use `source`, `read_only` (default `true`), `optional`, `create`; service-socket mounts use `service` + `socket`. `~` in `source` → host `$HOME`; `~` as key → runtime home. |
 | `services` | map | Companion daemon containers that start before the main container and stop after it, exposing sockets the main container mounts. See [Companion services](#companion-services-services). |
 | `caches` | map | Named-volume-backed cache dirs, shared across all profiles. |
 | `tools` | map | mise-managed tools, keyed by name; value is the version. `appimage:` tools stay on `latest` and are digest-verified at install (against GitHub's per-asset digest or a checksum sidecar); an explicit `sha256` or per-arch `sha256: {amd64, aarch64}` is optional. |
@@ -213,13 +218,12 @@ mounts:
     socket: registry
 ```
 
-A service is a mini-profile with its own `image`, `command`, `packages`/`repos`, `caches`, `mounts`, `environment`, `labels`, and `files`. Each `exposes:` entry declares a socket the service creates: tpd prepares the path on the host under `/run/user/<uid>/tpd-svc-<name>/` and bind-mounts the parent directory into the service container, so the socket the daemon creates in the container appears on the host. The main profile then references it with `mounts:` keys that use `service: <name>` and `socket: <key>` instead of `source:`.
+A service is a mini-profile with its own `image`, `command`, `packages`/`repos`, `caches`, `mounts`, `environment`, `labels`, `files`, `exposes`, and optional `privileged`. Each `exposes:` entry declares a socket the service creates: tpd prepares the path on the host — `/run/user/<uid>/tpd-svc-<name>/` in rootless mode, `/tmp/tpd-svc-<name>-<uid>/` in rootful mode — and bind-mounts the parent directory into the service container, so the socket the daemon creates in the container appears on the host. The main profile then references it with `mounts:` keys that use `service: <name>` and `socket: <key>` instead of `source:`.
 
-- Services are **rootless-only**; a launch in rootful mode fails with a clear message.
 - Service containers never see your workspace.
 - `network`, `tty`, `resources`, `tools`, `dbus`, `ports`, `devices`, `version`, `extends`, and nested `services` are rejected inside a service.
 - Service caches share the same `tpd-cache-<name>` volumes as the main profile and other services.
-- A running service is reused while its definition hash matches. If the definition changes and the old service still has a live consumer, the launch fails naming the blocking container instead of silently replacing it under a running consumer.
+- A running service is reused while its definition hash matches. If the definition changes, the old container is replaced — even under live consumers, who are named in a warning — accepting a brief outage so the new launch gets the updated service immediately.
 
 ### Inspecting profiles
 
@@ -241,7 +245,7 @@ Project-local `mise.toml` and `.tool-versions` files are discovered after tpd ch
 
 Profiles are user-owned configuration, but they can grant substantial host access. Review mounts, forwarded environment variables, credential files, devices, published ports, GUI/D-Bus access, and container sockets before launching a profile. `files:` writes only into the ephemeral container; bind mounts and named caches can persist or expose host data.
 
-GUI support is split into two fragments: `gui` mounts the display, `/dev/dri`, and the specific Wayland socket, while `gui-runtime` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `gui` alone unless the app needs the runtime dir.
+GUI support is split into three capability fragments under `gui/`: `display` mounts the display, `/dev/dri`, and the specific Wayland socket; `portal` wires the filtered D-Bus to the desktop portal (and ships the `xdg-open` wrapper); `session` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `display` (+ `portal` when the app opens URLs) unless the app needs the runtime dir.
 
 Container engines are split the same way: `docker-host` and `podman-host` expose your host engine's socket to the profile (read-write — with great power...), while `podman` runs an isolated **nested** Podman engine as a service inside the container, with no host daemon access. The nested sidecar runs privileged (required: an unprivileged sidecar cannot run a nested engine — the kernel blocks the nested user namespace's `/proc` mount), but in a rootless engine that privilege stays inside the container's user namespace. Extend `podman` when you want a self-contained engine that persists between launches; extend `podman-host`/`docker-host` only when the profile genuinely needs your host containers.
 

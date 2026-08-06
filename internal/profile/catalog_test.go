@@ -1,12 +1,37 @@
 package profile
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// fixtureCatalog loads the stable testdata/catalog fixture (never the live
+// embedded catalog) plus optional user files, running the real loading
+// pipeline against it.
+func fixtureCatalog(t *testing.T, userDir string) (Catalog, error) {
+	t.Helper()
+	return fixtureCatalogWith(t, loadCatalog, userDir)
+}
+
+func fixtureCatalogTolerant(t *testing.T, userDir string, warn func(string)) (Catalog, error) {
+	t.Helper()
+	return fixtureCatalogWith(t, func(pfs, ffs fs.ReadFileFS, userDir string) (Catalog, error) {
+		return loadCatalogTolerant(pfs, ffs, userDir, warn)
+	}, userDir)
+}
+
+func fixtureCatalogWith(t *testing.T, load func(pfs, ffs fs.ReadFileFS, userDir string) (Catalog, error), userDir string) (Catalog, error) {
+	t.Helper()
+	fsys, ok := os.DirFS(filepath.Join("testdata", "catalog")).(fs.ReadFileFS)
+	if !ok {
+		t.Fatal("testdata/catalog must be a fs.ReadFileFS")
+	}
+	return load(fsys, fsys, userDir)
+}
 
 func TestRawProfileFullName(t *testing.T) {
 	if got := (RawProfile{Namespace: "core", Name: "mise"}).FullName(); got != "core/mise" {
@@ -24,7 +49,7 @@ func TestRawProfileDisplayName(t *testing.T) {
 }
 
 func TestLoadProfilesStampsCoreNamespace(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +92,7 @@ func TestLoadProfilesUserShadowsCoreCoexist(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +117,7 @@ func TestLoadProfilesRejectsCrossTypeDisplayNameCollision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fragDir, "bash.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadProfiles(dir)
+	_, err := fixtureCatalog(t, dir)
 	if err == nil {
 		t.Fatal("expected cross-type display-name collision error, got nil")
 	}
@@ -112,7 +137,7 @@ func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *tes
 		t.Fatal(err)
 	}
 	var warnings []string
-	cat, err := LoadProfilesTolerant(dir, func(w string) { warnings = append(warnings, w) })
+	cat, err := fixtureCatalogTolerant(t, dir, func(w string) { warnings = append(warnings, w) })
 	if err != nil {
 		t.Fatalf("LoadProfilesTolerant: %v", err)
 	}
@@ -130,25 +155,13 @@ func TestLoadProfilesTolerantDropsFragmentOnCrossTypeDisplayNameCollision(t *tes
 	}
 }
 
-func TestLoadProfilesBuiltinsOnly(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatalf("LoadProfiles(\"\"): %v", err)
-	}
-	for _, name := range []string{"core/opencode", "core/codex", "core/bash"} {
-		if _, ok := cat.Get(name); !ok {
-			t.Errorf("built-in %q missing from catalog", name)
-		}
-	}
-}
-
 func TestLoadProfilesUserShadowsBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatalf("LoadProfiles(%q): %v", dir, err)
 	}
@@ -181,7 +194,7 @@ func TestResolveUserShadowMergesAllBuiltinExtends(t *testing.T) {
 	cat.fragments["core/gui"] = true
 	// Overlay the user shadow under the bare "t3" key, extending core/t3 + extra.
 	shadow := RawProfile{
-		Profile:     Profile{Version: 1, ExtendsList: ExtendsList{Raw: []string{"core/t3", "extra"}}},
+		Profile:   Profile{Version: 1, ExtendsList: ExtendsList{Raw: []string{"core/t3", "extra"}}},
 		Namespace: "", Name: "t3", Path: "user:/home/u/t3.yaml",
 	}
 	if err := shadow.ExtendsList.Resolve(cat.namespaces); err != nil {
@@ -252,94 +265,6 @@ func TestLoadProfilesRejectsBadFilename(t *testing.T) {
 	}
 }
 
-func TestBuiltinsDoNotMountUserDirs(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range cat.Names() {
-		if cat.IsFragment(name) {
-			continue
-		}
-		rc, ok := cat.Get(name)
-		if !ok {
-			continue
-		}
-		for _, sensitive := range []string{"~/.ssh", "~/.gnupg", "~/.netrc"} {
-			if _, has := rc.Mounts[sensitive]; has {
-				t.Errorf("built-in %q should not mount %s", name, sensitive)
-			}
-		}
-	}
-}
-
-func TestBuiltinsDoNotMountGitconfig(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range cat.Names() {
-		if cat.IsFragment(name) {
-			continue
-		}
-		rc, ok := cat.Get(name)
-		if !ok {
-			continue
-		}
-		if _, has := rc.Mounts["~/.gitconfig"]; has {
-			t.Errorf("built-in %q should not mount ~/.gitconfig", name)
-		}
-	}
-}
-
-func TestResolveBuzzProfile(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := ResolveProfile(cat, "buzz")
-	if err != nil {
-		t.Fatalf("ResolveProfile(buzz): %v", err)
-	}
-	if len(cfg.Command) != 1 || cfg.Command[0] != "buzz" {
-		t.Errorf("command = %v, want [buzz]", cfg.Command)
-	}
-	if cfg.Tools["appimage:block/buzz"].Version != "latest" {
-		t.Errorf("tools[appimage:block/buzz].Version = %q, want latest", cfg.Tools["appimage:block/buzz"].Version)
-	}
-	if _, ok := cfg.Mounts["~/.local/share/xyz.block.buzz.app"]; !ok {
-		t.Error("missing app data mount ~/.local/share/xyz.block.buzz.app")
-	}
-	if cfg.Env["WAYLAND_DISPLAY"] == "" {
-		t.Error("missing gui fragment env WAYLAND_DISPLAY")
-	}
-}
-
-func TestResolveBuzzDbusAllowlist(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := ResolveProfile(cat, "buzz")
-	if err != nil {
-		t.Fatalf("ResolveProfile(buzz): %v", err)
-	}
-	if cfg.Dbus == nil {
-		t.Fatal("buzz should resolve a dbus allowlist (via gui)")
-	}
-	for _, name := range []string{"org.freedesktop.portal.Desktop", "org.freedesktop.Notifications"} {
-		if cfg.Dbus.Talk[name] == nil {
-			t.Errorf("dbus.talk missing %q", name)
-		}
-	}
-	if cfg.Dbus.Own["xyz.block.buzz.app"] == nil {
-		t.Error("dbus.own missing xyz.block.buzz.app")
-	}
-	if cfg.Env["DBUS_SESSION_BUS_ADDRESS"] != "" {
-		t.Errorf("dbus env should be unset in resolved profile, got %q", cfg.Env["DBUS_SESSION_BUS_ADDRESS"])
-	}
-}
-
 func TestDefaultProfileDirHonorsXDG(t *testing.T) {
 	// os.UserConfigDir honors XDG_CONFIG_HOME only on Linux; macOS uses
 	// ~/Library/Application Support and Windows uses %AppData%.
@@ -382,113 +307,12 @@ func TestDefaultProfileDirEmpty(t *testing.T) {
 	}
 }
 
-func TestBuiltinProfilesResolvePackages(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
-	}
-	// Every profile extends mise, so every profile inherits the general C
-	// toolchain.
-	miseCfg, err := ResolveProfile(cat, "mise")
-	if err != nil {
-		t.Fatalf("resolve mise: %v", err)
-	}
-	if len(miseCfg.Packages) == 0 {
-		t.Fatal("mise profile must declare a packages list")
-	}
-	if !containsPkg(miseCfg.Packages, "build-essential") {
-		t.Errorf("mise packages must include build-essential, got %v", miseCfg.Packages)
-	}
-	if !containsPkg(miseCfg.Packages, "libssl-dev") {
-		t.Errorf("mise packages must include libssl-dev, got %v", miseCfg.Packages)
-	}
-	if !containsPkg(miseCfg.Packages, "mise") {
-		t.Errorf("mise packages must include mise itself, got %v", miseCfg.Packages)
-	}
-	if !containsPkg(miseCfg.Packages, "curl") {
-		t.Errorf("mise packages must include curl (moved from the base image), got %v", miseCfg.Packages)
-	}
-}
-
-func TestMiseProfileResolvesMiseRepo(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
-	}
-	cfg, err := ResolveProfile(cat, "mise")
-	if err != nil {
-		t.Fatalf("resolve mise: %v", err)
-	}
-	if cfg.Repos == nil {
-		t.Fatal("mise profile must declare a repos map")
-	}
-	repo, ok := cfg.Repos["mise"]
-	if !ok {
-		t.Fatalf("mise repos must contain the \"mise\" repo, got %v", cfg.Repos)
-	}
-	if repo.ExtRepo != "mise" {
-		t.Errorf("repos[mise].ExtRepo = %q, want mise", repo.ExtRepo)
-	}
-}
-
-func TestGuiFragmentCarriesXdgOpenWrapper(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
-	}
-	cfg, err := ResolveProfile(cat, "buzz")
-	if err != nil {
-		t.Fatalf("resolve buzz: %v", err)
-	}
-	f, ok := cfg.Files["/usr/local/bin/xdg-open"]
-	if !ok {
-		t.Fatal("buzz should carry the xdg-open wrapper via the gui fragment")
-	}
-	if f.Mode != 0o755 {
-		t.Errorf("wrapper mode = %o, want 755", f.Mode)
-	}
-	if !strings.Contains(f.Content, "org.freedesktop.portal.Desktop") {
-		t.Error("wrapper should forward URLs to the host portal")
-	}
-	if !strings.Contains(f.Content, "xdg-open.real") {
-		t.Error("wrapper should fall back to the real xdg-open")
-	}
-}
-
-func TestBuiltinFragmentsDeclarePackages(t *testing.T) {
-	cat, err := LoadProfiles("")
-	if err != nil {
-		t.Fatalf("LoadProfiles: %v", err)
-	}
-	for _, name := range []string{"core/lang/php", "core/gui/gui"} {
-		rc, ok := cat.Get(name)
-		if !ok {
-			t.Fatalf("fragment %q missing from catalog", name)
-		}
-		if !cat.IsFragment(name) {
-			t.Fatalf("%q should be a fragment", name)
-		}
-		if len(rc.Packages) == 0 {
-			t.Errorf("fragment %q must declare packages, got empty", name)
-		}
-	}
-}
-
-func containsPkg(pkgs []string, want string) bool {
-	for _, p := range pkgs {
-		if p == want {
-			return true
-		}
-	}
-	return false
-}
-
 func TestDisplayNamesDedupsUserShadow(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: my/custom:latest\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +333,7 @@ func TestDisplayNamesDedupsUserShadow(t *testing.T) {
 }
 
 func TestDisplayNamesIncludesCoreOnly(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +347,7 @@ func TestDisplayNamesIncludesCoreOnly(t *testing.T) {
 }
 
 func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,12 +360,57 @@ func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
 	}
 }
 
+func TestFragmentDisplayNamesExcludesProfiles(t *testing.T) {
+	cat, err := fixtureCatalog(t, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.FragmentDisplayNames()
+	if !contains(names, "lang/javascript") {
+		t.Errorf("FragmentDisplayNames missing fragment lang/javascript; got %v", names)
+	}
+	if !contains(names, "creds/ssh") {
+		t.Errorf("FragmentDisplayNames missing fragment creds/ssh; got %v", names)
+	}
+	if contains(names, "mise") {
+		t.Errorf("FragmentDisplayNames should exclude profile mise; got %v", names)
+	}
+	if contains(names, "core/lang/javascript") {
+		t.Errorf("FragmentDisplayNames should not contain qualified core/lang/javascript; got %v", names)
+	}
+}
+
+func TestFragmentDisplayNamesUserShadowDedup(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(filepath.Join(fragDir, "lang"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "lang", "go.yaml"), []byte("version: 1\ntools:\n  go: latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := fixtureCatalog(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := cat.FragmentDisplayNames()
+	count := 0
+	for _, n := range names {
+		if n == "lang/go" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("lang/go appears %d times in FragmentDisplayNames, want 1; got %v", count, names)
+	}
+}
+
 func TestSourceUserShadow(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "bash.yaml"), []byte("version: 1\nimage: x\ncommand: [\"bash\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +445,7 @@ func TestFragmentByDisplayNameUserWins(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  node: \"user\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +459,7 @@ func TestFragmentByDisplayNameUserWins(t *testing.T) {
 }
 
 func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,7 +473,7 @@ func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
 }
 
 func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
-	cat, err := LoadProfiles("")
+	cat, err := fixtureCatalog(t, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +498,7 @@ func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fragDir, "javascript.yaml"), []byte("version: 1\ntools:\n  userjs: \"user\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +623,7 @@ func TestLoadProfilesUserShadowsCoreHierarchical(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fragDir, "go.yaml"), []byte("version: 1\ntools:\n  user-go: \"1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := LoadProfiles(dir)
+	cat, err := fixtureCatalog(t, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

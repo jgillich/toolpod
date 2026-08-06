@@ -1,0 +1,49 @@
+version: 1
+packages:
+  - libatk-bridge2.0-0
+  - libatk1.0-0
+  - libatspi2.0-0
+  - libcairo2
+  - libcups2
+  - libegl1
+  - libfontconfig1
+  - libgbm1
+  - libgl1
+  - libgles2
+  - libgtk-3-0
+  - libnss3
+  - libnspr4
+  - libpango-1.0-0
+  - libx11-6
+  - libx11-xcb1
+  - libxcb1
+  - libxcomposite1
+  - libxcursor1
+  - libxdamage1
+  - libxext6
+  - libxfixes3
+  - libxkbcommon0
+  - libxi6
+  - libxrandr2
+  - libxrender1
+  - libxss1
+  - libxtst6
+  - libgstreamer1.0-0
+  - libgstreamer-plugins-base1.0-0
+  - gstreamer1.0-plugins-base
+  - gstreamer1.0-plugins-good
+  - gstreamer1.0-plugins-bad
+  - gstreamer1.0-libav
+  - gstreamer1.0-x
+devices:
+  /dev/dri: {}
+mounts:
+  /tmp/.X11-unix:
+    source: /tmp/.X11-unix
+    optional: true
+  '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}':
+    source: '{{ if and .Env.XDG_RUNTIME_DIR .Env.WAYLAND_DISPLAY }}{{ .Env.XDG_RUNTIME_DIR }}/{{ .Env.WAYLAND_DISPLAY }}{{ end }}'
+    optional: true
+environment:
+  WAYLAND_DISPLAY: '{{ .Env.WAYLAND_DISPLAY }}'
+  DISPLAY: '{{ .Env.DISPLAY }}'

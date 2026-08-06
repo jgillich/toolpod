@@ -1,4 +1,5 @@
 version: 1
+extends: git
 mounts:
   ~/.config/glab-cli:
     source: ~/.config/glab-cli

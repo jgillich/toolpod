@@ -1,5 +1,5 @@
 version: 1
 mounts:
-  ~/.netrc:
-    source: ~/.netrc
+  ~/.ssh:
+    source: ~/.ssh
     optional: true

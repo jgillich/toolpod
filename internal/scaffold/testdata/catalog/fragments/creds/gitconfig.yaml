@@ -1,0 +1,6 @@
+version: 1
+mounts:
+  ~/.gitconfig:
+    source: ~/.gitconfig
+    read_only: true
+    optional: true

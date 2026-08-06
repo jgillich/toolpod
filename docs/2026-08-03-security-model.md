@@ -32,8 +32,9 @@ into the container:
 | --- | --- |
 | `docker-host` | Docker socket, read-write — container processes can administer the daemon (host-root access on a rootful daemon). |
 | `podman-host` | Podman socket, read-write — container processes can control the container engine. |
-| `gui` | Host display, `/dev/dri`, X11 socket, and the specific Wayland socket named by `$WAYLAND_DISPLAY`. |
-| `gui-runtime` | The entire `$XDG_RUNTIME_DIR` — audio, compositor, notification, and agent sockets. |
+| `gui/display` | Host display, `/dev/dri`, X11 socket, and the specific Wayland socket named by `$WAYLAND_DISPLAY`. |
+| `gui/portal` | Filtered session D-Bus routed through the launch's `xdg-dbus-proxy` (desktop portal + `xdg-open`). |
+| `gui/session` | The entire `$XDG_RUNTIME_DIR` — audio, compositor, notification, and agent sockets. |
 | `ssh`, `netrc`, `aws`, `azure`, `gcloud`, `github`, `gitlab`, `vault` | Host credentials, mounted read-only — any process in the profile can read them. |
 
 The `podman` fragment is the complement: it grants **no host** access. Its

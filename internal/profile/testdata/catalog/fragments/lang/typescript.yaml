@@ -1,0 +1,4 @@
+version: 1
+extends: core/lang/javascript
+tools:
+  typescript: latest

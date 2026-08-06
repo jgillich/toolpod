@@ -83,6 +83,29 @@ func (c Catalog) DisplayNames() []string {
 	return out
 }
 
+// FragmentDisplayNames is DisplayNames filtered to fragments only.
+func (c Catalog) FragmentDisplayNames() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.entries))
+	for _, name := range c.entries {
+		if name.Namespace == "" && c.fragments[name.FullName()] {
+			seen[name.DisplayName()] = true
+			out = append(out, name.DisplayName())
+		}
+	}
+	for _, name := range c.entries {
+		if name.Namespace != "" && c.fragments[name.FullName()] {
+			dn := name.DisplayName()
+			if !seen[dn] {
+				seen[dn] = true
+				out = append(out, dn)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ProfileDisplayNames is DisplayNames filtered to non-fragments.
 func (c Catalog) ProfileDisplayNames() []string {
 	seen := map[string]bool{}
@@ -150,14 +173,29 @@ func (c *Catalog) AddRaw(ns, name string, rc RawProfile) {
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
 // with user entries shadowing built-ins of the same name.
 func LoadProfiles(userDir string) (Catalog, error) {
+	return loadCatalog(catalog.Profiles, catalog.Fragments, userDir)
+}
+
+// LoadCatalog loads a catalog from explicit built-in sources plus a user
+// profile directory, mirroring LoadProfiles with the built-in filesystems
+// injected. Intended for loading stable test fixtures; production code uses
+// LoadProfiles.
+func LoadCatalog(pfs, ffs fs.ReadFileFS, userDir string) (Catalog, error) {
+	return loadCatalog(pfs, ffs, userDir)
+}
+
+// loadCatalog is LoadProfiles with the built-in sources injected, so tests can
+// run the same loading pipeline against a stable fixture instead of the live
+// embedded catalog.
+func loadCatalog(pfs, ffs fs.ReadFileFS, userDir string) (Catalog, error) {
 	entries := map[string]RawProfile{}
 	fragmentNames := map[string]bool{}
 
-	if err := loadBuiltins(entries); err != nil {
+	if err := loadBuiltinsFrom(pfs, entries); err != nil {
 		return Catalog{}, err
 	}
 
-	if err := loadBuiltinFragments(entries, fragmentNames); err != nil {
+	if err := loadBuiltinFragmentsFrom(ffs, entries, fragmentNames); err != nil {
 		return Catalog{}, err
 	}
 
@@ -194,13 +232,17 @@ func LoadProfiles(userDir string) (Catalog, error) {
 // (cmd/tpd/completion.go) so a malformed user file never breaks tab
 // completion.
 func LoadProfilesTolerant(userDir string, warn func(string)) (Catalog, error) {
+	return loadCatalogTolerant(catalog.Profiles, catalog.Fragments, userDir, warn)
+}
+
+func loadCatalogTolerant(pfs, ffs fs.ReadFileFS, userDir string, warn func(string)) (Catalog, error) {
 	entries := map[string]RawProfile{}
 	fragmentNames := map[string]bool{}
 
-	if err := loadBuiltins(entries); err != nil {
+	if err := loadBuiltinsFrom(pfs, entries); err != nil {
 		return Catalog{}, err
 	}
-	if err := loadBuiltinFragments(entries, fragmentNames); err != nil {
+	if err := loadBuiltinFragmentsFrom(ffs, entries, fragmentNames); err != nil {
 		return Catalog{}, err
 	}
 
@@ -340,16 +382,16 @@ func loadUserFragmentsTolerant(dir string, entries map[string]RawProfile, fragme
 	})
 }
 
-func loadBuiltins(entries map[string]RawProfile) error {
+func loadBuiltinsFrom(fsys fs.ReadFileFS, entries map[string]RawProfile) error {
 	root := "profiles"
-	return fs.WalkDir(catalog.Profiles, root, func(path string, d fs.DirEntry, err error) error {
+	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
-		data, err := catalog.Profiles.ReadFile(path)
+		data, err := fsys.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -579,16 +621,16 @@ func LoadFragments(fsys fs.ReadFileFS, root string) (map[string]RawProfile, erro
 	return fragments, nil
 }
 
-func loadBuiltinFragments(entries map[string]RawProfile, fragmentNames map[string]bool) error {
+func loadBuiltinFragmentsFrom(fsys fs.ReadFileFS, entries map[string]RawProfile, fragmentNames map[string]bool) error {
 	root := "fragments"
-	return fs.WalkDir(catalog.Fragments, root, func(path string, d fs.DirEntry, err error) error {
+	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
-		data, err := catalog.Fragments.ReadFile(path)
+		data, err := fsys.ReadFile(path)
 		if err != nil {
 			return err
 		}

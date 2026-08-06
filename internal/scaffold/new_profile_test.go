@@ -80,7 +80,7 @@ func TestNewProfileExtendsFlag(t *testing.T) {
 			t.Errorf("generated file missing %s, got:\n%s", want, content)
 		}
 	}
-	cat, err := profile.LoadProfiles(dir)
+	cat, err := fixtureLoader(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestNewProfileExtendsUserProfile(t *testing.T) {
 	if !strings.Contains(string(data), "- base") {
 		t.Errorf("generated file should extend base, got:\n%s", string(data))
 	}
-	cat, err := profile.LoadProfiles(dir)
+	cat, err := fixtureLoader(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestUnknownNameCreatesNewProfile(t *testing.T) {
 }
 
 func TestGenerateEmitsCoreQualifiedBuiltinBase(t *testing.T) {
-	cat, err := profile.LoadProfiles("")
+	cat, err := fixtureLoader(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestGenerateEmitsCoreQualifiedBuiltinBase(t *testing.T) {
 }
 
 func TestGenerateEmitsCoreQualifiedFragment(t *testing.T) {
-	cat, err := profile.LoadProfiles("")
+	cat, err := fixtureLoader(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestGenerateEmitsUserFragmentUnqualified(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fragDir, "myfrag.yaml"), []byte("version: 1\ntools:\n  x: \"1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cat, err := profile.LoadProfiles(dir)
+	cat, err := fixtureLoader(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

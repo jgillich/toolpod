@@ -17,3 +17,5 @@ mounts:
   ~/.inputrc:
     source: ~/.inputrc
     optional: true
+packages:
+  - bash

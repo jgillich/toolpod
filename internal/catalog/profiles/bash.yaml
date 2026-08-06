@@ -1,5 +1,7 @@
 version: 1
-extends: mise
+extends:
+  - mise
+  - shell/bash
 command: ["bash", "-l"]
 files:
   /etc/profile.d/mise.sh:

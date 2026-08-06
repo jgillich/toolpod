@@ -1,8 +1,9 @@
 version: 1
 extends:
   - mise
-  - gui/gui
-  - gui/gui-runtime
+  - gui/display
+  - gui/portal
+  - gui/session
   - opencode
   - claude
   - codex

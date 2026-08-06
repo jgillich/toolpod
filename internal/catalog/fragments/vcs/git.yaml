@@ -3,3 +3,5 @@ mounts:
   ~/.gitconfig:
     source: ~/.gitconfig
     optional: true
+packages:
+  - git

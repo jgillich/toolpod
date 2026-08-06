@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 
 	"github.com/jgillich/tpd/internal/catalog"
@@ -25,15 +24,6 @@ func Fragments() map[string]profile.RawProfile {
 		fragments = m
 	})
 	return fragments
-}
-
-func FragmentNames() []string {
-	names := make([]string, 0, len(Fragments()))
-	for n := range Fragments() {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func validateFragment(name string, p profile.RawProfile) error {

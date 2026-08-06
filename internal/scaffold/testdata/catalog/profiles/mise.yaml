@@ -1,0 +1,3 @@
+version: 1
+image: debian:13-slim
+command: ["sh"]

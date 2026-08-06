@@ -3,6 +3,7 @@ package scaffold
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,21 @@ import (
 
 	"github.com/jgillich/tpd/internal/profile"
 )
+
+// TestMain routes the wizard at the stable testdata/catalog fixture instead of
+// the live embedded catalog, so catalog renames never ripple into these tests.
+func TestMain(m *testing.M) {
+	loadCatalog = fixtureLoader
+	os.Exit(m.Run())
+}
+
+func fixtureLoader(userDir string) (profile.Catalog, error) {
+	fsys, ok := os.DirFS(filepath.Join("testdata", "catalog")).(fs.ReadFileFS)
+	if !ok {
+		return profile.Catalog{}, os.ErrInvalid
+	}
+	return profile.LoadCatalog(fsys, fsys, userDir)
+}
 
 func TestFragmentsAreValid(t *testing.T) {
 	for name, p := range Fragments() {
@@ -33,7 +49,7 @@ func TestValidateFragmentRejectsIdentityFields(t *testing.T) {
 	}
 }
 
-func TestInitEmbedsResolvedProfileReference(t *testing.T) {
+func TestInitGeneratedFileOmitsResolvedReference(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
@@ -53,18 +69,12 @@ func TestInitEmbedsResolvedProfileReference(t *testing.T) {
 	if !strings.Contains(content, "extends:") {
 		t.Errorf("override should keep the extends list, got:\n%s", content)
 	}
-	// ...and the resolved profile is embedded as a reference comment.
-	if !strings.Contains(content, "Resolved profile (reference)") {
-		t.Errorf("file should carry a resolved-reference banner, got:\n%s", content)
+	// ...and does not embed the resolved container view as a comment.
+	if strings.Contains(content, "Resolved profile (reference)") {
+		t.Errorf("generated file should not carry a resolved-reference banner, got:\n%s", content)
 	}
-	if !strings.Contains(content, "# image: debian:13-slim") {
-		t.Errorf("resolved reference should inline the inherited image, got:\n%s", content)
-	}
-	if !strings.Contains(content, "# command:") {
-		t.Errorf("resolved reference should inline the inherited command, got:\n%s", content)
-	}
-	if !strings.Contains(content, "# mounts:") {
-		t.Errorf("resolved reference should inline the merged mounts, got:\n%s", content)
+	if strings.Contains(content, "image: debian:13-slim") {
+		t.Errorf("generated file should not inline the resolved image, got:\n%s", content)
 	}
 }
 
@@ -103,21 +113,19 @@ func TestGenerateYAMLWithCachesAndMounts(t *testing.T) {
 		t.Errorf("missing ssh in extends list, got:\n%s", output)
 	}
 
-	override := overrideOnly(t, output)
-
 	// No command: [] (omitempty should handle this)
-	if strings.Contains(override, "command:") {
+	if strings.Contains(output, "command:") {
 		t.Errorf("should not emit command: in override, got:\n%s", output)
 	}
 
 	// Should NOT contain inlined cache/mount content (live-linked via extends)
-	if strings.Contains(override, "npm: ~/.npm") {
+	if strings.Contains(output, "npm: ~/.npm") {
 		t.Errorf("should not inline npm cache, got:\n%s", output)
 	}
-	if strings.Contains(override, "~/.gitconfig:") {
+	if strings.Contains(output, "~/.gitconfig:") {
 		t.Errorf("should not inline gitconfig mount, got:\n%s", output)
 	}
-	if strings.Contains(override, "~/.ssh:") {
+	if strings.Contains(output, "~/.ssh:") {
 		t.Errorf("should not inline ssh mount, got:\n%s", output)
 	}
 }
@@ -134,7 +142,7 @@ func TestIntegrationResolveGeneratedProfile(t *testing.T) {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
 
-	cat, err := profile.LoadProfiles(dir)
+	cat, err := fixtureLoader(dir)
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
@@ -423,14 +431,13 @@ func TestNoFragmentsProducesJustExtends(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	override := overrideOnly(t, output)
 	if !strings.Contains(output, "extends:") || !strings.Contains(output, "- core/bash") {
 		t.Errorf("should contain extends list with core/bash, got:\n%s", output)
 	}
-	if strings.Contains(override, "caches:") {
+	if strings.Contains(output, "caches:") {
 		t.Errorf("should not contain caches with no fragments, got:\n%s", output)
 	}
-	if strings.Contains(override, "mounts:") {
+	if strings.Contains(output, "mounts:") {
 		t.Errorf("should not contain mounts with no fragments, got:\n%s", output)
 	}
 }
@@ -447,7 +454,7 @@ func TestFragmentMergeProducesCorrectResult(t *testing.T) {
 		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
 	}
 
-	cat, _ := profile.LoadProfiles(dir)
+	cat, _ := fixtureLoader(dir)
 	cfg, _ := profile.ResolveProfile(cat, "opencode")
 	if got := cfg.Caches["npm"]; len(got) != 1 || got[0] != "~/.npm" {
 		t.Errorf("Caches[npm] = %v", got)
@@ -476,7 +483,6 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	override := overrideOnly(t, content)
 	// Should contain extends list, not inlined caches/tools
 	if !strings.Contains(content, "extends:") {
 		t.Error("generated file should contain extends:")
@@ -488,11 +494,11 @@ func TestGenerateWritesExtendsList(t *testing.T) {
 		t.Error("generated file should reference go fragment")
 	}
 	// Should NOT contain inlined cache paths from npm fragment
-	if strings.Contains(override, "~/.npm") {
+	if strings.Contains(content, "~/.npm") {
 		t.Error("generated file should not inline ~/.npm cache (should be live-linked via extends)")
 	}
 	// Should NOT contain inlined tool entries from fragments
-	if strings.Contains(override, "node: latest") {
+	if strings.Contains(content, "node: latest") {
 		t.Error("generated file should not inline node tool (should be live-linked via extends)")
 	}
 }
@@ -628,14 +634,4 @@ func TestInitNamespacedProfileWritesSubfolder(t *testing.T) {
 	if !strings.Contains(string(data), "extends:") {
 		t.Errorf("generated file should extend a base, got:\n%s", string(data))
 	}
-}
-
-// overrideOnly returns the active YAML before the embedded resolved-reference
-// block, for assertions that target only the generated override.
-func overrideOnly(t *testing.T, content string) string {
-	t.Helper()
-	if i := strings.Index(content, "# ─────"); i >= 0 {
-		return content[:i]
-	}
-	return content
 }

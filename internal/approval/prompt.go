@@ -128,7 +128,7 @@ func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[st
 
 	group := huh.NewGroup(fields...).
 		Title(fmt.Sprintf("Review permissions for %s", req.ProfileName)).
-		Description("On launch, this profile gets access to the host resources listed below. Toggle off anything you don't want to grant, then confirm. Your choice is saved for this profile until its configuration changes.")
+		Description("On launch, this profile gets access to the host resources listed below. Your choice is saved for this profile until its configuration changes.")
 	form := huh.NewForm(group).WithKeyMap(keymap).WithInput(stdin).WithOutput(stdout)
 	if err := form.Run(); err != nil {
 		// huh returns a specific error on user abort (Esc/Ctrl+C);
