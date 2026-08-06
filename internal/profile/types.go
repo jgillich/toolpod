@@ -359,15 +359,27 @@ type RawProfile struct {
 	Provenance Provenance                 `yaml:"-"`
 }
 
-// Resolved is a fully merged profile plus the provenance of its sensitive
-// fields and the catalog identity of the resolved entry. Returned by
-// ResolveProfileWithProv. ResolveProfile is a thin wrapper that discards
-// provenance for callers that don't gate (tpd show --resolved, etc.).
+// Resolved is a fully merged profile plus per-field provenance attribution
+// for every merged field and the catalog identity of the resolved entry.
+// Returned by ResolveProfileWithProv. ResolveProfile is a thin wrapper
+// that discards provenance for callers that don't gate (tpd show
+// --resolved discards it).
 type Resolved struct {
 	Profile
 	Prov        Provenance
 	FullName    string
 	DisplayName string
+	Chain       []ChainEntry
+}
+
+// ChainEntry is one catalog entry in a resolved profile's extends chain, in
+// pre-order, deduped. Extends is the entry's own declared extends as written.
+// Rendered by tpd show --provenance.
+type ChainEntry struct {
+	FullName    string
+	DisplayName string
+	Path        string
+	Extends     []string
 }
 
 // FullName is the canonical catalog key and the qualified YAML/string form.

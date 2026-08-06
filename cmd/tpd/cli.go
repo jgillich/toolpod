@@ -129,21 +129,22 @@ func (e *exitError) Error() string {
 func (e *exitError) Unwrap() error { return e.err }
 
 func newShowCommand() *cobra.Command {
-	var resolved bool
+	var resolved, provenance bool
 	cmd := &cobra.Command{
 		Use:               "show <name>",
-		Short:             "Print a profile (use --resolved to inline extends).",
+		Short:             "Print a profile (use --resolved to inline extends, --provenance to show per-file attribution).",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNamesOnce,
 		RunE: func(c *cobra.Command, args []string) error {
-			return runShow(args[0], resolved)
+			return runShow(args[0], resolved, provenance)
 		},
 	}
 	cmd.Flags().BoolVar(&resolved, "resolved", false, "Inline all extends and show the fully merged profile.")
+	cmd.Flags().BoolVar(&provenance, "provenance", false, "Show which catalog entry contributed each field (implies --resolved).")
 	return cmd
 }
 
-func runShow(name string, resolved bool) error {
+func runShow(name string, resolved, provenance bool) error {
 	cat, err := profile.LoadProfiles(profile.DefaultProfileDir())
 	if err != nil {
 		return fmt.Errorf("loading profiles: %w", err)
@@ -151,6 +152,30 @@ func runShow(name string, resolved bool) error {
 	key, ok := resolveCatalogName(cat, name)
 	if !ok {
 		return profile.ProfileError{Message: "profile not found: " + name}
+	}
+	if provenance {
+		if cat.IsFragment(key) {
+			resolvedProfile, err := profile.ResolveFragmentWithProv(cat, key)
+			if err != nil {
+				return err
+			}
+			out, err := resolvedProfile.ProvenanceYAML()
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
+			return nil
+		}
+		resolvedProfile, err := profile.ResolveProfileWithProv(cat, key)
+		if err != nil {
+			return err
+		}
+		out, err := resolvedProfile.ProvenanceYAML()
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
 	}
 	if resolved {
 		if cat.IsFragment(key) {

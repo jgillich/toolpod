@@ -68,3 +68,48 @@ func TestInitProvenanceEmptyProfileIsEmpty(t *testing.T) {
 		t.Errorf("empty profile should have empty provenance, got %+v", prov)
 	}
 }
+
+func TestInitProvenanceStampsAllFields(t *testing.T) {
+	rc := RawProfile{
+		Profile: Profile{
+			Tools:     map[string]Tool{"kubectl": {Version: "latest"}},
+			Caches:    map[string]CachePaths{"go": {"~/go"}},
+			Repos:     map[string]Repo{"mise": {ExtRepo: "mise"}},
+			Files:     map[string]File{"/etc/x": {Content: "x"}},
+			Labels:    map[string]string{"a": "b"},
+			Packages:  []string{"git"},
+			Image:     "debian:13-slim",
+			Command:   []string{"sh"},
+			TTY:       "true",
+			Resources: &Resources{Memory: "1g", CPUs: "2"},
+		},
+		Namespace: "core",
+		Name:      "mise",
+	}
+	prov := initProvenance(rc)
+	c := Contributor{FullName: "core/mise", Namespace: "core"}
+	if prov.Tools["kubectl"] != c {
+		t.Errorf("Tools provenance = %+v, want %+v", prov.Tools["kubectl"], c)
+	}
+	if prov.Caches["go"] != c {
+		t.Errorf("Caches provenance = %+v, want %+v", prov.Caches["go"], c)
+	}
+	if prov.Repos["mise"] != c {
+		t.Errorf("Repos provenance = %+v, want %+v", prov.Repos["mise"], c)
+	}
+	if prov.Files["/etc/x"] != c {
+		t.Errorf("Files provenance = %+v, want %+v", prov.Files["/etc/x"], c)
+	}
+	if prov.Labels["a"] != c {
+		t.Errorf("Labels provenance = %+v, want %+v", prov.Labels["a"], c)
+	}
+	if prov.Packages["git"] != c {
+		t.Errorf("Packages provenance = %+v, want %+v", prov.Packages["git"], c)
+	}
+	if prov.Image != c || prov.Command != c || prov.TTY != c {
+		t.Errorf("scalar provenance = {image:%+v command:%+v tty:%+v}, want %+v for all", prov.Image, prov.Command, prov.TTY, c)
+	}
+	if prov.Resources.Memory != c || prov.Resources.CPUs != c {
+		t.Errorf("resources provenance = %+v, want %+v", prov.Resources, c)
+	}
+}

@@ -26,7 +26,8 @@ func ResolveProfileWithProv(cat Catalog, name string) (Resolved, error) {
 		return Resolved{}, ProfileError{Message: "profile not found: " + name}
 	}
 	rc, _ := cat.Get(key)
-	merged, err := resolveChain(cat, key, map[string]bool{})
+	cs := &chainState{seen: map[string]bool{}}
+	merged, err := resolveChain(cat, key, map[string]bool{}, cs)
 	if err != nil {
 		return Resolved{}, err
 	}
@@ -43,6 +44,7 @@ func ResolveProfileWithProv(cat Catalog, name string) (Resolved, error) {
 		Prov:        merged.Provenance,
 		FullName:    key,
 		DisplayName: rc.DisplayName(),
+		Chain:       cs.entries,
 	}, nil
 }
 
@@ -69,7 +71,8 @@ func ResolveFragmentWithProv(cat Catalog, name string) (Resolved, error) {
 		return Resolved{}, ProfileError{Message: "fragment not found: " + name}
 	}
 	rc, _ := cat.Get(key)
-	merged, err := resolveChain(cat, key, map[string]bool{})
+	cs := &chainState{seen: map[string]bool{}}
+	merged, err := resolveChain(cat, key, map[string]bool{}, cs)
 	if err != nil {
 		return Resolved{}, err
 	}
@@ -79,13 +82,31 @@ func ResolveFragmentWithProv(cat Catalog, name string) (Resolved, error) {
 		Prov:        merged.Provenance,
 		FullName:    key,
 		DisplayName: rc.DisplayName(),
+		Chain:       cs.entries,
 	}, nil
 }
 
-func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, error) {
+// chainState accumulates chain entries during resolution. seen is
+// whole-resolution (unlike resolveChain's per-path cycle stack), so a parent
+// shared across two sibling subtrees is recorded once.
+type chainState struct {
+	entries []ChainEntry
+	seen    map[string]bool
+}
+
+func resolveChain(cat Catalog, key string, seen map[string]bool, chain *chainState) (RawProfile, error) {
 	rc, ok := cat.Get(key)
 	if !ok {
 		return RawProfile{}, ProfileError{Message: "profile not found: " + key}
+	}
+	if !chain.seen[key] {
+		chain.seen[key] = true
+		chain.entries = append(chain.entries, ChainEntry{
+			FullName:    rc.FullName(),
+			DisplayName: rc.DisplayName(),
+			Path:        rc.Path,
+			Extends:     rc.ExtendsList.Raw,
+		})
 	}
 	if seen[key] {
 		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + key}
@@ -123,7 +144,7 @@ func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, er
 			continue
 		}
 		resolved[pkey] = true
-		parent, err := resolveChain(cat, pkey, seen)
+		parent, err := resolveChain(cat, pkey, seen, chain)
 		if err != nil {
 			return RawProfile{}, withParentPath(err, rc)
 		}
@@ -171,29 +192,47 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	}
 	if child.TTY != "" {
 		out.TTY = child.TTY
+		out.Provenance.TTY = child.Provenance.TTY
+		if out.Provenance.TTY.FullName == "" {
+			out.Provenance.TTY = childContrib
+		}
 	}
 
 	if child.Image != "" {
 		out.Image = child.Image
+		out.Provenance.Image = child.Provenance.Image
+		if out.Provenance.Image.FullName == "" {
+			out.Provenance.Image = childContrib
+		}
 	}
 
 	if child.Command != nil {
 		out.Command = child.Command
+		out.Provenance.Command = child.Provenance.Command
+		if out.Provenance.Command.FullName == "" {
+			out.Provenance.Command = childContrib
+		}
 	}
 
 	out.Packages = mergePackages(parent.Packages, child.Packages, child.NullKeys["packages"])
+	out.Provenance.Packages = mergePackageProv(parent.Provenance.Packages, child.Packages, child.Provenance.Packages, child.NullKeys["packages"], childContrib)
 
 	out.Repos = mergeMap(parent.Repos, child.Repos, child.NullKeys["repos"])
+	out.Provenance.Repos = mergeProvMap(parent.Provenance.Repos, child.Provenance.Repos, keysOf(child.Repos), child.NullKeys["repos"], childContrib)
 
 	out.Files = mergeMap(parent.Files, child.Files, child.NullKeys["files"])
+	out.Provenance.Files = mergeProvMap(parent.Provenance.Files, child.Provenance.Files, keysOf(child.Files), child.NullKeys["files"], childContrib)
 
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
 	out.Provenance.Mounts = mergeProvMap(parent.Provenance.Mounts, child.Provenance.Mounts, keysOf(child.Mounts), child.NullKeys["mounts"], childContrib)
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
 	out.Provenance.Env = mergeProvMap(parent.Provenance.Env, child.Provenance.Env, keysOf(child.Env), child.NullKeys["environment"], childContrib)
 	out.Tools = mergeMap(parent.Tools, child.Tools, child.NullKeys["tools"])
+	out.Provenance.Tools = mergeProvMap(parent.Provenance.Tools, child.Provenance.Tools, keysOf(child.Tools), child.NullKeys["tools"], childContrib)
 	out.Caches = mergeMap(parent.Caches, child.Caches, child.NullKeys["caches"])
+	out.Provenance.Caches = mergeProvMap(parent.Provenance.Caches, child.Provenance.Caches, keysOf(child.Caches), child.NullKeys["caches"], childContrib)
 	out.Labels = mergeStringMap(parent.Labels, child.Labels, child.NullKeys["labels"])
+	out.Provenance.Labels = mergeProvMap(parent.Provenance.Labels, child.Provenance.Labels, keysOf(child.Labels), child.NullKeys["labels"], childContrib)
 	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
 	out.Provenance.Ports = mergeProvMap(parent.Provenance.Ports, child.Provenance.Ports, keysOf(child.Ports), child.NullKeys["ports"], childContrib)
 	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
@@ -237,14 +276,48 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 		}
 		if child.Resources.Memory != "" {
 			out.Resources.Memory = child.Resources.Memory
+			out.Provenance.Resources.Memory = child.Provenance.Resources.Memory
+			if out.Provenance.Resources.Memory.FullName == "" {
+				out.Provenance.Resources.Memory = childContrib
+			}
 		}
 		if child.Resources.CPUs != "" {
 			out.Resources.CPUs = child.Resources.CPUs
+			out.Provenance.Resources.CPUs = child.Provenance.Resources.CPUs
+			if out.Provenance.Resources.CPUs.FullName == "" {
+				out.Provenance.Resources.CPUs = childContrib
+			}
 		}
 	}
 
 	out.ExtendsList = ExtendsList{}
 	out.NullKeys = nil
+	return out
+}
+
+// mergePackageProv attributes each package to its first declarer in merge
+// order (packages append+dedup, so there is no override). Seeds from the
+// parent's accumulated provenance so attributions survive intermediate
+// merges. A whole-field "packages: null" resets the map, so a later entry
+// re-declaring a package owns it.
+func mergePackageProv(parentProv map[string]Contributor, child []string, childProv map[string]Contributor, nullKeys map[string]bool, childContrib Contributor) map[string]Contributor {
+	if nullKeys != nil && nullKeys["*"] {
+		return map[string]Contributor{}
+	}
+	out := make(map[string]Contributor, len(parentProv)+len(child))
+	for p, c := range parentProv {
+		out[p] = c
+	}
+	for _, p := range child {
+		if _, ok := out[p]; ok {
+			continue
+		}
+		if c, ok := childProv[p]; ok {
+			out[p] = c
+		} else {
+			out[p] = childContrib
+		}
+	}
 	return out
 }
 

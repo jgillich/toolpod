@@ -298,3 +298,55 @@ func TestProfileShowResolvedFragment(t *testing.T) {
 		t.Errorf("expected resolved fragment output to contain fragment content, got:\n%s", out)
 	}
 }
+
+func TestProfileShowProvenance(t *testing.T) {
+	cfg := t.TempDir()
+	profilesDir := filepath.Join(cfg, "tpd", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "base.yaml"), []byte("version: 1\nimage: debian:13-slim\ntools:\n  kubectl: 1.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "myapp.yaml"), []byte("version: 1\nextends: base\ncommand: [\"myapp\"]\ntools:\n  kubectl: 1.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runTpdCfg(t, cfg, "show", "--provenance", "myapp")
+	if err != nil {
+		t.Fatalf("show --provenance myapp: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "# myapp  ("+filepath.Join(profilesDir, "myapp.yaml")+")") {
+		t.Errorf("expected myapp user section with its file path, got:\n%s", out)
+	}
+	if !strings.Contains(out, "# base  ("+filepath.Join(profilesDir, "base.yaml")+")") {
+		t.Errorf("expected base section with its file path, got:\n%s", out)
+	}
+	if strings.Contains(out, `kubectl: "1.0"`) {
+		t.Errorf("base's overridden kubectl must not appear, got:\n%s", out)
+	}
+	if !strings.Contains(out, `kubectl: "1.1"`) {
+		t.Errorf("myapp's kubectl override should appear, got:\n%s", out)
+	}
+}
+
+func TestProfileShowProvenanceNonexistent(t *testing.T) {
+	out, _ := runTpd(t, "show", "--provenance", "nope")
+	if !strings.Contains(out, "not found") {
+		t.Errorf("expected 'not found' error for missing profile, got:\n%s", out)
+	}
+}
+
+func TestProfileShowProvenanceFragment(t *testing.T) {
+	cfg := t.TempDir()
+	seedUserConfig(t, cfg)
+	out, err := runTpdCfg(t, cfg, "show", "--provenance", "misc/util")
+	if err != nil {
+		t.Fatalf("show --provenance misc/util: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "# misc/util  ("+filepath.Join(cfg, "tpd", "fragments", "misc", "util.yaml")+")") {
+		t.Errorf("expected fragment section with its file path, got:\n%s", out)
+	}
+	if !strings.Contains(out, "util: latest") {
+		t.Errorf("expected fragment's own tool, got:\n%s", out)
+	}
+}

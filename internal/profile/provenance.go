@@ -1,9 +1,9 @@
 package profile
 
-// Contributor identifies a catalog entry that contributed a sensitive
-// value. Stored in provenance so the approval filter can decide trust
-// without access to the catalog: a user entry (Namespace == "") is
-// trusted and not gated; a core or remote-namespace entry is gated.
+// Contributor identifies a catalog entry that contributed a value.
+// Stored in provenance so the approval filter can decide trust without
+// access to the catalog: a user entry (Namespace == "") is trusted and
+// not gated; a core or remote-namespace entry is gated.
 type Contributor struct {
 	FullName  string
 	Namespace string
@@ -13,17 +13,32 @@ type Contributor struct {
 // not subject to the approval gate.
 func (c Contributor) Trusted() bool { return c.Namespace == "" }
 
-// Provenance records, for each sensitive key, the Contributor that last
+// Provenance records, for each declared key, the Contributor that last
 // wrote it. Keys whose final value came from a user entry are not gated;
 // keys from a core/remote entry are.
 type Provenance struct {
-	Mounts   map[string]Contributor
-	Devices  map[string]Contributor
-	Env      map[string]Contributor
-	Ports    map[string]Contributor
-	Dbus     DbusProvenance
-	Network  Contributor
-	Services map[string]Contributor
+	Mounts    map[string]Contributor
+	Devices   map[string]Contributor
+	Env       map[string]Contributor
+	Ports     map[string]Contributor
+	Dbus      DbusProvenance
+	Network   Contributor
+	Services  map[string]Contributor
+	Tools     map[string]Contributor
+	Caches    map[string]Contributor
+	Repos     map[string]Contributor
+	Files     map[string]Contributor
+	Labels    map[string]Contributor
+	Packages  map[string]Contributor
+	Resources ResourcesProvenance
+	Image     Contributor
+	Command   Contributor
+	TTY       Contributor
+}
+
+type ResourcesProvenance struct {
+	Memory Contributor
+	CPUs   Contributor
 }
 
 type DbusProvenance struct {
@@ -31,8 +46,8 @@ type DbusProvenance struct {
 	Own  map[string]Contributor
 }
 
-// initProvenance stamps the rc's own Contributor onto every sensitive key
-// rc declares. Used for leaf profiles (no extends) so a built-in leaf
+// initProvenance stamps the rc's own Contributor onto every key rc
+// declares. Used for leaf profiles (no extends) so a built-in leaf
 // like core/bash does not bypass the gate with empty provenance.
 func initProvenance(rc RawProfile) Provenance {
 	c := Contributor{FullName: rc.FullName(), Namespace: rc.Namespace}
@@ -83,6 +98,59 @@ func initProvenance(rc RawProfile) Provenance {
 		for k := range rc.Services {
 			prov.Services[k] = c
 		}
+	}
+	if len(rc.Tools) > 0 {
+		prov.Tools = make(map[string]Contributor, len(rc.Tools))
+		for k := range rc.Tools {
+			prov.Tools[k] = c
+		}
+	}
+	if len(rc.Caches) > 0 {
+		prov.Caches = make(map[string]Contributor, len(rc.Caches))
+		for k := range rc.Caches {
+			prov.Caches[k] = c
+		}
+	}
+	if len(rc.Repos) > 0 {
+		prov.Repos = make(map[string]Contributor, len(rc.Repos))
+		for k := range rc.Repos {
+			prov.Repos[k] = c
+		}
+	}
+	if len(rc.Files) > 0 {
+		prov.Files = make(map[string]Contributor, len(rc.Files))
+		for k := range rc.Files {
+			prov.Files[k] = c
+		}
+	}
+	if len(rc.Labels) > 0 {
+		prov.Labels = make(map[string]Contributor, len(rc.Labels))
+		for k := range rc.Labels {
+			prov.Labels[k] = c
+		}
+	}
+	if len(rc.Packages) > 0 {
+		prov.Packages = make(map[string]Contributor, len(rc.Packages))
+		for _, p := range rc.Packages {
+			prov.Packages[p] = c
+		}
+	}
+	if rc.Resources != nil {
+		if rc.Resources.Memory != "" {
+			prov.Resources.Memory = c
+		}
+		if rc.Resources.CPUs != "" {
+			prov.Resources.CPUs = c
+		}
+	}
+	if rc.Image != "" {
+		prov.Image = c
+	}
+	if len(rc.Command) > 0 {
+		prov.Command = c
+	}
+	if rc.TTY != "" {
+		prov.TTY = c
 	}
 	return prov
 }
