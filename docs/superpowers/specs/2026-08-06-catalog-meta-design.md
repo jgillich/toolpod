@@ -41,8 +41,9 @@ Meta *Meta `yaml:"meta,omitempty"`
 
 - `internal/catalog/gendocs.go`: pure functions over the embedded built-in catalog:
   - `ProfilesTable()` → markdown rows for the README profiles table (profiles only): `| [<name>](internal/catalog/profiles/<name>.yaml) | <description> |`.
-  - `CatalogDoc()` → `docs/catalog.md`: a profiles table (same rows) plus fragments grouped by top-level folder (`cloud`, `gui`, `infra`, `lang`, `service`, `vcs`), each entry rendered as the name (code), the description, and the full source inside a `<details><summary>Source</summary>` / yaml code fence / `</details>` spoiler. No link — the source is inline.
-- `cmd/gen-catalog/main.go`: patches the README profiles table in place and writes `docs/catalog.md`. A `make docs` target runs it.
+  - `CatalogDoc()` → `docs/catalog.md`: a profiles table (same rows) plus fragments grouped by top-level folder (`cloud`, `gui`, `infra`, `lang`, `service`, `vcs`), each entry rendered as the name (code), the description, and the full source inside a `<details><summary>Source</summary>` / yaml code fence / `</details>` spoiler. No link — the source is inline. A fragment with no folder segment (none today) falls under an `Other` group.
+- The README profiles table is delimited by `<!-- BEGIN tpd profiles -->` / `<!-- END tpd profiles -->` HTML comment markers; the generator replaces only the rows between them, leaving surrounding prose untouched. `docs/catalog.md` is wholly rewritten.
+- `cmd/gen-catalog/main.go`: runs both replacements. A `make docs` target runs it.
 - **Stale-check test** in `internal/catalog`: `go:embed` the repo `README.md` and `docs/catalog.md`, regenerate both, fail if the committed output differs.
 - **Coverage:** every built-in profile and fragment gets a `meta.description` (they are the docs' content); a test enforces it. README stays profile-only.
 
