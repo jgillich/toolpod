@@ -30,6 +30,8 @@ type launchFlags struct {
 	DryRun    bool
 	Verbose   bool
 	Pull      bool
+	AssumeYes bool
+	AssumeNo  bool
 }
 
 // addLaunchFlags registers the launch flags on cmd. Interspersed flag parsing
@@ -43,6 +45,9 @@ func addLaunchFlags(cmd *cobra.Command, o *launchFlags) {
 	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Print the spec without launching.")
 	cmd.Flags().BoolVar(&o.Verbose, "verbose", false, "Print the spec before launching.")
 	cmd.Flags().BoolVar(&o.Pull, "pull", false, "Pull the base image even if already present (refresh mutable tags).")
+	cmd.Flags().BoolVar(&o.AssumeYes, "yes", false, "Auto-approve all unapproved sensitive fields and persist the choice.")
+	cmd.Flags().BoolVar(&o.AssumeNo, "no", false, "Auto-deny all unapproved sensitive fields and persist the choice.")
+	cmd.MarkFlagsMutuallyExclusive("yes", "no")
 }
 
 // runLaunch launches profileName with passthrough args. It returns an
@@ -62,6 +67,8 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 		Pull:        o.Pull,
 		Command:     o.Command,
 		Args:        passthrough,
+		AssumeYes:   o.AssumeYes,
+		AssumeNo:    o.AssumeNo,
 	})
 	if result.Err != nil {
 		return &exitError{code: result.ExitCode, err: result.Err}
@@ -157,9 +164,6 @@ func runShow(name string, resolved bool) error {
 				return err
 			}
 			fmt.Print(string(out))
-			if msg := catalog.Advisory(advisoryName(key)); msg != "" {
-				fmt.Fprintln(os.Stderr, "warning: "+msg)
-			}
 			return nil
 		}
 		resolvedProfile, err := profile.ResolveProfile(cat, key)
@@ -171,9 +175,6 @@ func runShow(name string, resolved bool) error {
 			return err
 		}
 		fmt.Print(string(out))
-		if msg := catalog.Advisory(advisoryName(key)); msg != "" {
-			fmt.Fprintln(os.Stderr, "warning: "+msg)
-		}
 		return nil
 	}
 	rc, _ := cat.Get(key)
@@ -182,9 +183,6 @@ func runShow(name string, resolved bool) error {
 		return err
 	}
 	fmt.Print(string(out))
-	if msg := catalog.Advisory(advisoryName(key)); msg != "" {
-		fmt.Fprintln(os.Stderr, "warning: "+msg)
-	}
 	return nil
 }
 
@@ -225,9 +223,6 @@ func runEdit(name string) error {
 	}
 	rc, _ := cat.Get(key)
 	local := rc.Name
-	if msg := catalog.Advisory(advisoryName(key)); msg != "" {
-		fmt.Fprintln(os.Stderr, "warning: "+msg)
-	}
 	targetPath := filepath.Join(userDir, local+".yaml")
 	if cat.IsFragment(key) {
 		targetPath = filepath.Join(profile.DefaultFragmentDir(), local+".yaml")
@@ -400,7 +395,7 @@ func newInitCommand() *cobra.Command {
 				Extends:     extends,
 				Force:       force,
 				DryRun:      dryRun,
-				Interactive: scaffold.IsTTY(os.Stdin),
+				Interactive: ui.IsTTYReader(os.Stdin),
 			}
 			if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
 				return &exitError{code: 2, err: err}
@@ -546,10 +541,4 @@ func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
 		return "", false
 	}
 	return cat.ResolveRef(ref)
-}
-
-// advisoryName is the leaf segment of an addressable name, the key the
-// advisory table uses (docker-host, gui, ssh, ...).
-func advisoryName(key string) string {
-	return filepath.Base(strings.TrimPrefix(key, "core/"))
 }

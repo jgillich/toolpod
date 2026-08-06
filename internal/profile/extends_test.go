@@ -91,3 +91,73 @@ func TestExtendsListMarshalRawFallback(t *testing.T) {
 		t.Errorf("marshaled = %q, want raw fallback", string(out))
 	}
 }
+
+func TestMergeChainAttributionAcrossExtends(t *testing.T) {
+	// Simulate the extends chain myagent -> core/lang/typescript -> core/lang/javascript
+	// by calling MergeProfiles twice, the way resolveChain does. Keys from
+	// javascript should be attributed to core/lang/javascript, not to
+	// typescript or myagent.
+	js := RawProfile{
+		Profile:   Profile{Env: map[string]string{"JS": "1"}},
+		Namespace: "core", Name: "lang/javascript",
+	}
+	js.Provenance = initProvenance(js)
+	ts := RawProfile{
+		Profile:   Profile{Env: map[string]string{"TS": "1"}},
+		Namespace: "core", Name: "lang/typescript",
+	}
+	ts.Provenance = initProvenance(ts)
+	merged := MergeProfiles(RawProfile{}, js)
+	merged = MergeProfiles(merged, ts)
+	if merged.Provenance.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
+		t.Errorf("JS should be attributed to core/lang/javascript, got %+v", merged.Provenance.Env["JS"])
+	}
+	if merged.Provenance.Env["TS"] != (Contributor{FullName: "core/lang/typescript", Namespace: "core"}) {
+		t.Errorf("TS should be attributed to core/lang/typescript, got %+v", merged.Provenance.Env["TS"])
+	}
+}
+
+func TestResolveChainAttributionAcrossExtends(t *testing.T) {
+	// myagent extends core/lang/typescript extends core/lang/javascript.
+	// Keys from javascript should be attributed to core/lang/javascript,
+	// not to typescript or myagent.
+	//
+	// NewProfileCatalogForTest stamps Namespace="core"; Name=<map key>.
+	// Use bare keys so FullName() == "core/" + key. The test is about
+	// attribution across extends, not user-vs-core, so all three are
+	// core entries.
+	cat := NewProfileCatalogForTest(map[string]RawProfile{
+		"lang/javascript": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				Env: map[string]string{"JS": "1"},
+			},
+		},
+		"lang/typescript": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/javascript"}}},
+				Env:         map[string]string{"TS": "1"},
+			},
+		},
+		"myagent": {
+			Profile: Profile{
+				Version: 1, Image: "img", Command: []string{"run"},
+				ExtendsList: ExtendsList{Resolved: []Ref{{Namespace: "core", Name: "lang/typescript"}}},
+			},
+		},
+	})
+	res, err := ResolveProfileWithProv(cat, "core/myagent")
+	if err != nil {
+		t.Fatalf("ResolveProfileWithProv: %v", err)
+	}
+	if res.Prov.Env["JS"] != (Contributor{FullName: "core/lang/javascript", Namespace: "core"}) {
+		t.Errorf("JS should be attributed to core/lang/javascript, got %+v", res.Prov.Env["JS"])
+	}
+	if res.Prov.Env["TS"] != (Contributor{FullName: "core/lang/typescript", Namespace: "core"}) {
+		t.Errorf("TS should be attributed to core/lang/typescript, got %+v", res.Prov.Env["TS"])
+	}
+	if res.FullName != "core/myagent" {
+		t.Errorf("FullName = %q, want core/myagent", res.FullName)
+	}
+}

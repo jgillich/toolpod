@@ -1,6 +1,11 @@
 package tpd
 
-import "github.com/jgillich/tpd/internal/runtime"
+import (
+	"io"
+
+	"github.com/jgillich/tpd/internal/approval"
+	"github.com/jgillich/tpd/internal/runtime"
+)
 
 type (
 	Spec          = runtime.Spec
@@ -34,6 +39,13 @@ type LaunchOpts struct {
 	// nil, an ephemeral socket bind is used. Injectable for deterministic
 	// tests.
 	PortAllocator PortAllocator
+
+	In             io.Reader
+	ApprovalStore  approval.Store
+	ApprovalPrompt approval.Prompt
+	IsTTY          func(io.Reader) bool
+	AssumeYes      bool
+	AssumeNo       bool
 }
 
 type Result struct {

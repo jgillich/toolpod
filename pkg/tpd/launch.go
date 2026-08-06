@@ -6,10 +6,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jgillich/tpd/internal/approval"
 	"github.com/jgillich/tpd/internal/profile"
 	"github.com/jgillich/tpd/internal/runtime"
 	"github.com/jgillich/tpd/internal/ui"
@@ -68,9 +71,84 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			return Result{ExitCode: 2, Err: fmt.Errorf("fragment %q cannot be launched: fragments carry no image or command. Create a profile that extends it: tpd init myprofile --extends %s", name, name)}
 		}
 	}
-	cfg, err := profile.ResolveProfile(cat, opts.ProfileName)
+	resolved, err := profile.ResolveProfileWithProv(cat, opts.ProfileName)
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
+	}
+
+	// Approval gate.
+	store := opts.ApprovalStore
+	if store == nil {
+		store = approval.NewFSStore(defaultApprovalDir())
+	}
+	// In dry-run the store is read-only: the initial Filter must read
+	// stored approvals (so an already-approved profile doesn't prompt)
+	// but its reconciliation write-back must never touch disk.
+	gateStore := store
+	if opts.DryRun {
+		gateStore = approval.NewReadOnlyStore(store)
+	}
+	isTTY := opts.IsTTY
+	if isTTY == nil {
+		isTTY = ui.IsTTYReader
+	}
+	in := opts.In
+	if in == nil {
+		in = os.Stdin
+	}
+
+	cfg, promptReq, err := approval.Filter(resolved, gateStore)
+	if err != nil {
+		return Result{ExitCode: 2, Err: err}
+	}
+
+	if len(promptReq.Items) > 0 {
+		if opts.AssumeYes || opts.AssumeNo {
+			choices := buildChoices(promptReq, opts.AssumeYes)
+			prior, err := gateStore.Load(resolved.FullName)
+			if err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
+			merged := mergeChoicesIntoState(prior, promptReq, choices)
+			effectiveStore := gateStore
+			if opts.DryRun {
+				effectiveStore = approval.NewEphemeralStore(gateStore, merged)
+			} else {
+				if err := store.Save(resolved.FullName, merged); err != nil {
+					return Result{ExitCode: 2, Err: err}
+				}
+			}
+			cfg, _, err = approval.Filter(resolved, effectiveStore)
+			if err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
+		} else if opts.DryRun || !isTTY(in) {
+			return Result{ExitCode: 2, Err: fmt.Errorf("unapproved sensitive fields require --yes or --no: %s", summarizeItems(promptReq.Items))}
+		} else {
+			prompt := opts.ApprovalPrompt
+			if prompt == nil {
+				prompt = approval.DefaultPrompt
+			}
+			choices, err := prompt(promptReq, in, w)
+			if err != nil {
+				return Result{ExitCode: 2, Err: fmt.Errorf("approval: %w", err)}
+			}
+			if incomplete(promptReq, choices) {
+				return Result{ExitCode: 2, Err: fmt.Errorf("approval incomplete: %s", summarizeUndecided(promptReq, choices))}
+			}
+			prior, err := gateStore.Load(resolved.FullName)
+			if err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
+			merged := mergeChoicesIntoState(prior, promptReq, choices)
+			if err := store.Save(resolved.FullName, merged); err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
+			cfg, _, err = approval.Filter(resolved, store)
+			if err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
+		}
 	}
 
 	if len(opts.ExtraTools) > 0 {
@@ -229,4 +307,104 @@ func parseToolFlag(s string) (string, string) {
 		}
 	}
 	return s, "latest"
+}
+
+func defaultApprovalDir() string {
+	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
+		return filepath.Join(v, "tpd")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".local", "share", "tpd")
+}
+
+func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bool {
+	choices := map[string]map[string]bool{}
+	for _, it := range req.Items {
+		set, ok := choices[it.Field]
+		if !ok {
+			set = map[string]bool{}
+			choices[it.Field] = set
+		}
+		set[it.Key] = yes
+	}
+	return choices
+}
+
+// mergeChoicesIntoState folds the dialog's per-field choices into the prior
+// stored state, merging per-field: a decided field REPLACES its stored
+// ApprovedField (the dialog returned the complete allowed-set for it);
+// fields not present in choices keep their stored choices untouched. For
+// map fields (mounts, devices, env, ports, dbus.talk, dbus.own, services),
+// Keys is the approved set (denied = absent). For the scalar "network"
+// field, the choice is stored in ApprovedField.Network (*bool): true → &true,
+// false → &false. Hash is refreshed to the current request.
+func mergeChoicesIntoState(prior approval.State, req approval.PromptRequest, choices map[string]map[string]bool) approval.State {
+	st := prior
+	st.Hash = req.Hash
+	if st.Approved == nil {
+		st.Approved = map[string]approval.ApprovedField{}
+	}
+	for field, set := range choices {
+		if field == "network" {
+			b := false
+			for _, v := range set {
+				if v {
+					b = true
+					break
+				}
+			}
+			af := st.Approved[field]
+			af.Network = &b
+			st.Approved[field] = af
+			continue
+		}
+		var keys []string
+		for k, v := range set {
+			if v {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		st.Approved[field] = approval.ApprovedField{Keys: keys}
+	}
+	return st
+}
+
+func incomplete(req approval.PromptRequest, choices map[string]map[string]bool) bool {
+	for _, it := range req.Items {
+		set, ok := choices[it.Field]
+		if !ok {
+			return true
+		}
+		if _, decided := set[it.Key]; !decided {
+			return true
+		}
+	}
+	return false
+}
+
+func summarizeItems(items []approval.SensitiveItem) string {
+	var parts []string
+	for _, it := range items {
+		parts = append(parts, it.Field+"."+it.Key)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func summarizeUndecided(req approval.PromptRequest, choices map[string]map[string]bool) string {
+	var parts []string
+	for _, it := range req.Items {
+		set, ok := choices[it.Field]
+		if !ok {
+			parts = append(parts, it.Field+"."+it.Key)
+			continue
+		}
+		if _, decided := set[it.Key]; !decided {
+			parts = append(parts, it.Field+"."+it.Key)
+		}
+	}
+	return strings.Join(parts, ", ")
 }

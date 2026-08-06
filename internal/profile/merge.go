@@ -5,18 +5,30 @@ import "errors"
 // Resolve walks the extends chain for name and produces a fully merged Profile.
 // Cycles are detected and rejected. Validation runs on the result.
 func ResolveProfile(cat Catalog, name string) (Profile, error) {
+	res, err := ResolveProfileWithProv(cat, name)
+	if err != nil {
+		return Profile{}, err
+	}
+	return res.Profile, nil
+}
+
+// ResolveProfileWithProv resolves name into a fully merged Profile with
+// provenance and catalog identity. The FullName is the resolved catalog
+// key (e.g. "core/opencode"); DisplayName is the unqualified name for
+// human-facing output.
+func ResolveProfileWithProv(cat Catalog, name string) (Resolved, error) {
 	ref, err := cat.ParseRefForCatalog(name)
 	if err != nil {
-		return Profile{}, ProfileError{Message: err.Error()}
+		return Resolved{}, ProfileError{Message: err.Error()}
 	}
 	key, ok := cat.ResolveRef(ref)
 	if !ok {
-		return Profile{}, ProfileError{Message: "profile not found: " + name}
+		return Resolved{}, ProfileError{Message: "profile not found: " + name}
 	}
 	rc, _ := cat.Get(key)
 	merged, err := resolveChain(cat, key, map[string]bool{})
 	if err != nil {
-		return Profile{}, err
+		return Resolved{}, err
 	}
 	merged.Path = rc.Path
 	for name, svc := range merged.Services {
@@ -24,9 +36,14 @@ func ResolveProfile(cat Catalog, name string) (Profile, error) {
 		merged.Services[name] = svc
 	}
 	if err := validate(merged); err != nil {
-		return Profile{}, err
+		return Resolved{}, err
 	}
-	return merged.Profile, nil
+	return Resolved{
+		Profile:     merged.Profile,
+		Prov:        merged.Provenance,
+		FullName:    key,
+		DisplayName: rc.DisplayName(),
+	}, nil
 }
 
 // ResolveFragment resolves a fragment's extends chain into a merged Profile
@@ -34,21 +51,35 @@ func ResolveProfile(cat Catalog, name string) (Profile, error) {
 // carry no image/command, which ResolveProfile requires; resolving them is
 // still useful for showing the effective merged view (e.g. edit seeds).
 func ResolveFragment(cat Catalog, name string) (Profile, error) {
+	res, err := ResolveFragmentWithProv(cat, name)
+	if err != nil {
+		return Profile{}, err
+	}
+	return res.Profile, nil
+}
+
+// ResolveFragmentWithProv is the fragment analogue of ResolveProfileWithProv.
+func ResolveFragmentWithProv(cat Catalog, name string) (Resolved, error) {
 	ref, err := cat.ParseRefForCatalog(name)
 	if err != nil {
-		return Profile{}, ProfileError{Message: err.Error()}
+		return Resolved{}, ProfileError{Message: err.Error()}
 	}
 	key, ok := cat.ResolveRef(ref)
 	if !ok {
-		return Profile{}, ProfileError{Message: "fragment not found: " + name}
+		return Resolved{}, ProfileError{Message: "fragment not found: " + name}
 	}
 	rc, _ := cat.Get(key)
 	merged, err := resolveChain(cat, key, map[string]bool{})
 	if err != nil {
-		return Profile{}, err
+		return Resolved{}, err
 	}
 	merged.Path = rc.Path
-	return merged.Profile, nil
+	return Resolved{
+		Profile:     merged.Profile,
+		Prov:        merged.Provenance,
+		FullName:    key,
+		DisplayName: rc.DisplayName(),
+	}, nil
 }
 
 func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, error) {
@@ -60,6 +91,7 @@ func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, er
 		return RawProfile{}, ProfileError{Path: rc.Path, Message: "extends cycle detected at: " + key}
 	}
 	if len(rc.ExtendsList.Resolved) == 0 {
+		rc.Provenance = initProvenance(rc)
 		return rc, nil
 	}
 	// Fragments are composition-only: they may extend other fragments, but
@@ -119,6 +151,7 @@ func withParentPath(err error, rc RawProfile) error {
 // scalars replace, maps merge key-by-key with null-to-delete, lists replace.
 func MergeProfiles(parent, child RawProfile) RawProfile {
 	out := parent
+	childContrib := Contributor{FullName: child.FullName(), Namespace: child.Namespace}
 
 	if child.Version != 0 {
 		out.Version = child.Version
@@ -128,6 +161,12 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	}
 	if child.Network != "" {
 		out.Network = child.Network
+		out.Provenance.Network = child.Provenance.Network
+		if out.Provenance.Network.FullName == "" {
+			out.Provenance.Network = childContrib
+		}
+	} else {
+		out.Provenance.Network = parent.Provenance.Network
 	}
 	if child.TTY != "" {
 		out.TTY = child.TTY
@@ -148,14 +187,46 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Files = mergeMap(parent.Files, child.Files, child.NullKeys["files"])
 
 	out.Mounts = mergeMounts(parent.Mounts, child.Mounts, child.NullKeys["mounts"])
+	out.Provenance.Mounts = mergeProvMap(parent.Provenance.Mounts, child.Provenance.Mounts, keysOf(child.Mounts), child.NullKeys["mounts"], childContrib)
 	out.Env = mergeStringMap(parent.Env, child.Env, child.NullKeys["environment"])
+	out.Provenance.Env = mergeProvMap(parent.Provenance.Env, child.Provenance.Env, keysOf(child.Env), child.NullKeys["environment"], childContrib)
 	out.Tools = mergeMap(parent.Tools, child.Tools, child.NullKeys["tools"])
 	out.Caches = mergeMap(parent.Caches, child.Caches, child.NullKeys["caches"])
 	out.Labels = mergeStringMap(parent.Labels, child.Labels, child.NullKeys["labels"])
 	out.Ports = mergePortMap(parent.Ports, child.Ports, child.NullKeys["ports"])
+	out.Provenance.Ports = mergeProvMap(parent.Provenance.Ports, child.Provenance.Ports, keysOf(child.Ports), child.NullKeys["ports"], childContrib)
 	out.Devices = mergeDeviceMap(parent.Devices, child.Devices, child.NullKeys["devices"])
+	out.Provenance.Devices = mergeProvMap(parent.Provenance.Devices, child.Provenance.Devices, keysOf(child.Devices), child.NullKeys["devices"], childContrib)
 	out.Dbus = mergeDbus(parent.Dbus, child.Dbus, child.NullKeys["dbus"])
+	dbNull := child.NullKeys["dbus"]
+	if dbNull != nil && dbNull["*"] {
+		// both sub-maps cleared
+		out.Provenance.Dbus.Talk = map[string]Contributor{}
+		out.Provenance.Dbus.Own = map[string]Contributor{}
+	} else {
+		var childTalk, childOwn map[string]bool
+		if child.Dbus != nil {
+			childTalk = keysOf(child.Dbus.Talk)
+			childOwn = keysOf(child.Dbus.Own)
+		}
+		if dbNull != nil && dbNull["talk"] {
+			out.Provenance.Dbus.Talk = map[string]Contributor{}
+		} else if childTalk != nil || parent.Provenance.Dbus.Talk != nil {
+			out.Provenance.Dbus.Talk = mergeProvMap(parent.Provenance.Dbus.Talk, child.Provenance.Dbus.Talk, childTalk, nil, childContrib)
+		}
+		if dbNull != nil && dbNull["own"] {
+			out.Provenance.Dbus.Own = map[string]Contributor{}
+		} else if childOwn != nil || parent.Provenance.Dbus.Own != nil {
+			out.Provenance.Dbus.Own = mergeProvMap(parent.Provenance.Dbus.Own, child.Provenance.Dbus.Own, childOwn, nil, childContrib)
+		}
+		// If mergeDbus returned nil (both sub-maps empty in the value), there
+		// are no dbus keys to attribute — leave provenance talk/own empty.
+		if out.Dbus == nil {
+			out.Provenance.Dbus = DbusProvenance{}
+		}
+	}
 	out.Services = mergeMap(parent.Services, child.Services, child.NullKeys["services"])
+	out.Provenance.Services = mergeProvMap(parent.Provenance.Services, child.Provenance.Services, keysOf(child.Services), child.NullKeys["services"], childContrib)
 
 	if child.Resources != nil {
 		out.Resources = &Resources{}
@@ -231,6 +302,45 @@ func mergeDbus(parent, child *DbusConfig, nullKeys map[string]bool) *DbusConfig 
 	}
 	if len(out.Talk) == 0 && len(out.Own) == 0 {
 		return nil
+	}
+	return out
+}
+
+// mergeProvMap merges parent/child provenance maps with the same key
+// semantics as the value merges: child wins per key, nullKeys deletes.
+// childKeys is the set of keys the child contributed for this field
+// (built via keysOf from the child's value map); nullKeys["*"] clears
+// everything. childProv is the child's own accumulated provenance for the
+// field: when a key is recorded there (leaf init or an intermediate merge
+// result), that attribution wins, since re-attributing to childContrib
+// would mis-credit keys the child only inherited. childContrib applies
+// only to keys a bare entry wrote itself.
+func mergeProvMap(parent, childProv map[string]Contributor, childKeys map[string]bool, nullKeys map[string]bool, childContrib Contributor) map[string]Contributor {
+	if nullKeys != nil && nullKeys["*"] {
+		return map[string]Contributor{}
+	}
+	out := make(map[string]Contributor, len(parent)+len(childKeys))
+	for k, v := range parent {
+		out[k] = v
+	}
+	for k := range childKeys {
+		if c, ok := childProv[k]; ok {
+			out[k] = c
+		} else {
+			out[k] = childContrib
+		}
+	}
+	for k := range nullKeys {
+		delete(out, k)
+	}
+	return out
+}
+
+// keysOf returns the key set of m as a map[string]bool.
+func keysOf[V any](m map[string]V) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
 	}
 	return out
 }

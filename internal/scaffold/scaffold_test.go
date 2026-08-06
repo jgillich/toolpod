@@ -309,11 +309,11 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\n"), 0o644)
 	var stdout, stderr bytes.Buffer
-	// No Profile/Fragments provided → wizard triggers → overwrite prompt shows
+	// No Profile/Fragments provided → wizard triggers → overwrite prompt shows.
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nlang/javascript\nn\ny\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nlang/javascript\ny\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("accepting prompt should not error, got: %v", err)
 	}
@@ -587,36 +587,6 @@ func TestBrokenSiblingBlocksInit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "broken.yaml") {
 		t.Errorf("error should reference the broken file, got: %v", err)
-	}
-}
-
-func TestScaffoldPrintsAdvisoryForSensitiveFragments(t *testing.T) {
-	dir := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), Options{
-		Name:       "opencode",
-		Extends:    []string{"services/docker-host"},
-		ProfileDir: dir,
-	}, strings.NewReader(""), &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "note: docker-host grants:") {
-		t.Errorf("expected advisory note on stderr, got: %q", stderr.String())
-	}
-
-	quietDir := t.TempDir()
-	var quietOut, quietErr bytes.Buffer
-	err = Run(context.Background(), Options{
-		Name:       "opencode",
-		Extends:    []string{"lang/javascript"},
-		ProfileDir: quietDir,
-	}, strings.NewReader(""), &quietOut, &quietErr)
-	if err != nil {
-		t.Fatalf("Run (javascript): %v", err)
-	}
-	if strings.Contains(quietErr.String(), "grants:") {
-		t.Errorf("non-sensitive fragments should not print an advisory, got: %q", quietErr.String())
 	}
 }
 

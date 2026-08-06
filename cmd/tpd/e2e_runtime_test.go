@@ -67,7 +67,7 @@ func TestE2EBashLaunch(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runTpd(t, "-c", "echo hello-from-tpd", "bash")
+	out, err := runTpd(t, "-c", "echo hello-from-tpd", "--yes", "bash")
 	if err != nil {
 		t.Fatalf("bash run: %v\n%s", err, out)
 	}
@@ -86,7 +86,7 @@ func TestE2EBashMiseOnPath(t *testing.T) {
 	if !dockerAvailable() {
 		t.Skip("docker/podman not available")
 	}
-	out, err := runTpd(t, "-c", "command -v jq", "bash")
+	out, err := runTpd(t, "-c", "command -v jq", "--yes", "bash")
 	if err != nil {
 		t.Fatalf("bash jq lookup: %v\n%s", err, out)
 	}

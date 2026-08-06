@@ -297,13 +297,10 @@ type SensitiveItem struct {
 
 // PromptRequest is what the dialog renders. Empty Items = no prompt needed.
 type PromptRequest struct {
-    ProfileName  string // Resolved.DisplayName
-    FullName     string // Resolved.FullName (for diagnostics)
-    Hash         string
-    Items        []SensitiveItem
-    // PriorChoices carries the stored allowed-set keyed by Field/Key, so the
-    // dialog can pre-check toggles that were approved before the hash changed.
-    PriorChoices map[string]map[string]bool // field -> set of allowed keys
+    ProfileName string // Resolved.DisplayName
+    FullName    string // Resolved.FullName (for diagnostics)
+    Hash        string
+    Items       []SensitiveItem
 }
 
 // Filter returns the profile with denied/dropped fields removed and a
@@ -333,9 +330,8 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
    restoring its approval: removing a key changes the hash, so the
    `st.Hash == current hash` guard skips reconciliation for that change,
    and re-adding identical content matches the old hash and restores the
-   choice — benign, since the user approved identical content. Keys still
-   present keep their prior allowed/denied choice and feed
-   `PriorChoices`.
+    choice — benign, since the user approved identical content. Keys still
+    present keep their prior allowed/denied choice.
 5. For each key whose provenance is a **non-user** entry:
    - **Approved** (stored, hash matches) → keep in the profile.
    - **Denied** (field present in stored state, key absent from its
@@ -360,12 +356,12 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 ### Dialog return shape
 
 The dialog returns the final `map[field]set[key]bool` of allowed keys for
-this hash. For each **decided field** the set is the complete allowed-set
-for that field — prior-approved keys arrive pre-checked (from
-`PriorChoices`) and are included unless the user un-toggles them, so the
-returned set **replaces** the stored choices for that field, it does not
-union with them. `--yes` sets every item's key to true; `--no` sets
-every item's key to false. `Launch` then:
+this hash. Every item is pre-selected by default, so a full approval needs
+no toggling — the user un-checks only what they want denied. For each
+**decided field** the set is the complete allowed-set for that field and
+**replaces** the stored choices for that field, it does not union with
+them. `--yes` sets every item's key to true; `--no` sets every item's key
+to false. `Launch` then:
 
 1. Merges the choices **per-field** into the loaded prior state via
    `mergeChoicesIntoState`: decided fields replace their stored keys;
@@ -467,9 +463,10 @@ func ComputeApprovalHash(res profile.Resolved) string
   — e.g. `privileged=true; exposes={podman:/run/podman/podman.sock};
   mounts={...}; env={...}`. A definition change (a `privileged` flip, a
   new `exposes` socket, a new service mount/env key) changes the
-  rendered form and therefore the hash, re-prompting with the prior
-  choice pre-checked. The validator-rejected fields (`devices`, `ports`,
-  `dbus`, `network`) never occur on services and are not rendered.
+  rendered form and therefore the hash, re-prompting with all items
+  pre-selected (as the default). The validator-rejected fields (`devices`,
+  `ports`, `dbus`, `network`) never occur on services and are not
+  rendered.
 - Return `hex.EncodeToString(sum[:])[:12]` (12 chars, same as service
   hash).
 
@@ -745,13 +742,17 @@ v1.0.0, already a dependency and already used by `internal/scaffold/scaffold.go`
 
 ### Rendering
 
-The dialog groups sensitive items by **contributing leaf** (the catalog
-entry that last wrote the key, per provenance), then by field. Each item
-is a row in a `huh.NewMultiSelect[string]` (or several, if the item set
-is large — huh handles paging). Toggle on/off with space; Enter
-confirms. Default state: **all off** (per your spec), unless a key was
-previously approved and the hash changed (then `PriorChoices` pre-checks
-it).
+The dialog groups sensitive items by **field type** (mounts, environment,
+ports, devices, dbus talk/own, network, services), with mounts first, then
+the remaining fields in name order. Each field type is a titled
+`huh.NewMultiSelect[string]` on a single screen (huh handles paging for
+large item sets). Toggle on/off with space/x; Enter/tab moves between
+sections. Default state: **all on** — a full approval is a single toggle
+to Approve plus Enter, and the user un-checks only what they want denied.
+The final field is a `huh.NewConfirm` button pair, **Abort on the left and
+the default**, so approval requires an explicit toggle to Approve (the
+accept/reject y/n keys are disabled to avoid selecting the inverse of the
+label).
 
 **Values are shown pre-expansion.** `SensitiveItem.Value` carries the
 canonical profile-declared form, literal templates included. v1 does not
@@ -796,9 +797,8 @@ this profile won't use the service (the socket mounts cascade off); the
 shared daemon is never filtered.
 
 (Exact rendering TBD at implementation; the contract is: per-item toggle,
-default off, prior-approved keys pre-checked, **pre-expansion values
-shown**, group header is the contributing leaf, an explicit abort path,
-and a fail-closed check for incomplete submissions.)
+default on, **pre-expansion values shown**, an explicit abort path, and a
+fail-closed check for incomplete submissions.)
 
 ### Abort
 

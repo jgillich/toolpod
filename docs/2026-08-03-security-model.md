@@ -5,7 +5,8 @@ operational trade-offs the hardening work accepts. It is a companion to the
 [design notes](../AGENTS.md) and the code-review hardening plan
 (`docs/superpowers/plans/2026-08-03-code-review-hardening.md`), which records
 which review findings were adopted and why others were declined. Every claim
-below reflects implemented code as of 2026-08-03.
+below reflects implemented code as of 2026-08-03, updated for the sensitive-field
+approval system as of 2026-08-05.
 
 ## Trust model: profiles are trusted configuration
 
@@ -14,6 +15,15 @@ A profile is arbitrary code: its `command` runs in a container, its
 are applied to it. tpd does not sandbox the profile — a profile can run any
 command, read anything it is mounted, and reach any network. **Only run
 profiles you trust.**
+
+The approval system now distinguishes contributions by origin: a sensitive
+field (mount, device, environment, port, dbus talk/own, the `network` scalar,
+or a service definition) written by a user-owned entry — one with no namespace,
+from `~/.config/tpd/` — is trusted and runs ungated, while the same field
+written by a built-in (`core/`) or remote-namespace catalog entry must be
+approved at launch. That gate does not relax the guidance above: the profile's
+own `command`, `files:`, and `packages:` remain trusted configuration, so only
+run profiles you trust.
 
 This is amplified by the built-in fragments. Several mount real host state
 into the container:
@@ -35,13 +45,14 @@ devices *inside the container's user namespace* — it does not escape to the ho
 an unprivileged sidecar cannot run a nested engine (the kernel blocks the nested
 user namespace's `/proc` mount, and there is no `/dev/net/tun` for networking).
 Everything the nested engine builds or runs is contained in the sidecar; it
-never touches the host daemon. It carries no advisory because there is no host
-capability to warn about.
+never touches the host daemon. It grants no host capability to approve — the
+service definition itself is core-contributed and still appears in the launch
+dialog.
 
-The sensitive fragments each carry a one-line advisory (`catalog.Advisory`,
-`internal/catalog/advisories.go`) that `tpd show`, `tpd edit`, and `tpd init`
-print whenever the fragment is named, so the capability is visible before
-launch, not discovered after. There is no per-mount risk grading: that
+The sensitive fragments are gated by the approval system at launch, not by a
+static advisory: the dialog described in "Sensitive-field approvals" below is
+the single source of sensitivity information, so the capability is decided
+before launch, not discovered after. There is no per-mount risk grading: that
 table would go stale, and the review explicitly declined it.
 
 ## Ownership labels and what `prune` removes
@@ -191,11 +202,24 @@ defenses remain: prune skips resources referenced by running containers, and
 the engine refuses force-removal of in-use resources, so a concurrent launch
 that has already created its container wins the race.
 
-## Credential-fragment advisories
+## Sensitive-field approvals
 
-The `ssh`, `netrc`, `aws`, `azure`, `gcloud`, `github`, `gitlab`, and `vault`
-fragments mount host credentials **read-only**, but read-only does not mean
-hidden: any process running in the profile can read the mounted files and
-tokens. Treat the combined set of fragments a profile extends as the trust
-boundary — a profile that extends `vault` is a profile that can read your
-Vault token.
+The per-fragment advisories are gone; sensitivity information lives in one
+place, the launch dialog. Any sensitive field — mounts, devices, environment,
+ports, dbus talk/own, the `network` scalar, or a service definition —
+contributed by a non-user catalog entry (`core/` built-in or remote namespace)
+is gated: the dialog lists each unapproved item and the user keeps or drops it,
+and dropping removes the field from the resolved profile (denying a service
+also drops the top-level mounts that reference its socket). Choices persist
+per-profile in `~/.local/share/tpd/approvals/<FullName>.yaml`, keyed by a
+content hash of the profile's sensitive fields, so an edited definition is
+re-prompted. `--yes` and `--no` approve or deny every unapproved item for
+non-interactive use; with neither a dialog nor a flag, launch fails closed with
+"unapproved sensitive fields require --yes or --no".
+
+The credentials the gate exists for are unchanged: `ssh`, `netrc`, `aws`,
+`azure`, `gcloud`, `github`, `gitlab`, and `vault` mount host credentials
+**read-only**, but read-only does not mean hidden — any process running in the
+profile can read the mounted files and tokens. Approving one is the same
+decision as the trust model above: a profile that extends `vault` is a profile
+you have just approved to read your Vault token.

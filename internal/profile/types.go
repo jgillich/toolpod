@@ -342,10 +342,22 @@ type Resources struct {
 // user-facing output.
 type RawProfile struct {
 	Profile
-	Namespace string                    `yaml:"-"` // source identity, stamped by loaders
-	Name      string                    `yaml:"-"` // path relative to the profiles/fragments root minus .yaml (may contain /)
-	Path      string                    `yaml:"-"` // file path for error reporting
-	NullKeys  map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+	Namespace  string                     `yaml:"-"` // source identity, stamped by loaders
+	Name       string                     `yaml:"-"` // path relative to the profiles/fragments root minus .yaml (may contain /)
+	Path       string                     `yaml:"-"` // file path for error reporting
+	NullKeys   map[string]map[string]bool `yaml:"-"` // field → set of keys that are explicitly null (delete-on-inherit)
+	Provenance Provenance                 `yaml:"-"`
+}
+
+// Resolved is a fully merged profile plus the provenance of its sensitive
+// fields and the catalog identity of the resolved entry. Returned by
+// ResolveProfileWithProv. ResolveProfile is a thin wrapper that discards
+// provenance for callers that don't gate (tpd show --resolved, etc.).
+type Resolved struct {
+	Profile
+	Prov        Provenance
+	FullName    string
+	DisplayName string
 }
 
 // FullName is the canonical catalog key and the qualified YAML/string form.

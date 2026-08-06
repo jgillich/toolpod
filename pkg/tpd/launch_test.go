@@ -1,14 +1,17 @@
 package tpd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/jgillich/tpd/internal/approval"
 	"github.com/jgillich/tpd/internal/runtime"
 )
 
@@ -435,5 +438,201 @@ func TestLaunchStopsServicesOnStartServicesError(t *testing.T) {
 	}
 	if rt.CreatedSpec != nil || rt.RanSpec != nil {
 		t.Error("CreateContainer/RunContainer should not run when StartServices fails")
+	}
+}
+
+func TestLaunchApprovalNonInteractiveErrors(t *testing.T) {
+	dir := t.TempDir()
+	// User profile extending core/opencode inherits core/mise's ~/.config/mise
+	// mount (Namespace "core") → gated. The user profile's own Namespace is ""
+	// but the inherited mount stays attributed to core/mise, so the gate fires.
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		DryRun:        true,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err == nil || res.ExitCode != 2 {
+		t.Fatalf("expected exit 2 for unapproved non-interactive, got %+v", res)
+	}
+}
+
+func TestLaunchApprovalAssumeYesPersistsAndProceeds(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	// Fixture guard: a dry-run without --yes must error, proving the gate
+	// fires. If the embedded catalog loses core/mise's mount, this fails
+	// loudly instead of the test silently passing as a no-op.
+	guard := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		DryRun:        true,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+	}, &bytes.Buffer{})
+	if guard.Err == nil || guard.ExitCode != 2 {
+		t.Fatalf("fixture guard: expected exit 2 for unapproved dry-run (embedded catalog changed?), got %+v", guard)
+	}
+	storeDir := t.TempDir()
+	store := approval.NewFSStore(storeDir)
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		DryRun:        true,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: store,
+		AssumeYes:     true,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil {
+		t.Fatalf("AssumeYes dry-run should succeed, got %v", res.Err)
+	}
+	// dry-run --yes uses the ephemeral store, so no state file is written.
+	// The user profile myagent resolves to FullName "myagent" (Namespace ""),
+	// so the would-be state file is approvals/myagent.yaml.
+	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "myagent.yaml")); !os.IsNotExist(err) {
+		t.Errorf("dry-run --yes should not persist, file exists or err=%v", err)
+	}
+}
+
+func TestLaunchApprovalInteractiveApprove(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			choices := map[string]map[string]bool{}
+			for _, it := range req.Items {
+				set, ok := choices[it.Field]
+				if !ok {
+					set = map[string]bool{}
+					choices[it.Field] = set
+				}
+				set[it.Key] = true
+			}
+			return choices, nil
+		},
+		Runtime: fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("interactive approve should launch, got %+v", res)
+	}
+	if fr.RanSpec == nil || len(fr.RanSpec.Mounts) == 0 {
+		t.Errorf("approved mounts should survive filtering (RunSpec mounts = %+v)", fr.RanSpec)
+	}
+}
+
+func TestLaunchApprovalInteractiveDeny(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: approval.NewFSStore(t.TempDir()),
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			choices := map[string]map[string]bool{}
+			for _, it := range req.Items {
+				set, ok := choices[it.Field]
+				if !ok {
+					set = map[string]bool{}
+					choices[it.Field] = set
+				}
+				set[it.Key] = false
+			}
+			return choices, nil
+		},
+		Runtime: fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("interactive deny should launch (drop-and-continue), got %+v", res)
+	}
+	if fr.RanSpec != nil && len(fr.RanSpec.Mounts) != 0 {
+		t.Errorf("denied mounts should be dropped from the run spec, got %d mounts", len(fr.RanSpec.Mounts))
+	}
+}
+
+func TestLaunchApprovalAssumeNoPersistsAndProceeds(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	storeDir := t.TempDir()
+	store := approval.NewFSStore(storeDir)
+	fr := &runtime.FakeRuntime{ExitCode: 0}
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return false },
+		ApprovalStore: store,
+		AssumeNo:      true,
+		Runtime:       fr,
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("--no should launch with denied fields dropped, got %+v", res)
+	}
+	// --no persists: the state file exists with the mounts field present
+	// but empty (all denied).
+	data, err := os.ReadFile(filepath.Join(storeDir, "approvals", "myagent.yaml"))
+	if err != nil {
+		t.Fatalf("--no should persist state: %v", err)
+	}
+	if !bytes.Contains(data, []byte("mounts:")) {
+		t.Errorf("state should contain the mounts field (present, all denied):\n%s", data)
+	}
+	if fr.RanSpec != nil && len(fr.RanSpec.Mounts) != 0 {
+		t.Errorf("denied mounts should be dropped, got %d mounts", len(fr.RanSpec.Mounts))
+	}
+}
+
+func TestLaunchApprovalPartialPromptFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "myagent.yaml", []byte("version: 1\nextends: core/opencode\n"))
+	storeDir := t.TempDir()
+	store := approval.NewFSStore(storeDir)
+	opts := LaunchOpts{
+		ProfileName:   "myagent",
+		ProfileDir:    dir,
+		In:            &bytes.Buffer{},
+		IsTTY:         func(io.Reader) bool { return true },
+		ApprovalStore: store,
+		ApprovalPrompt: func(req approval.PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
+			if len(req.Items) < 2 {
+				t.Fatalf("fixture must produce at least 2 gated items, got %d (embedded catalog changed?)", len(req.Items))
+			}
+			// Decide only the first item; leave the rest undecided.
+			it := req.Items[0]
+			return map[string]map[string]bool{it.Field: {it.Key: true}}, nil
+		},
+		Runtime: &runtime.FakeRuntime{ExitCode: 0},
+	}
+	res := LaunchWithWriter(context.Background(), opts, &bytes.Buffer{})
+	if res.Err == nil || res.ExitCode != 2 {
+		t.Fatalf("partial prompt should fail closed with exit 2, got %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "approvals", "myagent.yaml")); !os.IsNotExist(err) {
+		t.Errorf("partial prompt should not persist state")
+	}
+}
+
+func writeProfile(t *testing.T, dir, name string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
 	}
 }

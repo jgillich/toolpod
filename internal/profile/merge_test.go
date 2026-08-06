@@ -574,3 +574,63 @@ func TestResolveCachesReplacePerName(t *testing.T) {
 		t.Errorf("Caches[mise] = %v, want [~/.aube] (child replaces list)", got)
 	}
 }
+
+// initProvenanceWrapper is a test helper that calls initProvenance and
+// returns the rc with Prov populated, simulating what resolveChain does
+// for a leaf before it enters a merge.
+func initProvenanceWrapper(rc RawProfile) RawProfile {
+	rc.Provenance = initProvenance(rc)
+	return rc
+}
+
+func TestMergeProfilesStampsChildProvenance(t *testing.T) {
+	parent := RawProfile{
+		Profile:   Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "~/.ssh"}}},
+		Namespace: "core", Name: "creds/ssh",
+	}
+	parent = initProvenanceWrapper(parent)
+	child := RawProfile{
+		Profile:   Profile{Mounts: map[string]Mount{"~/aws": {Source: "~/aws"}}},
+		Namespace: "", Name: "myagent",
+	}
+	merged := MergeProfiles(parent, child)
+	if merged.Provenance.Mounts["~/.ssh"] != (Contributor{FullName: "core/creds/ssh", Namespace: "core"}) {
+		t.Errorf("parent key should keep parent provenance, got %+v", merged.Provenance.Mounts["~/.ssh"])
+	}
+	if merged.Provenance.Mounts["~/aws"] != (Contributor{FullName: "myagent", Namespace: ""}) {
+		t.Errorf("child key should get child provenance, got %+v", merged.Provenance.Mounts["~/aws"])
+	}
+}
+
+func TestMergeProfilesUserShadowsCoreKey(t *testing.T) {
+	parent := RawProfile{
+		Profile:   Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "~/.ssh"}}},
+		Namespace: "core", Name: "creds/ssh",
+	}
+	parent = initProvenanceWrapper(parent)
+	child := RawProfile{
+		Profile:   Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "/custom/ssh"}}},
+		Namespace: "", Name: "myagent",
+	}
+	merged := MergeProfiles(parent, child)
+	if !merged.Provenance.Mounts["~/.ssh"].Trusted() {
+		t.Errorf("user shadow should be trusted, got %+v", merged.Provenance.Mounts["~/.ssh"])
+	}
+}
+
+func TestMergeProfilesNullDeletesProvenance(t *testing.T) {
+	parent := RawProfile{
+		Profile:   Profile{Mounts: map[string]Mount{"~/.ssh": {Source: "~/.ssh"}}},
+		Namespace: "core", Name: "creds/ssh",
+	}
+	parent = initProvenanceWrapper(parent)
+	child := RawProfile{
+		Profile:   Profile{},
+		Namespace: "", Name: "myagent",
+		NullKeys: map[string]map[string]bool{"mounts": {"~/.ssh": true}},
+	}
+	merged := MergeProfiles(parent, child)
+	if _, ok := merged.Provenance.Mounts["~/.ssh"]; ok {
+		t.Errorf("null-deleted key should not be in provenance")
+	}
+}

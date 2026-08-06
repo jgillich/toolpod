@@ -7,15 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/jgillich/tpd/internal/catalog"
 	"github.com/jgillich/tpd/internal/profile"
-	"golang.org/x/term"
+	"github.com/jgillich/tpd/internal/ui"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,7 +45,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// tty reports whether stdin is an actual terminal. When true, we use
 	// charmbracelet/huh for interactive TUI prompts; otherwise we fall back
 	// to simple text prompts so tests with strings.NewReader still work.
-	tty := IsTTY(stdin)
+	tty := ui.IsTTYReader(stdin)
 
 	// wizardUsed tracks whether interactive prompts for profile/fragments were
 	// actually shown. When the user provides all args explicitly (even in a
@@ -201,11 +198,6 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		bases[i] = key
 	}
 	bases = dedup(bases)
-	for _, b := range bases {
-		if msg := catalog.Advisory(advisoryLeaf(b)); msg != "" {
-			fmt.Fprintf(stderr, "note: %s grants: %s\n", advisoryLeaf(b), msg)
-		}
-	}
 
 	content, err := generate(profileName, bases, cat)
 	if err != nil {
@@ -224,38 +216,11 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		}
 		fmt.Fprintf(stderr, "note: %s is not runnable yet (no command or image); edit the file before launching\n", targetPath)
 	} else {
-		printSummary(stdout, profileName, bases, resolved)
-
 		// Embed the resolved profile as a comment so the file shows the full
 		// container view, mirroring the edit command's seed.
 		content, err = appendResolvedReference(content, profileName, resolved)
 		if err != nil {
 			return fmt.Errorf("appending resolved reference: %w", err)
-		}
-
-		// If the profile grants host access (mounts or env), prompt to review.
-		// Gated on wizardUsed like the overwrite prompt so a fully-specified
-		// invocation never stops for confirmation.
-		if len(resolved.Mounts) > 0 || len(resolved.Env) > 0 {
-			if wizardUsed {
-				for {
-					choice, err := promptReviewChoice(tty, stdin, stdout, reader)
-					if err != nil {
-						return err
-					}
-					switch choice {
-					case "view":
-						if err := openEditorWithResolved(resolved, stdout); err != nil {
-							fmt.Fprintf(stderr, "warning: could not open editor: %v\n", err)
-						}
-						continue
-					case "abort":
-						fmt.Fprintln(stdout, "aborted")
-						return nil
-					}
-					break
-				}
-			}
 		}
 	}
 
@@ -393,25 +358,6 @@ func resolveCatalogName(cat profile.Catalog, name string) (string, bool) {
 	return cat.ResolveRef(ref)
 }
 
-// advisoryLeaf is the last path segment of a canonical catalog key ("docker-host"
-// for "core/services/docker-host"), the key the advisory table uses.
-func advisoryLeaf(key string) string {
-	if i := strings.LastIndex(key, "/"); i >= 0 {
-		return key[i+1:]
-	}
-	return key
-}
-
-// IsTTY reports whether r is an interactive terminal.
-// The CLI calls this to set Options.Interactive before calling Run;
-// tests set Options.Interactive directly so they can use strings.NewReader.
-func IsTTY(r io.Reader) bool {
-	if f, ok := r.(*os.File); ok {
-		return term.IsTerminal(int(f.Fd()))
-	}
-	return false
-}
-
 func promptProfile(names []string, reader *bufio.Reader, stderr io.Writer) string {
 	fmt.Fprintf(stderr, "Available built-in profiles (or '%s'): %s\n", newProfileOption, strings.Join(names, ", "))
 	fmt.Fprintf(stderr, "Profile: ")
@@ -545,39 +491,6 @@ func promptOverwrite(tty bool, targetPath string, stdin io.Reader, stdout io.Wri
 	return promptConfirm(tty, fmt.Sprintf("%s already exists. Overwrite?", targetPath), stdin, stdout, reader)
 }
 
-func promptReviewChoice(tty bool, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (string, error) {
-	if tty {
-		var selected string
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("The profile grants host access. What next?").
-					Options(
-						huh.NewOption("Proceed", "proceed"),
-						huh.NewOption("View details", "view"),
-						huh.NewOption("Abort", "abort"),
-					).
-					Value(&selected),
-			),
-		).WithInput(stdin).WithOutput(stdout)
-		if err := form.Run(); err != nil {
-			return "", err
-		}
-		return selected, nil
-	}
-	fmt.Fprint(stdout, "Proceed / View details / Abort? [P/v/a]: ")
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-	switch line {
-	case "v", "view":
-		return "view", nil
-	case "a", "abort":
-		return "abort", nil
-	default:
-		return "proceed", nil
-	}
-}
-
 func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (profile.Profile, error) {
 	rc, err := profile.ParseRaw([]byte(content), "generated:"+profileName)
 	if err != nil {
@@ -585,78 +498,4 @@ func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (
 	}
 	cat.AddRaw("", profileName, rc)
 	return profile.ResolveProfile(cat, profileName)
-}
-
-func printSummary(stdout io.Writer, profileName string, extends []string, resolved profile.Profile) {
-	fmt.Fprintf(stdout, "Profile: %s\n", profileName)
-	if len(extends) > 0 {
-		fmt.Fprintf(stdout, "Extends: %s\n", strings.Join(extends, ", "))
-	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Container access:")
-
-	for _, target := range sortedKeys(resolved.Mounts) {
-		fmt.Fprintf(stdout, "  • mounts %s\n", target)
-	}
-	for _, k := range sortedStringMapKeys(resolved.Env) {
-		fmt.Fprintf(stdout, "  • passes %s\n", k)
-	}
-	for _, name := range sortedStringMapKeys(resolved.Caches) {
-		fmt.Fprintf(stdout, "  • caches %s\n", strings.Join(resolved.Caches[name], ", "))
-	}
-}
-
-func sortedKeys(m map[string]profile.Mount) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedStringMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func openEditorWithResolved(resolved profile.Profile, stdout io.Writer) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
-	data, err := yaml.Marshal(resolved)
-	if err != nil {
-		return err
-	}
-
-	header := "# This is a read-only preview of the fully merged profile.\n" +
-		"# It shows everything the container will have access to after all\n" +
-		"# extends and fragments are resolved. Changes here are not saved.\n" +
-		"# To customize, edit your user profile and re-run 'tpd init'.\n\n"
-
-	tmpFile, err := os.CreateTemp("", "tpd-details-*.yaml")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmpFile.Name())
-	if _, err := tmpFile.WriteString(header + string(data)); err != nil {
-		tmpFile.Close()
-		return err
-	}
-	tmpFile.Close()
-
-	if err := os.Chmod(tmpFile.Name(), 0o444); err != nil {
-		return err
-	}
-
-	cmd := exec.Command(editor, tmpFile.Name())
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }

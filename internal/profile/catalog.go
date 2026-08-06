@@ -535,8 +535,12 @@ func NewProfileCatalogForTest(entries map[string]RawProfile) Catalog {
 	for k, v := range entries {
 		v.Namespace = "core"
 		v.Name = k
-		if err := v.ExtendsList.Resolve(map[string]bool{"": true, "core": true}); err != nil {
-			panic("NewProfileCatalogForTest: bad extends in " + k + ": " + err.Error())
+		// Only Raw-form extends needs parsing; pre-set Resolved (from
+		// hand-built entries) must survive untouched.
+		if len(v.ExtendsList.Raw) > 0 {
+			if err := v.ExtendsList.Resolve(map[string]bool{"": true, "core": true}); err != nil {
+				panic("NewProfileCatalogForTest: bad extends in " + k + ": " + err.Error())
+			}
 		}
 		out[v.FullName()] = v
 	}

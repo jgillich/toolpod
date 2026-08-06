@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -135,37 +136,6 @@ func TestExitCodeFor(t *testing.T) {
 	}
 }
 
-func TestShowDockerPrintsSensitiveAdvisory(t *testing.T) {
-	out, err := runTpd(t, "show", "services/docker-host")
-	if err != nil {
-		t.Fatalf("show services/docker-host: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "warning:") {
-		t.Errorf("expected advisory warning on stderr, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Docker socket") {
-		t.Errorf("expected Docker socket advisory, got:\n%s", out)
-	}
-}
-
-func TestEditDockerPrintsSensitiveAdvisory(t *testing.T) {
-	cfg := t.TempDir()
-	env := []string{
-		"XDG_CONFIG_HOME=" + cfg,
-		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
-	}
-	out, err := runTpdEnv(t, env, "edit", "services/docker-host")
-	if err != nil {
-		t.Fatalf("edit services/docker-host: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "warning:") {
-		t.Errorf("expected advisory warning on stderr, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Docker socket") {
-		t.Errorf("expected Docker socket advisory, got:\n%s", out)
-	}
-}
-
 func TestProfileShowNonexistentExitCode(t *testing.T) {
 	out, err := runTpd(t, "show", "nope")
 	exitErr, ok := err.(*exec.ExitError)
@@ -177,5 +147,16 @@ func TestProfileShowNonexistentExitCode(t *testing.T) {
 	}
 	if !strings.Contains(out, "not found") {
 		t.Errorf("expected 'not found' error, got:\n%s", out)
+	}
+}
+
+func TestYesNoMutuallyExclusive(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetArgs([]string{"--yes", "--no", "bash"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --yes and --no together")
 	}
 }
