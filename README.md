@@ -86,7 +86,7 @@ The generated file extends the chosen bases; when none of them provides a comman
 
 ```sh
 tpd doctor              # diagnose runtime, mise, volumes, configs, workspace
-tpd prune               # remove catalog-unused tpd resources (volumes + derived images)
+tpd prune               # remove catalog-unused tpd resources (volumes, derived images, and the tpd-services network)
 ```
 
 ## Profiles
@@ -226,6 +226,7 @@ mounts:
 A service is a mini-profile with its own `image`, `command`, `packages`/`repos`, `caches`, `mounts`, `environment`, `labels`, `files`, `exposes`, and optional `privileged`. Each `exposes:` entry declares a socket the service creates: tpd prepares the path on the host — `/run/user/<uid>/tpd-svc-<name>/` in rootless mode, `/tmp/tpd-svc-<name>-<uid>/` in rootful mode — and bind-mounts the parent directory into the service container, so the socket the daemon creates in the container appears on the host. The main profile then references it with `mounts:` keys that use `service: <name>` and `socket: <key>` instead of `source:`.
 
 - Service containers never see your workspace.
+- Every service joins the shared `tpd-services` bridge network under the stable alias `tpd-svc-<name>`; the main container reaches it via `TPD_SERVICE_<NAME>_HOST`.
 - `network`, `tty`, `resources`, `tools`, `dbus`, `ports`, `devices`, `version`, `extends`, and nested `services` are rejected inside a service.
 - Service caches share the same `tpd-cache-<name>` volumes as the main profile and other services.
 - A running service is reused while its definition hash matches. If the definition changes, the old container is replaced — even under live consumers, who are named in a warning — accepting a brief outage so the new launch gets the updated service immediately.

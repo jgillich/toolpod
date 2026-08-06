@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/jgillich/tpd/internal/runtime"
 )
@@ -43,11 +44,13 @@ func TestIsTpdVolume(t *testing.T) {
 type fakeClient struct {
 	volumes           []*volume.Volume
 	images            []image.Summary
+	networks          []network.Summary
 	inspects          map[string]string              // ref -> image ID
 	containers        []types.Container              // returned by ContainerList
 	containerInspects map[string]types.ContainerJSON // ID -> inspect
 	removedV          []string
 	removedI          []string
+	removedN          []string
 	containerCalls    int
 	activateVolume    string
 	activateImage     string
@@ -66,6 +69,13 @@ func (f *fakeClient) ImageList(ctx context.Context, _ image.ListOptions) ([]imag
 func (f *fakeClient) ImageRemove(ctx context.Context, ref string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
 	f.removedI = append(f.removedI, ref)
 	return nil, nil
+}
+func (f *fakeClient) NetworkList(ctx context.Context, _ network.ListOptions) ([]network.Summary, error) {
+	return f.networks, nil
+}
+func (f *fakeClient) NetworkRemove(ctx context.Context, networkID string) error {
+	f.removedN = append(f.removedN, networkID)
+	return nil
 }
 func (f *fakeClient) ImageInspectWithRaw(ctx context.Context, ref string) (types.ImageInspect, []byte, error) {
 	if id, ok := f.inspects[ref]; ok {
@@ -535,6 +545,202 @@ services:
 	}
 	if !usedI[svcTag] {
 		t.Errorf("service derived image %q should be marked used; got %v", svcTag, usedI)
+	}
+}
+
+// ownedServicesNetwork is the canonical tpd service network with the
+// ownership and services-role labels the prune path requires.
+func ownedServicesNetwork(id string) network.Summary {
+	return network.Summary{
+		Name: runtime.ServiceNetworkName,
+		ID:   id,
+		Labels: map[string]string{
+			runtime.OwnershipLabel:   "true",
+			runtime.NetworkRoleLabel: runtime.NetworkRoleServices,
+		},
+	}
+}
+
+func TestPruneNetworksRequiresNetworkScope(t *testing.T) {
+	fc := &fakeClient{networks: []network.Summary{ownedServicesNetwork("n1")}}
+	res, err := run(context.Background(), fc, Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.NetworksRemoved) != 0 {
+		t.Errorf("default run must not remove networks; got %v", res.NetworksRemoved)
+	}
+	if len(fc.removedN) != 0 {
+		t.Errorf("NetworkRemove must not be called without --networks; got %v", fc.removedN)
+	}
+}
+
+func TestPruneNetworkScopeCombinations(t *testing.T) {
+	writeUserProfiles(t, map[string]string{"myagent": userProfileYAML})
+	const baseID = "sha256:baseid"
+	usedTag := runtime.DerivedTag(baseID, []string{"curl", "git"}, nil)
+	tests := []struct {
+		name  string
+		opts  Options
+		wantV []string
+		wantI []string
+		wantN []string
+	}{
+		{name: "default", opts: Options{Force: true}, wantV: []string{"tpd-cache-orphan"}, wantI: []string{"tpd/packages:deadbeefdeadbeef"}},
+		{name: "volumes", opts: Options{Volumes: true, Force: true}, wantV: []string{"tpd-cache-orphan"}},
+		{name: "images", opts: Options{Images: true, Force: true}, wantI: []string{"tpd/packages:deadbeefdeadbeef"}},
+		{name: "networks", opts: Options{Networks: true, Force: true}, wantN: []string{runtime.ServiceNetworkName}},
+		{name: "volumes+networks", opts: Options{Volumes: true, Networks: true, Force: true}, wantV: []string{"tpd-cache-orphan"}, wantN: []string{runtime.ServiceNetworkName}},
+		{name: "images+networks", opts: Options{Images: true, Networks: true, Force: true}, wantI: []string{"tpd/packages:deadbeefdeadbeef"}, wantN: []string{runtime.ServiceNetworkName}},
+		{name: "all", opts: Options{All: true, Force: true}, wantV: []string{"tpd-cache-orphan", "tpd-cache-usedcache"}, wantI: []string{"tpd/packages:deadbeefdeadbeef", usedTag}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := &fakeClient{
+				inspects: map[string]string{"mybase:latest": baseID},
+				volumes: []*volume.Volume{
+					{Name: "tpd-cache-usedcache", Labels: runtime.OwnershipLabels()},
+					{Name: "tpd-cache-orphan", Labels: runtime.OwnershipLabels()},
+				},
+				images: []image.Summary{
+					{RepoTags: []string{usedTag}, Labels: runtime.OwnershipLabels()},
+					{RepoTags: []string{"tpd/packages:deadbeefdeadbeef"}, Labels: runtime.OwnershipLabels()},
+				},
+				networks: []network.Summary{ownedServicesNetwork("n1")},
+			}
+			res, err := run(context.Background(), fc, tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(tt.wantV)
+			gotV := append([]string(nil), res.VolumesRemoved...)
+			sort.Strings(gotV)
+			if !equalSlice(gotV, tt.wantV) {
+				t.Errorf("volumes removed = %v, want %v", res.VolumesRemoved, tt.wantV)
+			}
+			sort.Strings(tt.wantI)
+			gotI := append([]string(nil), res.ImagesRemoved...)
+			sort.Strings(gotI)
+			if !equalSlice(gotI, tt.wantI) {
+				t.Errorf("images removed = %v, want %v", res.ImagesRemoved, tt.wantI)
+			}
+			if !equalSlice(res.NetworksRemoved, tt.wantN) {
+				t.Errorf("networks removed = %v, want %v", res.NetworksRemoved, tt.wantN)
+			}
+		})
+	}
+}
+
+func TestPruneNetworksUsesConfirmationPrompt(t *testing.T) {
+	// Test stdin is not a tty, so confirm() declines and nothing is removed
+	// unless Force is set.
+	fc := &fakeClient{networks: []network.Summary{ownedServicesNetwork("n1")}}
+	res, err := run(context.Background(), fc, Options{Networks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.NetworksRemoved) != 0 || len(fc.removedN) != 0 {
+		t.Errorf("declined confirmation must not remove networks; result=%v calls=%v", res.NetworksRemoved, fc.removedN)
+	}
+}
+
+func TestPruneNetworksSkipsUnmanagedCanonicalName(t *testing.T) {
+	// A network using the canonical name without the ownership label must
+	// survive prune (with a stderr warning) so an unrelated network is never
+	// removed.
+	fc := &fakeClient{
+		networks: []network.Summary{{Name: runtime.ServiceNetworkName, ID: "n1"}},
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	res, err := run(context.Background(), fc, Options{Networks: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	warned, _ := io.ReadAll(r)
+	if len(res.NetworksRemoved) != 0 || len(fc.removedN) != 0 {
+		t.Errorf("unowned canonical network must not be removed; result=%v calls=%v", res.NetworksRemoved, fc.removedN)
+	}
+	if !strings.Contains(string(warned), "not tpd-owned") {
+		t.Errorf("stderr should warn the canonical-name network is not tpd-owned; got %q", string(warned))
+	}
+}
+
+func TestPruneNetworksSkipsWrongRole(t *testing.T) {
+	fc := &fakeClient{
+		networks: []network.Summary{{
+			Name: runtime.ServiceNetworkName,
+			ID:   "n1",
+			Labels: map[string]string{
+				runtime.OwnershipLabel:   "true",
+				runtime.NetworkRoleLabel: "something-else",
+			},
+		}},
+	}
+	res, err := run(context.Background(), fc, Options{Networks: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.NetworksRemoved) != 0 || len(fc.removedN) != 0 {
+		t.Errorf("wrong-role network must not be removed; result=%v calls=%v", res.NetworksRemoved, fc.removedN)
+	}
+}
+
+func TestPruneNetworksSkipsRunningReference(t *testing.T) {
+	// An unlabeled running container attached to the managed network must
+	// protect it: ownership is not what grants protection, an active endpoint
+	// is.
+	fc := &fakeClient{
+		networks:   []network.Summary{ownedServicesNetwork("n1")},
+		containers: []types.Container{{ID: "c1"}},
+		containerInspects: map[string]types.ContainerJSON{
+			"c1": {
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						runtime.ServiceNetworkName: {NetworkID: "n1"},
+					},
+				},
+			},
+		},
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	res, err := run(context.Background(), fc, Options{Networks: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if len(res.NetworksRemoved) != 0 || len(fc.removedN) != 0 {
+		t.Errorf("network referenced by a running container must not be removed; result=%v calls=%v", res.NetworksRemoved, fc.removedN)
+	}
+	if !strings.Contains(string(out), "skipping "+runtime.ServiceNetworkName+": in use by a running container") {
+		t.Errorf("stderr should report the skip; got %q", string(out))
+	}
+}
+
+func TestPruneNetworksRemovesOwnedUnusedNetwork(t *testing.T) {
+	fc := &fakeClient{networks: []network.Summary{ownedServicesNetwork("n1")}}
+	res, err := run(context.Background(), fc, Options{Networks: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalSlice(res.NetworksRemoved, []string{runtime.ServiceNetworkName}) {
+		t.Errorf("networks removed = %v, want [%s]", res.NetworksRemoved, runtime.ServiceNetworkName)
+	}
+	if !equalSlice(fc.removedN, []string{"n1"}) {
+		t.Errorf("NetworkRemove called with %v, want [n1]", fc.removedN)
 	}
 }
 

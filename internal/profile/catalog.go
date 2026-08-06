@@ -712,10 +712,14 @@ func ParseRaw(data []byte, path string) (RawProfile, error) {
 // profileNameRe is the single strict grammar for profile names. It matches
 // Docker's container-name charset, so the derived container name
 // (tpd-<name>-<rand> in docker_run.go) and Hostname are always valid:
-// [a-zA-Z0-9][a-zA-Z0-9._-]*. Rejects ':', '\', '/', whitespace, and control
-// characters. Applied uniformly to CLI input (ValidateName), names derived
-// from user filenames, and the container name/hostname construction.
-var profileNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+// [a-z0-9][a-z0-9-]*. Lowercase-only because case variants of a service name
+// collapse to one TPD_SERVICE_<NAME>_HOST env var and to ambiguous
+// case-insensitive DNS aliases; the lowercase grammar keeps alias and
+// environment-name collisions structurally impossible. Rejects ':', '\', '/',
+// '.', '_', uppercase, whitespace, and control characters. Applied uniformly
+// to CLI input (ValidateName), names derived from user filenames, and the
+// container name/hostname construction.
+var profileNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // nameFromPath derives the hierarchical name for a YAML file from its path
 // relative to the catalog root: root/lang/go.yaml -> "lang/go".

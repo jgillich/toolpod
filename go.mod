@@ -13,6 +13,7 @@ require (
 	github.com/docker/docker v27.1.0+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/docker/go-units v0.5.0
+	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0

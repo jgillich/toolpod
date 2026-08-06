@@ -281,6 +281,16 @@ func (r *orderRuntime) StopServices(ctx context.Context, spec runtime.Spec) erro
 	return r.FakeRuntime.StopServices(ctx, spec)
 }
 
+func (r *orderRuntime) ConnectContainerToNetwork(ctx context.Context, containerID, networkName string, aliases []string) error {
+	r.record("connect")
+	return r.FakeRuntime.ConnectContainerToNetwork(ctx, containerID, networkName, aliases)
+}
+
+func (r *orderRuntime) RemoveContainer(ctx context.Context, containerID string) error {
+	r.record("remove")
+	return r.FakeRuntime.RemoveContainer(ctx, containerID)
+}
+
 func (r *orderRuntime) release() {
 	r.record("release")
 }
@@ -303,16 +313,29 @@ func wantCallOrder(t *testing.T, rt *orderRuntime, want ...string) {
 }
 
 func TestLaunchWithServices(t *testing.T) {
-	rt := &orderRuntime{FakeRuntime: &runtime.FakeRuntime{PrepareImage: "test-image"}}
+	rt := &orderRuntime{FakeRuntime: &runtime.FakeRuntime{
+		PrepareImage: "test-image",
+		CreateResult: runtime.CreateResult{ContainerID: "container-1"},
+	}}
 	rt.ServiceBindings = runtime.ServiceBindings{
 		Sockets: map[string]string{"registry/registry": "/tmp/test-sock"},
+		Network: "tpd-services",
 		Release: rt.release,
 	}
 	res := launchService(t, rt)
 	if res.Err != nil {
 		t.Fatalf("Launch: %v", res.Err)
 	}
-	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "release", "run-container", "stop-services")
+	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "connect", "release", "run-container", "stop-services")
+	if rt.ConnectedContainerID != "container-1" {
+		t.Errorf("ConnectContainerToNetwork received container %q, want %q", rt.ConnectedContainerID, "container-1")
+	}
+	if rt.ConnectedNetworkName != "tpd-services" {
+		t.Errorf("ConnectContainerToNetwork received network %q, want tpd-services", rt.ConnectedNetworkName)
+	}
+	if rt.ConnectedNetworkAliases != nil {
+		t.Errorf("ConnectContainerToNetwork aliases = %v, want nil", rt.ConnectedNetworkAliases)
+	}
 	if rt.StartServicesSpec == nil {
 		t.Error("StartServices was not called")
 	}
@@ -398,6 +421,7 @@ func TestLaunchStopsServicesOnRunError(t *testing.T) {
 	}}
 	rt.ServiceBindings = runtime.ServiceBindings{
 		Sockets: map[string]string{"registry/registry": "/tmp/x"},
+		Network: "tpd-services",
 		Release: rt.release,
 	}
 	res := launchService(t, rt)
@@ -407,10 +431,124 @@ func TestLaunchStopsServicesOnRunError(t *testing.T) {
 	if res.ExitCode != 3 {
 		t.Errorf("ExitCode = %d, want 3 (runtime error)", res.ExitCode)
 	}
-	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "release", "run-container", "stop-services")
+	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "connect", "release", "run-container", "stop-services")
 	if rt.StopServicesSpec == nil {
 		t.Error("StopServices was not called after RunContainer failed")
 	}
+}
+
+func TestLaunchServiceNetworkConnectError(t *testing.T) {
+	rt := &orderRuntime{FakeRuntime: &runtime.FakeRuntime{
+		PrepareImage: "test-image",
+		CreateResult: runtime.CreateResult{ContainerID: "container-1"},
+		ConnectErr:   fmt.Errorf("network connect failed"),
+	}}
+	rt.ServiceBindings = runtime.ServiceBindings{
+		Sockets: map[string]string{"registry/registry": "/tmp/x"},
+		Network: "tpd-services",
+		Release: rt.release,
+	}
+	res := launchService(t, rt)
+	if res.Err == nil {
+		t.Fatal("expected error from failed ConnectContainerToNetwork")
+	}
+	if res.ExitCode != 3 {
+		t.Errorf("ExitCode = %d, want 3 (runtime error)", res.ExitCode)
+	}
+	if !strings.Contains(res.Err.Error(), "connect service network") {
+		t.Errorf("error should wrap connect service network, got: %v", res.Err)
+	}
+	if rt.RanSpec != nil {
+		t.Error("RunContainer should not run when network attach fails")
+	}
+	if rt.RemovedContainerID != "container-1" {
+		t.Errorf("RemoveContainer received %q, want %q", rt.RemovedContainerID, "container-1")
+	}
+	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "connect", "remove", "release", "stop-services")
+	if rt.StopServicesSpec == nil {
+		t.Error("StopServices was not called after network attach failed")
+	}
+}
+
+func TestLaunchServiceNetworkConnectRemoveError(t *testing.T) {
+	rt := &orderRuntime{FakeRuntime: &runtime.FakeRuntime{
+		PrepareImage: "test-image",
+		CreateResult: runtime.CreateResult{ContainerID: "container-1"},
+		ConnectErr:   fmt.Errorf("network connect failed"),
+		RemoveErr:    fmt.Errorf("remove failed"),
+	}}
+	rt.ServiceBindings = runtime.ServiceBindings{
+		Sockets: map[string]string{"registry/registry": "/tmp/x"},
+		Network: "tpd-services",
+		Release: rt.release,
+	}
+	stderr := captureStderr(t, func() {
+		res := launchService(t, rt)
+		if res.Err == nil {
+			t.Fatal("expected error from failed ConnectContainerToNetwork")
+		}
+		if res.ExitCode != 3 {
+			t.Errorf("ExitCode = %d, want 3 (runtime error)", res.ExitCode)
+		}
+		if !strings.Contains(res.Err.Error(), "connect service network") {
+			t.Errorf("attachment failure should stay primary, got: %v", res.Err)
+		}
+		if rt.RanSpec != nil {
+			t.Error("RunContainer should not run when network attach fails")
+		}
+		if rt.RemovedContainerID != "container-1" {
+			t.Errorf("RemoveContainer received %q, want %q", rt.RemovedContainerID, "container-1")
+		}
+	})
+	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "remove container") {
+		t.Errorf("cleanup failure should be emitted as a warning, stderr: %q", stderr)
+	}
+	wantCallOrder(t, rt, "prepare", "start-services", "create-container", "connect", "remove", "release", "stop-services")
+	if rt.StopServicesSpec == nil {
+		t.Error("StopServices was not called after network attach failed")
+	}
+}
+
+func TestLaunchServiceNetworkNoServices(t *testing.T) {
+	dir := writeBuiltinShell(t)
+	rt := &orderRuntime{FakeRuntime: &runtime.FakeRuntime{ExitCode: 0}}
+	res := LaunchWithWriter(context.Background(), LaunchOpts{
+		ProfileName: "shell",
+		DryRun:      false,
+		ProfileDir:  dir,
+		Runtime:     rt,
+	}, &strings.Builder{})
+	if res.Err != nil {
+		t.Fatalf("Launch: %v", res.Err)
+	}
+	if rt.ConnectedNetworkName != "" {
+		t.Errorf("no-service launch connected to %q, want none", rt.ConnectedNetworkName)
+	}
+	if rt.RemovedContainerID != "" {
+		t.Errorf("no-service launch removed container %q, want none", rt.RemovedContainerID)
+	}
+	wantCallOrder(t, rt, "prepare", "create-container", "run-container")
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns the
+// captured output, so cleanup-warning paths can be asserted.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = old
+		w.Close()
+		r.Close()
+	}()
+	fn()
+	w.Close()
+	data, _ := io.ReadAll(r)
+	return string(data)
 }
 
 func TestLaunchStopsServicesOnStartServicesError(t *testing.T) {

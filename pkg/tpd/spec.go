@@ -62,6 +62,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 
 	services := make([]runtime.ServiceSpec, 0, len(cfg.Services))
 	for name, svc := range cfg.Services {
+		usedServices[name] = true
 		svcCaches := make([]runtime.CacheSpec, 0)
 		for cacheName, paths := range svc.Caches {
 			for _, target := range paths {
@@ -144,6 +145,21 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	env := cfg.Env
 	if env == nil {
 		env = map[string]string{}
+	}
+
+	// Every declared service answers on the shared network; expose its alias
+	// to the main container regardless of whether a socket is mounted.
+	serviceNames := make([]string, 0, len(cfg.Services))
+	for name := range cfg.Services {
+		serviceNames = append(serviceNames, name)
+	}
+	sort.Strings(serviceNames)
+	for _, name := range serviceNames {
+		envKey := runtime.ServiceHostEnvName(name)
+		if _, reserved := cfg.Env[envKey]; reserved {
+			return Spec{}, fmt.Errorf("environment variable %s is reserved by tpd services", envKey)
+		}
+		env[envKey] = runtime.ServiceNetworkAlias(name)
 	}
 
 	labels := cfg.Labels

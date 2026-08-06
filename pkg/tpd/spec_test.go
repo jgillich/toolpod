@@ -3,6 +3,7 @@ package tpd
 import (
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jgillich/tpd/internal/profile"
@@ -421,5 +422,91 @@ func TestBuildSpecServices(t *testing.T) {
 	}
 	if !foundSock {
 		t.Error("service-socket mount not found in spec.Mounts with Service/Socket intact")
+	}
+}
+
+func TestBuildSpecServiceHostVar(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Services: map[string]profile.Service{
+			"postgres-main": {Image: "postgres:17", Command: []string{"postgres"}},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "web", Workspace: "/p"}, cfg, workspace.ModeRootless, "/home/me", "/home/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Env["TPD_SERVICE_POSTGRES_MAIN_HOST"]; got != "tpd-svc-postgres-main" {
+		t.Fatalf("host = %q, want tpd-svc-postgres-main", got)
+	}
+	if got := spec.Labels[runtime.UsesServiceLabel]; got != "postgres-main" {
+		t.Fatalf("uses-service = %q, want postgres-main", got)
+	}
+}
+
+func TestBuildSpecServiceLabel(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Services: map[string]profile.Service{
+			"postgres-main": {Image: "postgres:17", Command: []string{"postgres"}},
+			"alpha":         {Image: "img", Command: []string{"alpha"}},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "web", Workspace: "/p"}, cfg, workspace.ModeRootless, "/home/me", "/home/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Labels[runtime.UsesServiceLabel]; got != "alpha,postgres-main" {
+		t.Fatalf("uses-service = %q, want alpha,postgres-main", got)
+	}
+	if got := spec.Env["TPD_SERVICE_ALPHA_HOST"]; got != "tpd-svc-alpha" {
+		t.Errorf("alpha host = %q, want tpd-svc-alpha", got)
+	}
+	if got := spec.Env["TPD_SERVICE_POSTGRES_MAIN_HOST"]; got != "tpd-svc-postgres-main" {
+		t.Errorf("postgres host = %q, want tpd-svc-postgres-main", got)
+	}
+}
+
+func TestBuildSpecServiceCollision(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Env:     map[string]string{"TPD_SERVICE_ALPHA_HOST": "custom"},
+		Services: map[string]profile.Service{
+			"alpha": {Image: "img", Command: []string{"alpha"}},
+		},
+	}
+	_, err := buildSpec(LaunchOpts{ProfileName: "web", Workspace: "/p"}, cfg, workspace.ModeRootless, "/home/me", "/home/me")
+	if err == nil {
+		t.Fatal("expected error for reserved environment variable")
+	}
+	if !strings.Contains(err.Error(), "TPD_SERVICE_ALPHA_HOST") {
+		t.Fatalf("error should name the reserved variable, got: %v", err)
+	}
+}
+
+func TestBuildSpecServiceSocketOnlyHostVar(t *testing.T) {
+	cfg := profile.Profile{
+		Version: 1,
+		Image:   "ubuntu",
+		Command: []string{"sh"},
+		Services: map[string]profile.Service{
+			"redis": {Image: "redis", Command: []string{"redis-server"}, Exposes: map[string]string{"main": "/run/redis/redis.sock"}},
+		},
+		Mounts: map[string]profile.Mount{
+			"/sock": {Service: "redis", Socket: "main"},
+		},
+	}
+	spec, err := buildSpec(LaunchOpts{ProfileName: "web", Workspace: "/p"}, cfg, workspace.ModeRootless, "/home/me", "/home/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Env["TPD_SERVICE_REDIS_HOST"]; got != "tpd-svc-redis" {
+		t.Fatalf("host = %q, want tpd-svc-redis", got)
 	}
 }

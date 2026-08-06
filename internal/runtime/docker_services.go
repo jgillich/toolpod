@@ -104,6 +104,12 @@ func (d *DockerRuntime) StartServices(ctx context.Context, spec Spec, w Progress
 		return ServiceBindings{Sockets: map[string]string{}, Release: func() {}}, nil
 	}
 
+	// The shared network must exist before any container attaches; the helper
+	// tolerates a concurrent launch racing the same create.
+	if _, err := d.ensureServiceNetwork(ctx); err != nil {
+		return ServiceBindings{Sockets: map[string]string{}, Release: func() {}}, err
+	}
+
 	services := make(map[string]ServiceSpec, len(spec.Services))
 	names := make([]string, 0, len(spec.Services))
 	for _, svc := range spec.Services {
@@ -141,7 +147,7 @@ func (d *DockerRuntime) StartServices(ctx context.Context, spec Spec, w Progress
 	}
 
 	release = func() {}
-	return ServiceBindings{Sockets: bindings, Release: releaseLocks}, nil
+	return ServiceBindings{Sockets: bindings, Network: ServiceNetworkName, Release: releaseLocks}, nil
 }
 
 func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc ServiceSpec, w ProgressWriter, pull bool, bindings map[string]string) error {
@@ -166,6 +172,9 @@ func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc Service
 		// --pull still refreshes a mutable base tag.
 		if err := ensureImagePulled(ctx, d.cli, svc.Image, w, pull); err != nil {
 			return fmt.Errorf("ensure service image: %w", err)
+		}
+		if err := d.ensureServiceAttached(ctx, existing.ID, name); err != nil {
+			return err
 		}
 		fillBindings(bindings, name, spec.Workspace.Mode, svc)
 		return nil
@@ -340,6 +349,10 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 		}
 		bindings[name+"/"+socketName] = serviceSocketPath(name, mode, exposePath)
 	}
+	if err := d.ConnectContainerToNetwork(ctx, containerID, ServiceNetworkName, []string{ServiceNetworkAlias(name)}); err != nil {
+		cleanup()
+		return err
+	}
 	return nil
 }
 
@@ -418,6 +431,22 @@ func findServiceContainer(ctx context.Context, cli *client.Client, containerName
 		}
 	}
 	return nil, nil
+}
+
+// ensureServiceAttached repairs a reused service container's missing network
+// membership, e.g. after an external network prune. Only a missing attachment
+// is repaired; tpd does not inspect every reused container to verify its alias
+// (the alias is set at create), so a legacy or externally modified container
+// with the wrong alias is flagged by doctor, not rewritten here.
+func (d *DockerRuntime) ensureServiceAttached(ctx context.Context, containerID, name string) error {
+	inspected, err := d.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("inspect service container %s: %w", containerID, err)
+	}
+	if inspected.NetworkSettings != nil && inspected.NetworkSettings.Networks[ServiceNetworkName] != nil {
+		return nil
+	}
+	return d.ConnectContainerToNetwork(ctx, containerID, ServiceNetworkName, []string{ServiceNetworkAlias(name)})
 }
 
 // serviceConsumers returns the display names of all non-exited containers

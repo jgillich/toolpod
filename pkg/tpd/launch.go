@@ -273,6 +273,16 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			return Result{ExitCode: 3, Err: fmt.Errorf("create container: %w", err)}
 		}
 
+		if serviceBindings.Network != "" {
+			if err := rt.ConnectContainerToNetwork(ctx, created.ContainerID, serviceBindings.Network, nil); err != nil {
+				if rerr := rt.RemoveContainer(ctx, created.ContainerID); rerr != nil {
+					fmt.Fprintf(os.Stderr, "tpd: warning: remove container: %v\n", rerr)
+				}
+				serviceBindings.Release()
+				return Result{ExitCode: 3, Err: fmt.Errorf("connect service network: %w", err)}
+			}
+		}
+
 		// Release service locks now that the main container is created and
 		// labeled with tpd.uses-service — a concurrent stop step can see it.
 		serviceBindings.Release()

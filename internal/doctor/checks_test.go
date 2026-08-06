@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/runtime"
@@ -38,6 +39,7 @@ type fakeDocker struct {
 	containerImage string
 	createdCnts    []string
 	removedCnts    []string
+	networks       []network.Summary
 }
 
 func newFakeDocker(t *testing.T, images []image.Summary, volumes []*volume.Volume) *fakeDocker {
@@ -88,6 +90,25 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(f.images); err != nil {
 			f.t.Errorf("encode images: %v", err)
+		}
+
+	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/networks/"):
+		id := path.Base(r.URL.Path)
+		for _, n := range f.networks {
+			if n.ID == id || n.Name == id {
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(n); err != nil {
+					f.t.Errorf("encode network: %v", err)
+				}
+				return
+			}
+		}
+		http.NotFound(w, r)
+
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/networks"):
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(f.networks); err != nil {
+			f.t.Errorf("encode networks: %v", err)
 		}
 
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
@@ -596,5 +617,108 @@ func TestCheckStaleBusSocketsPass(t *testing.T) {
 	c := checkStaleBusSockets()
 	if c.Status != Pass {
 		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckServiceNetworkAbsent(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkServiceNetwork(context.Background(), rt)
+	if c.Status != Info {
+		t.Fatalf("status = %s, want info: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "not present") {
+		t.Errorf("message should say the network is absent; got %q", c.Message)
+	}
+}
+
+func TestCheckServiceNetworkValidBridgeReportsConnectedCount(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.networks = []network.Summary{{
+		Name:   runtime.ServiceNetworkName,
+		Driver: "bridge",
+		Labels: map[string]string{
+			runtime.OwnershipLabel:   "true",
+			runtime.NetworkRoleLabel: runtime.NetworkRoleServices,
+		},
+		Containers: map[string]network.EndpointResource{
+			"abc123": {Name: "tpd-svc-svc-one"},
+			"def456": {Name: "consumer"},
+		},
+	}}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkServiceNetwork(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "2 connected") {
+		t.Errorf("message should report the connected container count; got %q", c.Message)
+	}
+	if !strings.Contains(c.Message, runtime.OwnershipLabel+"=true") || !strings.Contains(c.Message, runtime.NetworkRoleLabel+"="+runtime.NetworkRoleServices) {
+		t.Errorf("message should report the ownership and role labels; got %q", c.Message)
+	}
+}
+
+func TestCheckServiceNetworkMissingOwnershipLabel(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.networks = []network.Summary{{
+		Name:   runtime.ServiceNetworkName,
+		Driver: "bridge",
+	}}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkServiceNetwork(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, runtime.ServiceNetworkName) {
+		t.Errorf("message should name the canonical network; got %q", c.Message)
+	}
+	if !strings.Contains(c.Message, runtime.OwnershipLabel) {
+		t.Errorf("message should name the failed ownership invariant; got %q", c.Message)
+	}
+}
+
+func TestCheckServiceNetworkWrongRoleLabel(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.networks = []network.Summary{{
+		Name:   runtime.ServiceNetworkName,
+		Driver: "bridge",
+		Labels: map[string]string{
+			runtime.OwnershipLabel:   "true",
+			runtime.NetworkRoleLabel: "other",
+		},
+	}}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkServiceNetwork(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, runtime.NetworkRoleLabel) {
+		t.Errorf("message should name the failed role invariant; got %q", c.Message)
+	}
+}
+
+func TestCheckServiceNetworkWrongDriver(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.networks = []network.Summary{{
+		Name:   runtime.ServiceNetworkName,
+		Driver: "host",
+		Labels: map[string]string{
+			runtime.OwnershipLabel:   "true",
+			runtime.NetworkRoleLabel: runtime.NetworkRoleServices,
+		},
+	}}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkServiceNetwork(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "bridge") {
+		t.Errorf("message should name the failed driver invariant; got %q", c.Message)
 	}
 }

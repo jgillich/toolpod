@@ -378,6 +378,27 @@ services:
 	}
 }
 
+func TestServicesParseNetworkTrueCaptured(t *testing.T) {
+	var rc RawProfile
+	body := `
+version: 1
+image: ubuntu
+command: ["sh"]
+services:
+  registry:
+    image: debian:13-slim
+    command: ["registry"]
+    network: true
+`
+	if err := yaml.Unmarshal([]byte(body), &rc.Profile); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	svc := rc.Services["registry"]
+	if svc.Network != "true" {
+		t.Errorf("service network = %q, want \"true\" (rejected field must be captured by YAML)", svc.Network)
+	}
+}
+
 func TestMountServiceSocketParses(t *testing.T) {
 	var rc RawProfile
 	body := `

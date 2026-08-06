@@ -64,6 +64,25 @@ func TestLaunchFlagsBind(t *testing.T) {
 	}
 }
 
+func TestPruneFlagsBind(t *testing.T) {
+	cmd := newPruneCommand()
+	if err := cmd.Flags().Parse([]string{"--all", "--volumes", "--images", "--networks", "--force"}); err != nil {
+		t.Fatalf("parse prune flags: %v", err)
+	}
+	for _, name := range []string{"all", "volumes", "images", "networks", "force"} {
+		v, err := cmd.Flags().GetBool(name)
+		if err != nil {
+			t.Fatalf("get prune flag %s: %v", name, err)
+		}
+		if !v {
+			t.Errorf("prune flag --%s not bound", name)
+		}
+	}
+	if !strings.Contains(cmd.Short, "network") {
+		t.Errorf("prune Short should mention networks, got %q", cmd.Short)
+	}
+}
+
 func TestLaunchPassthroughAfterProfile(t *testing.T) {
 	// kong's passthrough:partial contract: everything from the profile name
 	// onward reaches the profile verbatim, even tokens that look like flags.

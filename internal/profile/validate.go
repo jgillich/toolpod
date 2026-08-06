@@ -250,6 +250,9 @@ func validateNetwork(rc RawProfile) error {
 	if rc.Network != "" && (!networkRe.MatchString(rc.Network) || containsControl(rc.Network)) {
 		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid network name %q", rc.Network)}
 	}
+	if rc.Network == "host" && len(rc.Services) > 0 {
+		return ProfileError{Path: rc.Path, Message: "network: host cannot be combined with services (a host-network consumer cannot join the service network)"}
+	}
 	return nil
 }
 
@@ -297,7 +300,7 @@ func validateServices(rc RawProfile) error {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: command is required", name)}
 		}
 		if svc.Network != "" {
-			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set network", name)}
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: network is always enabled for services; remove the network field", name)}
 		}
 		if svc.TTY != "" {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: must not set tty", name)}

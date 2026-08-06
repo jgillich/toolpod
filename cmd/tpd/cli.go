@@ -462,22 +462,24 @@ func newDoctorCommand() *cobra.Command {
 
 func newPruneCommand() *cobra.Command {
 	var (
-		all     bool
-		volumes bool
-		images  bool
-		force   bool
-		yes     bool
+		all      bool
+		volumes  bool
+		images   bool
+		networks bool
+		force    bool
+		yes      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove tpd-managed volumes and images.",
+		Short: "Remove tpd-managed volumes, images, and the service network.",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			opts := prune.Options{
-				All:     all,
-				Volumes: volumes,
-				Images:  images,
-				Force:   force || yes,
+				All:      all,
+				Volumes:  volumes,
+				Images:   images,
+				Networks: networks,
+				Force:    force || yes,
 			}
 			result, err := prune.Run(context.Background(), opts)
 			if err != nil {
@@ -495,7 +497,13 @@ func newPruneCommand() *cobra.Command {
 					fmt.Printf("  %s\n", r)
 				}
 			}
-			if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 {
+			if len(result.NetworksRemoved) > 0 {
+				fmt.Printf("Removed %d network(s):\n", len(result.NetworksRemoved))
+				for _, n := range result.NetworksRemoved {
+					fmt.Printf("  %s\n", n)
+				}
+			}
+			if len(result.VolumesRemoved) == 0 && len(result.ImagesRemoved) == 0 && len(result.NetworksRemoved) == 0 {
 				fmt.Println("Nothing to prune.")
 			}
 			return nil
@@ -504,6 +512,7 @@ func newPruneCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Remove all tpd-managed resources, even ones the catalog still references.")
 	cmd.Flags().BoolVar(&volumes, "volumes", false, "Scope to tpd-managed volumes only (default: both volumes and images).")
 	cmd.Flags().BoolVar(&images, "images", false, "Scope to tpd/packages:* derived images only (default: both volumes and images).")
+	cmd.Flags().BoolVar(&networks, "networks", false, "Scope to the tpd-managed service network only.")
 	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt.")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation prompt (short).")
 	return cmd

@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/profile"
@@ -26,6 +27,7 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 
 	checks = append(checks, checkRuntimeReachable(ctx, rt))
 	checks = append(checks, checkRootless(ctx, rt))
+	checks = append(checks, checkServiceNetwork(ctx, rt))
 	checks = append(checks, checkSELinux(runtime.SELinuxEnforcing()))
 	checks = append(checks, checkMiseBaseImage(ctx, rt))
 	checks = append(checks, checkDerivedImages(ctx, rt))
@@ -73,6 +75,29 @@ func checkRootless(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "rootless", Status: Pass, Message: "no → Mode B (/workspace fallback)"}
 	}
 	return Check{Name: "rootless", Status: Pass, Message: "yes → Mode A (full mirroring)"}
+}
+
+// checkServiceNetwork reports the shared service bridge. A canonical-name
+// network missing an invariant is a hard failure (service discovery breaks
+// silently); the check names the network and the failed invariant, mirroring
+// runtime.validateServiceNetwork without depending on its unexported helper.
+func checkServiceNetwork(ctx context.Context, rt *dockerRT) Check {
+	inspected, err := rt.cli.NetworkInspect(ctx, runtime.ServiceNetworkName, network.InspectOptions{})
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return Check{Name: "service network", Status: Info, Message: "not present (created on first launch with services)"}
+		}
+		return Check{Name: "service network", Status: Warn, Message: err.Error()}
+	}
+	switch {
+	case inspected.Labels[runtime.OwnershipLabel] != "true":
+		return Check{Name: "service network", Status: Fail, Message: fmt.Sprintf("%s is not tpd-managed (want %s=true, got %q)", inspected.Name, runtime.OwnershipLabel, inspected.Labels[runtime.OwnershipLabel])}
+	case inspected.Labels[runtime.NetworkRoleLabel] != runtime.NetworkRoleServices:
+		return Check{Name: "service network", Status: Fail, Message: fmt.Sprintf("%s has role %s=%q, want %q", inspected.Name, runtime.NetworkRoleLabel, inspected.Labels[runtime.NetworkRoleLabel], runtime.NetworkRoleServices)}
+	case inspected.Driver != "bridge":
+		return Check{Name: "service network", Status: Fail, Message: fmt.Sprintf("%s is not a bridge (driver %q)", inspected.Name, inspected.Driver)}
+	}
+	return Check{Name: "service network", Status: Pass, Message: fmt.Sprintf("%s (%s), %d connected (%s=%s, %s=%s)", inspected.Name, inspected.Driver, len(inspected.Containers), runtime.OwnershipLabel, inspected.Labels[runtime.OwnershipLabel], runtime.NetworkRoleLabel, inspected.Labels[runtime.NetworkRoleLabel])}
 }
 
 func checkSELinux(enforcing bool) Check {

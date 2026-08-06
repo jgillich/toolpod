@@ -71,13 +71,13 @@ func TestValidateImage(t *testing.T) {
 }
 
 func TestValidateName(t *testing.T) {
-	valid := []string{"foo", "my-agent", "a.b", "opencode", "x_y", "a/b"}
+	valid := []string{"foo", "my-agent", "opencode", "a/b", "postgres-main", "alpha"}
 	for _, name := range valid {
 		if err := ValidateName(name); err != nil {
 			t.Errorf("ValidateName(%q) = %v, want nil", name, err)
 		}
 	}
-	invalid := []string{"", "config", "doctor", "help", "version", "completion", "prune", "init", "../x", `a\b`, "a b", "a..b"}
+	invalid := []string{"", "config", "doctor", "help", "version", "completion", "prune", "init", "../x", `a\b`, "a b", "a..b", "a.b", "x_y", "lang/x_y"}
 	for _, name := range invalid {
 		if err := ValidateName(name); err == nil {
 			t.Errorf("ValidateName(%q) = nil, want error", name)
@@ -509,14 +509,25 @@ func TestValidateServicesMissingCommand(t *testing.T) {
 	}
 }
 
-func TestValidateServicesRejectNetwork(t *testing.T) {
+func TestValidateServicesRejectNetworkHost(t *testing.T) {
 	rc := validServiceProfile()
 	svc := rc.Services["registry"]
 	svc.Network = "host"
 	rc.Services["registry"] = svc
 	err := validate(rc)
-	if err == nil || !strings.Contains(err.Error(), "services: registry: must not set network") {
-		t.Fatalf("expected rejected-field error for network, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: network is always enabled for services") {
+		t.Fatalf("expected rejected-network error, got: %v", err)
+	}
+}
+
+func TestValidateServicesRejectNetworkTrue(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Network = "true"
+	rc.Services["registry"] = svc
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "services: registry: network is always enabled for services") {
+		t.Fatalf("expected rejected-network error, got: %v", err)
 	}
 }
 
@@ -584,6 +595,34 @@ func TestValidateServiceNameRegex(t *testing.T) {
 	err := validate(rc)
 	if err == nil || !strings.Contains(err.Error(), "services: bad/name: invalid service name") {
 		t.Fatalf("expected invalid-name error, got: %v", err)
+	}
+}
+
+func TestValidateServiceNameGrammar(t *testing.T) {
+	for _, name := range []string{"svc_one", "postgres.main", "Redis"} {
+		rc := validServiceProfile()
+		rc.Services[name] = rc.Services["registry"]
+		delete(rc.Services, "registry")
+		err := validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "services: "+name+": invalid service name") {
+			t.Errorf("validate(service name %q) = %v, want invalid-name error", name, err)
+		}
+	}
+}
+
+func TestValidateNetworkHostWithServices(t *testing.T) {
+	rc := validServiceProfile()
+	rc.Network = "host"
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "network: host cannot be combined with services") {
+		t.Fatalf("expected host-network-with-services error, got: %v", err)
+	}
+}
+
+func TestValidateNetworkHostAloneOK(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}, Network: "host"}}
+	if err := validate(rc); err != nil {
+		t.Fatalf("expected no error for network: host without services, got: %v", err)
 	}
 }
 

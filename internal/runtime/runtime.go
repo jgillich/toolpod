@@ -139,13 +139,17 @@ type Runtime interface {
 	RunContainer(ctx context.Context, spec Spec, created CreateResult) (int, error)
 	StartServices(ctx context.Context, spec Spec, w ProgressWriter, pull bool) (ServiceBindings, error)
 	StopServices(ctx context.Context, spec Spec) error
+	ConnectContainerToNetwork(ctx context.Context, containerID, networkName string, aliases []string) error
+	RemoveContainer(ctx context.Context, containerID string) error
 }
 
 // ServiceBindings carries the container-side socket paths for each running
-// service (Sockets maps service name to container path) and Release tears the
-// services down when the launch finishes.
+// service (Sockets maps service name to container path), the shared network
+// the services were attached to, and Release tears the services down when the
+// launch finishes.
 type ServiceBindings struct {
 	Sockets map[string]string
+	Network string
 	Release func()
 }
 

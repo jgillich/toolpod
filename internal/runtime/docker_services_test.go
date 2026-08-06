@@ -20,7 +20,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/google/go-cmp/cmp"
 	"github.com/jgillich/tpd/internal/workspace"
 	"golang.org/x/sys/unix"
 )
@@ -59,6 +61,17 @@ type fakeServicesDaemon struct {
 	execCreates  int
 	execCmds     [][]string
 	execExitCode int
+
+	networkExists  bool
+	connectReqs    []fakeServiceConnectReq
+	connectAliases []string
+	connectCode    int
+	networksByID   map[string]map[string]*network.EndpointSettings
+}
+
+type fakeServiceConnectReq struct {
+	containerID string
+	aliases     []string
 }
 
 type fakeBuildReq struct {
@@ -68,9 +81,11 @@ type fakeBuildReq struct {
 
 func newFakeServicesDaemon() *fakeServicesDaemon {
 	return &fakeServicesDaemon{
-		imagePresent: true,
-		imageID:      "sha256:base",
-		nameByID:     map[string]string{},
+		imagePresent:  true,
+		imageID:       "sha256:base",
+		nameByID:      map[string]string{},
+		networkExists: true,
+		networksByID:  map[string]map[string]*network.EndpointSettings{},
 	}
 }
 
@@ -103,6 +118,38 @@ func (f *fakeServicesDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPut && strings.HasSuffix(p, "/archive"):
 		f.copyCount++
 		w.WriteHeader(http.StatusOK)
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "containers/") && strings.HasSuffix(p, "/json"):
+		f.serveContainerInspect(w, strings.TrimPrefix(strings.TrimSuffix(p, "/json"), "containers/"))
+	case r.Method == http.MethodGet && strings.HasPrefix(p, "networks/"):
+		if !f.networkExists {
+			http.Error(w, `{"message":"network tpd-services not found"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ownedServiceNetwork())
+	case r.Method == http.MethodPost && p == "networks/create":
+		io.Copy(io.Discard, r.Body)
+		f.networkExists = true
+		fmt.Fprint(w, `{"Id":"tpd-services"}`)
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "networks/") && strings.HasSuffix(p, "/connect"):
+		var req network.ConnectOptions
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		var aliases []string
+		if req.EndpointConfig != nil {
+			aliases = req.EndpointConfig.Aliases
+		}
+		f.connectReqs = append(f.connectReqs, fakeServiceConnectReq{containerID: req.Container, aliases: aliases})
+		f.connectAliases = append(f.connectAliases, aliases...)
+		if f.connectCode != 0 {
+			http.Error(w, `{"message":"connect failed"}`, f.connectCode)
+			return
+		}
+		if f.networksByID[req.Container] == nil {
+			f.networksByID[req.Container] = map[string]*network.EndpointSettings{}
+		}
+		f.networksByID[req.Container][ServiceNetworkName] = &network.EndpointSettings{Aliases: aliases}
+		w.WriteHeader(http.StatusNoContent)
 	case p == "volumes/create" && r.Method == http.MethodPost:
 		io.Copy(io.Discard, r.Body)
 		fmt.Fprint(w, `{"Name":"vol","Driver":"local"}`)
@@ -182,6 +229,14 @@ func (f *fakeServicesDaemon) serveContainerCreate(w http.ResponseWriter, r *http
 	f.nameByID[id] = name
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"Id":%q}`, id)
+}
+
+func (f *fakeServicesDaemon) serveContainerInspect(w http.ResponseWriter, id string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(types.ContainerJSON{
+		ContainerJSONBase: &types.ContainerJSONBase{ID: id},
+		NetworkSettings:   &types.NetworkSettings{Networks: f.networksByID[id]},
+	})
 }
 
 // createSockets binds the configured host socket paths. It deliberately does
@@ -403,6 +458,135 @@ func TestStartServicesReusesRunningSameHash(t *testing.T) {
 	want := filepath.Join(runDir, "db", "run", "db.sock")
 	if got := bindings.Sockets["db/port"]; got != want {
 		t.Errorf("binding db/port = %q, want %q (deterministic run-dir path)", got, want)
+	}
+}
+
+func TestStartServicesNewServiceAttachesToNetwork(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.sockets = map[string][]string{
+		"tpd-svc-registry": {filepath.Join(runDir, "registry", "run", "registry.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("registry", "hash123", map[string]string{"port": "/run/registry.sock"})
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if bindings.Network != ServiceNetworkName {
+		t.Errorf("network = %q, want %q", bindings.Network, ServiceNetworkName)
+	}
+	want := filepath.Join(runDir, "registry", "run", "registry.sock")
+	if got := bindings.Sockets["registry/port"]; got != want {
+		t.Errorf("binding registry/port = %q, want %q", got, want)
+	}
+	if len(daemon.connectReqs) != 1 {
+		t.Fatalf("network connect calls = %d, want 1", len(daemon.connectReqs))
+	}
+	if diff := cmp.Diff([]string{"tpd-svc-registry"}, daemon.connectAliases); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
+func TestStartServicesReuseSkipsRedundantConnect(t *testing.T) {
+	overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.containers = []types.Container{{
+		ID:     "old-svc",
+		Names:  []string{"/tpd-svc-db"},
+		State:  "running",
+		Labels: map[string]string{ServiceHashLabel: "hash123"},
+	}}
+	daemon.networksByID["old-svc"] = map[string]*network.EndpointSettings{
+		ServiceNetworkName: {Aliases: []string{"tpd-svc-db"}},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if len(daemon.connectReqs) != 0 {
+		t.Errorf("an already-attached reused container must not be reconnected; connects = %v", daemon.connectReqs)
+	}
+	if bindings.Network != ServiceNetworkName {
+		t.Errorf("network = %q, want %q", bindings.Network, ServiceNetworkName)
+	}
+}
+
+func TestStartServicesReuseRepairsMissingNetwork(t *testing.T) {
+	overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.containers = []types.Container{{
+		ID:     "old-svc",
+		Names:  []string{"/tpd-svc-db"},
+		State:  "running",
+		Labels: map[string]string{ServiceHashLabel: "hash123"},
+	}}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if len(daemon.connectReqs) != 1 {
+		t.Fatalf("network connect calls = %d, want 1", len(daemon.connectReqs))
+	}
+	if daemon.connectReqs[0].containerID != "old-svc" {
+		t.Errorf("connect container = %q, want old-svc", daemon.connectReqs[0].containerID)
+	}
+	if diff := cmp.Diff([]string{"tpd-svc-db"}, daemon.connectReqs[0].aliases); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
+func TestStartServicesNetworkConnectFailureReleasesLocks(t *testing.T) {
+	lockDir, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.connectCode = http.StatusInternalServerError
+	daemon.sockets = map[string][]string{
+		"tpd-svc-a": {filepath.Join(runDir, "a", "run", "x.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := Spec{
+		Workspace: WorkspaceSpec{Mode: workspace.ModeRootless},
+		Services: []ServiceSpec{
+			{Name: "a", Hash: "ha", Image: "debian:13-slim", Command: []string{"sleep"}, Labels: map[string]string{ServiceLabel: "a", ServiceHashLabel: "ha", OwnershipLabel: "true"}, Exposes: map[string]string{"x": "/run/x.sock"}},
+			{Name: "b", Hash: "hb", Image: "debian:13-slim", Command: []string{"sleep"}, Labels: map[string]string{ServiceLabel: "b", ServiceHashLabel: "hb", OwnershipLabel: "true"}, Exposes: map[string]string{"y": "/run/y.sock"}},
+		},
+	}
+	_, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err == nil {
+		t.Fatal("StartServices must fail when the network connect fails")
+	}
+	if !strings.Contains(err.Error(), "connect") {
+		t.Errorf("error %q should mention the failed connect", err)
+	}
+	if !containsString(daemon.removed, daemon.createdIDs[0]) {
+		t.Errorf("created service container must be removed after a connect failure; removed = %v", daemon.removed)
+	}
+	// Both lockfiles must be re-acquirable: the internal defer released every
+	// lock acquired before the failure.
+	for _, name := range []string{"a", "b"} {
+		f, err := os.OpenFile(filepath.Join(lockDir, "svc-"+name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatalf("open lockfile for %s: %v", name, err)
+		}
+		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			t.Errorf("lock for service %s still held after StartServices error: %v", name, err)
+		}
+		unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		f.Close()
 	}
 }
 

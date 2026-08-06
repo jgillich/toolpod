@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/profile"
@@ -31,29 +32,36 @@ type dockerClient interface {
 	ImageInspectWithRaw(ctx context.Context, ref string) (types.ImageInspect, []byte, error)
 	ContainerList(ctx context.Context, opts container.ListOptions) ([]types.Container, error)
 	ContainerInspectWithRaw(ctx context.Context, containerID string, getSize bool) (types.ContainerJSON, []byte, error)
+	NetworkList(ctx context.Context, opts network.ListOptions) ([]network.Summary, error)
+	NetworkRemove(ctx context.Context, networkID string) error
 }
 
 type Options struct {
-	All     bool // remove every tpd-managed resource regardless of liveness
-	Volumes bool // scope to volumes only
-	Images  bool // scope to images only
-	Force   bool // skip confirmation prompt
+	All      bool // remove every tpd-managed resource regardless of liveness
+	Volumes  bool // scope to volumes only
+	Images   bool // scope to images only
+	Networks bool // scope to the tpd service network only
+	Force    bool // skip confirmation prompt
 }
 
 type Result struct {
-	VolumesRemoved []string
-	ImagesRemoved  []string
+	VolumesRemoved  []string
+	ImagesRemoved   []string
+	NetworksRemoved []string
 }
 
-// Run prunes tpd-managed Docker resources (volumes and derived images).
+// Run prunes tpd-managed Docker resources (volumes, derived images, and the
+// service network).
 //
-// Default (no flags): remove only catalog-unused resources — a volume is
+// Default (no type flags): remove only catalog-unused resources — a volume is
 // used if some resolvable profile declares it (tpd-mise if any profile
 // exists, tpd-cache-<name> for any profile declaring caches.<name>); a
 // tpd/packages:<hash> image is used if some resolvable profile's
-// (base-image-id, merged-packages) hash matches. --all removes
-// every tpd-managed resource regardless of liveness. --volumes / --images
-// scope to one resource type; without either, both are pruned.
+// (base-image-id, merged-packages) hash matches. The service network is never
+// in scope by default. --all removes every tpd-managed resource regardless of
+// liveness; it does not imply network scope. A type flag (--volumes / --images
+// / --networks) scopes to exactly the requested types; without any, volumes
+// and images are pruned.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -63,11 +71,13 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 }
 
 func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
-	scopeVolumes := !opts.Images || opts.Volumes
-	scopeImages := !opts.Volumes || opts.Images
+	anyTypeFlag := opts.Volumes || opts.Images || opts.Networks
+	scopeVolumes := !anyTypeFlag || opts.Volumes
+	scopeImages := !anyTypeFlag || opts.Images
+	scopeNetworks := opts.Networks
 
 	var usedVolumes, usedImages map[string]bool
-	if !opts.All {
+	if !opts.All && (scopeVolumes || scopeImages) {
 		var err error
 		usedVolumes, usedImages, err = computeUsed(ctx, cli)
 		if err != nil {
@@ -76,6 +86,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	}
 
 	var removeVolumes, removeImages []string
+	var removeNetworks []network.Summary
 	if scopeVolumes {
 		existing, err := listTpdVolumes(ctx, cli)
 		if err != nil {
@@ -97,6 +108,13 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 				removeImages = append(removeImages, ref)
 			}
 		}
+	}
+	if scopeNetworks {
+		existing, err := listTpdNetworks(ctx, cli)
+		if err != nil {
+			return Result{}, fmt.Errorf("list networks: %w", err)
+		}
+		removeNetworks = append(removeNetworks, existing...)
 	}
 
 	if len(removeVolumes) > 0 || len(removeImages) > 0 {
@@ -127,6 +145,23 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 			keptI = append(keptI, ref)
 		}
 		removeImages = keptI
+	}
+	if len(removeNetworks) > 0 {
+		// Networks have no catalog-liveness notion; the only protection is a
+		// running container attached to them.
+		networksInUse, err := runningContainerNetworks(ctx, cli)
+		if err != nil {
+			return Result{}, fmt.Errorf("list running containers: %w", err)
+		}
+		var keptN []network.Summary
+		for _, n := range removeNetworks {
+			if networksInUse[n.Name] || networksInUse[n.ID] {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", n.Name)
+				continue
+			}
+			keptN = append(keptN, n)
+		}
+		removeNetworks = keptN
 	}
 
 	var result Result
@@ -171,6 +206,32 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 		}
 	}
 
+	if scopeNetworks && len(removeNetworks) > 0 {
+		names := make([]string, len(removeNetworks))
+		for i, n := range removeNetworks {
+			names[i] = n.Name
+		}
+		if opts.Force || confirm("networks", names, os.Stdin) {
+			for _, n := range removeNetworks {
+				// Re-scan so a container attached while the prompt was open
+				// protects the network.
+				inUse, err := runningContainerNetworks(ctx, cli)
+				if err != nil {
+					return result, fmt.Errorf("re-check network %s: %w", n.Name, err)
+				}
+				if inUse[n.Name] || inUse[n.ID] {
+					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", n.Name)
+					continue
+				}
+				if err := cli.NetworkRemove(ctx, n.ID); err != nil {
+					fmt.Fprintf(os.Stderr, "  failed to remove network %s: %v\n", n.Name, err)
+				} else {
+					result.NetworksRemoved = append(result.NetworksRemoved, runtime.ServiceNetworkName)
+				}
+			}
+		}
+	}
+
 	return result, nil
 }
 
@@ -198,6 +259,34 @@ func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[st
 		images[insp.Image] = true
 	}
 	return volumes, images, nil
+}
+
+// runningContainerNetworks returns every network a running container is
+// attached to, keyed by name and ID. Unlike runningContainerRefs it is
+// deliberately unfiltered: an unlabeled container attached to the managed
+// network protects it as strongly as a tpd container would.
+func runningContainerNetworks(ctx context.Context, cli dockerClient) (map[string]bool, error) {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	inUse := map[string]bool{}
+	for _, c := range containers {
+		insp, _, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
+		if err != nil {
+			return nil, fmt.Errorf("inspect container %s: %w", c.ID, err)
+		}
+		if insp.NetworkSettings == nil {
+			continue
+		}
+		for name, ep := range insp.NetworkSettings.Networks {
+			inUse[name] = true
+			if ep != nil && ep.NetworkID != "" {
+				inUse[ep.NetworkID] = true
+			}
+		}
+	}
+	return inUse, nil
 }
 
 // imageInUse reports whether the derived image ref is referenced by a running
@@ -353,6 +442,32 @@ func listTpdImages(ctx context.Context, cli dockerClient) ([]string, error) {
 	}
 	sort.Strings(refs)
 	return refs, nil
+}
+
+// listTpdNetworks selects the managed service network: only the canonical name
+// carrying both the ownership and services-role labels. A same-name network
+// missing either label is reported and never removed.
+func listTpdNetworks(ctx context.Context, cli dockerClient) ([]network.Summary, error) {
+	networks, err := cli.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var found []network.Summary
+	for _, n := range networks {
+		if n.Name != runtime.ServiceNetworkName {
+			continue
+		}
+		if n.Labels[runtime.OwnershipLabel] != "true" {
+			fmt.Fprintf(os.Stderr, "warning: skipping unlabeled %s network (not tpd-owned)\n", n.Name)
+			continue
+		}
+		if n.Labels[runtime.NetworkRoleLabel] != runtime.NetworkRoleServices {
+			fmt.Fprintf(os.Stderr, "warning: skipping %s (not a tpd services network)\n", n.Name)
+			continue
+		}
+		found = append(found, n)
+	}
+	return found, nil
 }
 
 func isTpdVolume(name string) bool {
