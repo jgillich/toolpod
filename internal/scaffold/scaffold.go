@@ -20,6 +20,7 @@ type Options struct {
 	Name        string
 	Extends     []string
 	Force       bool
+	Merge       bool
 	DryRun      bool
 	Interactive bool
 	ProfileDir  string
@@ -212,42 +213,43 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 
 	targetPath := filepath.Join(userDir, profileName+".yaml")
 
-	// Resolve the generated profile to validate it. A brand-new profile
-	// without a command/image is written anyway with a warning — the user is
-	// expected to edit it before launching.
-	_, resolveErr := resolveGeneratedProfile(content, profileName, cat)
-	if resolveErr != nil {
-		if !isIncompleteProfileErr(resolveErr) {
-			return fmt.Errorf("generated config failed validation: %s: %w", targetPath, resolveErr)
+	// Dry-run without merge mirrors the pre-merge behavior: print the generated
+	// content without touching the filesystem or checking for an existing file.
+	if opts.DryRun && !opts.Merge {
+		if err := validateGenerated(content, profileName, targetPath, cat, stderr); err != nil {
+			return err
 		}
-		fmt.Fprintf(stderr, "note: %s is not runnable yet (no command or image); edit the file before launching\n", targetPath)
+		fmt.Fprintf(stdout, "# dry-run: would write %s\n", targetPath)
+		fmt.Fprint(stdout, content)
+		return nil
+	}
+
+	action, err := overwriteAction(tty, opts, wizardUsed, targetPath, stdin, stdout, reader)
+	if err != nil {
+		return err
+	}
+	if action == writeAbort {
+		fmt.Fprintf(stdout, "skipped %s\n", targetPath)
+		return nil
+	}
+	if action == writeMerge {
+		existing, err := os.ReadFile(targetPath)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", targetPath, err)
+		}
+		content, err = mergeYAML(existing, []byte(content))
+		if err != nil {
+			return fmt.Errorf("merging %s: %w", targetPath, err)
+		}
+	}
+	if err := validateGenerated(content, profileName, targetPath, cat, stderr); err != nil {
+		return err
 	}
 
 	if opts.DryRun {
 		fmt.Fprintf(stdout, "# dry-run: would write %s\n", targetPath)
 		fmt.Fprint(stdout, content)
 		return nil
-	}
-
-	if _, err := os.Stat(targetPath); err == nil {
-		needPrompt := false
-		if !opts.Force {
-			if !wizardUsed {
-				return fmt.Errorf("%s already exists (use --force to overwrite)", targetPath)
-			}
-			needPrompt = true
-		}
-
-		if needPrompt {
-			confirmed, err := promptOverwrite(tty, targetPath, stdin, stdout, reader)
-			if err != nil {
-				return err
-			}
-			if !confirmed {
-				fmt.Fprintf(stdout, "skipped %s\n", targetPath)
-				return nil
-			}
-		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
@@ -259,6 +261,51 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	}
 
 	fmt.Fprintf(stdout, "created %s\n", targetPath)
+	return nil
+}
+
+// writeAction is what init does with an existing target file.
+type writeAction int
+
+const (
+	writeReplace writeAction = iota
+	writeMerge
+	writeAbort
+)
+
+// overwriteAction decides how to treat an existing target: --force replaces,
+// --merge merges, an interactive wizard asks, and anything else fails. A
+// missing target always means replace (plain generation).
+func overwriteAction(tty bool, opts Options, wizardUsed bool, targetPath string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (writeAction, error) {
+	if _, err := os.Stat(targetPath); err != nil {
+		return writeReplace, nil
+	}
+	if opts.Force && opts.Merge {
+		return writeAbort, fmt.Errorf("--force and --merge are mutually exclusive")
+	}
+	switch {
+	case opts.Merge:
+		return writeMerge, nil
+	case opts.Force:
+		return writeReplace, nil
+	case wizardUsed:
+		return promptOverwrite(tty, targetPath, stdin, stdout, reader)
+	default:
+		return writeAbort, fmt.Errorf("%s already exists (use --force to overwrite or --merge to merge)", targetPath)
+	}
+}
+
+// validateGenerated resolves the content init is about to write. A brand-new
+// profile without a command/image is written anyway with a warning — the user
+// is expected to edit it before launching.
+func validateGenerated(content, profileName, targetPath string, cat profile.Catalog, stderr io.Writer) error {
+	_, resolveErr := resolveGeneratedProfile(content, profileName, cat)
+	if resolveErr != nil {
+		if !isIncompleteProfileErr(resolveErr) {
+			return fmt.Errorf("generated config failed validation: %s: %w", targetPath, resolveErr)
+		}
+		fmt.Fprintf(stderr, "note: %s is not runnable yet (no command or image); edit the file before launching\n", targetPath)
+	}
 	return nil
 }
 
@@ -417,31 +464,45 @@ func promptNewProfileHuh(baseNames []string, stdin io.Reader, stdout io.Writer) 
 	return name, []string{base}, nil
 }
 
-func promptConfirm(tty bool, title string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (bool, error) {
+func promptOverwrite(tty bool, targetPath string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (writeAction, error) {
 	if tty {
-		var confirmed bool
+		// Abort is the safe default: a stray Enter never clobbers or mutates an
+		// existing file.
+		choice := "abort"
 		form := huh.NewForm(
 			huh.NewGroup(
-				huh.NewConfirm().
-					Title(title).
-					Affirmative("Yes").
-					Negative("No").
-					Value(&confirmed),
+				huh.NewSelect[string]().
+					Title(targetPath+" already exists.").
+					Options(
+						huh.NewOption("Overwrite", "overwrite"),
+						huh.NewOption("Merge", "merge"),
+						huh.NewOption("Abort", "abort"),
+					).
+					Value(&choice),
 			),
 		).WithInput(stdin).WithOutput(stdout)
 		if err := form.Run(); err != nil {
-			return false, err
+			return writeAbort, err
 		}
-		return confirmed, nil
+		switch choice {
+		case "overwrite":
+			return writeReplace, nil
+		case "merge":
+			return writeMerge, nil
+		default:
+			return writeAbort, nil
+		}
 	}
-	fmt.Fprintf(stdout, "%s [y/N]: ", title)
+	fmt.Fprintf(stdout, "%s already exists. Overwrite, Merge, or Abort? [a]: ", targetPath)
 	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y" || line == "yes", nil
-}
-
-func promptOverwrite(tty bool, targetPath string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (bool, error) {
-	return promptConfirm(tty, fmt.Sprintf("%s already exists. Overwrite?", targetPath), stdin, stdout, reader)
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "o", "overwrite":
+		return writeReplace, nil
+	case "m", "merge":
+		return writeMerge, nil
+	default:
+		return writeAbort, nil
+	}
 }
 
 func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (profile.Profile, error) {

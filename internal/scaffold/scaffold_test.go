@@ -300,16 +300,16 @@ func TestInteractiveOverwritePromptDecline(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nlang/javascript\nn\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nlang/javascript\na\n"), &stdout, &stderr)
 	if err != nil {
-		t.Fatalf("declining prompt should not error, got: %v", err)
+		t.Fatalf("aborting prompt should not error, got: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "skipped") {
 		t.Error("should print skipped")
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
 	if string(data) != "version: 1\n" {
-		t.Error("file should be unchanged after declining overwrite")
+		t.Error("file should be unchanged after aborting overwrite")
 	}
 }
 
@@ -321,7 +321,7 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	err := Run(context.Background(), Options{
 		Interactive: true,
 		ProfileDir:  dir,
-	}, strings.NewReader("opencode\nlang/javascript\ny\n"), &stdout, &stderr)
+	}, strings.NewReader("opencode\nlang/javascript\no\n"), &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("accepting prompt should not error, got: %v", err)
 	}
@@ -331,6 +331,100 @@ func TestInteractiveOverwritePromptAccept(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
 	if !strings.Contains(string(data), "- core/lang/javascript") {
 		t.Error("file should reference javascript fragment from new generation")
+	}
+}
+
+func TestInteractiveOverwritePromptMerge(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\n# my shell\ncommand: [zsh]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	// No Profile/Fragments provided → wizard triggers → overwrite prompt → merge.
+	err := Run(context.Background(), Options{
+		Interactive: true,
+		ProfileDir:  dir,
+	}, strings.NewReader("opencode\nlang/javascript\nm\n"), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("merging prompt should not error, got: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	content := string(data)
+	if !strings.Contains(content, "# my shell") || !strings.Contains(content, "zsh") {
+		t.Errorf("merge wiped existing comments/command:\n%s", content)
+	}
+	if !strings.Contains(content, "- core/lang/javascript") {
+		t.Errorf("merge did not add the picked fragment:\n%s", content)
+	}
+}
+
+func TestInitMergeFlagMergesExisting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\ncommand: [zsh]\nextends:\n  - core/mise\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Merge:      true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "created") {
+		t.Errorf("should print created, got: %s", stdout.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	content := string(data)
+	if !strings.Contains(content, "zsh") {
+		t.Errorf("merge dropped existing command:\n%s", content)
+	}
+	mi := strings.Index(content, "- core/mise")
+	oi := strings.Index(content, "- core/opencode")
+	ji := strings.Index(content, "- core/lang/javascript")
+	if mi < 0 || oi < 0 || ji < 0 || !(mi < oi && oi < ji) {
+		t.Errorf("extends should be core/mise, core/opencode, core/lang/javascript in order:\n%s", content)
+	}
+}
+
+func TestInitMergeFlagNoExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Merge:      true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if !strings.Contains(string(data), "- core/opencode") {
+		t.Errorf("merge with no existing file should generate normally:\n%s", data)
+	}
+}
+
+func TestInitMergeForceMutuallyExclusive(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Force:      true,
+		Merge:      true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error for --force with --merge")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should mention mutual exclusivity, got: %v", err)
 	}
 }
 

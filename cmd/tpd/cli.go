@@ -352,6 +352,7 @@ func newInitCommand() *cobra.Command {
 		name    string
 		extends []string
 		force   bool
+		merge   bool
 		dryRun  bool
 	)
 	cmd := &cobra.Command{
@@ -366,6 +367,7 @@ func newInitCommand() *cobra.Command {
 				Name:        name,
 				Extends:     extends,
 				Force:       force,
+				Merge:       merge,
 				DryRun:      dryRun,
 				Interactive: ui.IsTTYReader(os.Stdin),
 			}
@@ -377,6 +379,7 @@ func newInitCommand() *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&extends, "extends", nil, "Comma-separated bases to extend: profiles, fragments, or mise.")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing user profile file.")
+	cmd.Flags().BoolVar(&merge, "merge", false, "Merge the selection into an existing user profile file.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the generated file without writing it.")
 	cmd.RegisterFlagCompletionFunc("extends", completeNames)
 	return cmd

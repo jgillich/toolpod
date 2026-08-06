@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -108,6 +109,37 @@ func TestInitHelpMentionsExtends(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "--extends") {
 		t.Errorf("expected --extends in init help, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--merge") {
+		t.Errorf("expected --merge in init help, got:\n%s", out)
+	}
+}
+
+func TestInitMergeFlag(t *testing.T) {
+	cfg := t.TempDir()
+	profilesDir := filepath.Join(cfg, "tpd", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(profilesDir, "opencode.yaml")
+	if err := os.WriteFile(target, []byte("version: 1\n# my shell\ncommand: [zsh]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"XDG_CONFIG_HOME=" + cfg}
+	out, err := runTpdEnv(t, env, "init", "--merge", "--extends", "lang/javascript", "opencode")
+	if err != nil {
+		t.Fatalf("init --merge: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# my shell") || !strings.Contains(content, "zsh") {
+		t.Errorf("merge wiped existing content:\n%s", content)
+	}
+	if !strings.Contains(content, "- core/lang/javascript") {
+		t.Errorf("merge did not add the fragment:\n%s", content)
 	}
 }
 

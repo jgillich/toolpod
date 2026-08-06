@@ -29,7 +29,7 @@ Struct-level merge + re-marshal was rejected: it wipes comments and reformats. A
 
 ## Invocation
 
-- **Wizard:** the `Overwrite? [y/N]` prompt becomes a three-way `Overwrite / Merge / Abort` (huh Select on a TTY; `o`/`m`/`a` text input otherwise).
+- **Wizard:** the `Overwrite? [y/N]` prompt becomes a three-way `Overwrite / Merge / Abort` (huh Select on a TTY, with **Abort selected by default** so a stray Enter never touches the existing file; `o`/`m`/`a` text input otherwise).
 - **`--merge` flag** on `tpd init`: non-interactive merge into an existing file; with no existing file it behaves as a normal generate. `--merge` and `--force` are mutually exclusive (error if both).
 - Dry-run and the "not runnable yet" warning apply to the merged result.
 
