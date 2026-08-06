@@ -440,6 +440,8 @@ meta:
   description: Disposable PowerShell shell
 extends: mise
 command: ["pwsh"]
+packages:
+  - libicu76
 mounts:
   ~/.config/powershell:
     source: ~/.config/powershell
