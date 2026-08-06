@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Sourcegraph Amp coding agent
 extends: mise
 command: ["amp"]
 tools:

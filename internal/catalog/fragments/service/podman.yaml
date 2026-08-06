@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Isolated nested podman engine as a service
 tools:
   docker-cli: latest
   podman: latest

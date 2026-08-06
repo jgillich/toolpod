@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: The opencode desktop app (GUI)
 extends:
   - mise
   - gui/display

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Full XDG_RUNTIME_DIR session mount (GUI)
 packages:
   - libasound2
   - gstreamer1.0-alsa

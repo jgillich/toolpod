@@ -152,6 +152,27 @@ func TestProfileListShowsDisplayNameAndSource(t *testing.T) {
 	}
 }
 
+func TestProfileListShowsDescription(t *testing.T) {
+	cfg := t.TempDir()
+	profilesDir := filepath.Join(cfg, "tpd", "profiles")
+	if err := os.MkdirAll(profilesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profilesDir, "myapp.yaml"), []byte("version: 1\nimage: x\ncommand: [\"myapp\"]\nmeta:\n  description: my app description\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runTpdCfg(t, cfg, "list")
+	if err != nil {
+		t.Fatalf("profile list: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "DESCRIPTION") {
+		t.Errorf("expected a DESCRIPTION column header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "my app description") {
+		t.Errorf("expected the list to show the meta description, got:\n%s", out)
+	}
+}
+
 func TestProfileEditExistingUserFileUntouched(t *testing.T) {
 	cfg := t.TempDir()
 	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")

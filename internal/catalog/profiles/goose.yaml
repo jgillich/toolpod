@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Goose, an extensible AI coding agent
 extends: mise
 command: ["goose"]
 tools:

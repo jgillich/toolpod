@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Terraform with plugin cache
 tools:
   terraform: latest
 caches:

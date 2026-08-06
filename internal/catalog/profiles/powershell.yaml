@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Disposable PowerShell shell
 extends: mise
 command: ["pwsh"]
 mounts:

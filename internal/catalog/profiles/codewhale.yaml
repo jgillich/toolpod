@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: CodeWhale, a terminal coding agent
 extends: mise
 command: ["codewhale"]
 tools:

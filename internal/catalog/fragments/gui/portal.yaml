@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: XDG desktop portal and dbus integration
 packages:
   - dbus
   - libdbus-1-3

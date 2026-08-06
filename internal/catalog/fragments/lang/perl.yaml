@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Perl toolchain with cpan caches
 caches:
   cpan: ~/.cpan
   cpanm: ~/.cpanm

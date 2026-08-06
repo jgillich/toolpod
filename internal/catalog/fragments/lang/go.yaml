@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Go toolchain with GOPATH cache
 caches:
   go: ~/go
 tools:

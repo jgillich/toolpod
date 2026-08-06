@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: OCaml toolchain (opam)
 caches:
   opam: ~/.opam
 tools:

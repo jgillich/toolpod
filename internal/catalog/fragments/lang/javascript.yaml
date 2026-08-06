@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: JavaScript toolchain (node, bun, deno) with npm caches
 caches:
   bun: ~/.bun/install/global
   deno: ~/.cache/deno

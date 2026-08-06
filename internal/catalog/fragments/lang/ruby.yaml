@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Ruby toolchain with gem cache
 tools:
   ruby: latest
 caches:

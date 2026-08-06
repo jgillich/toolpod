@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: SSH keys and client
 mounts:
   ~/.ssh:
     source: ~/.ssh

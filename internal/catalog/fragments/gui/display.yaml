@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Display, GPU and Wayland/X11 mounts
 packages:
   - libatk-bridge2.0-0
   - libatk1.0-0

@@ -333,7 +333,7 @@ func runList() error {
 		return fmt.Errorf("loading profiles: %w", err)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tKIND\tSOURCE")
+	fmt.Fprintln(w, "NAME\tKIND\tSOURCE\tDESCRIPTION")
 	for _, dn := range cat.DisplayNames() {
 		kind := "profile"
 		if ref, err := cat.ParseRefForCatalog(dn); err == nil {
@@ -341,10 +341,21 @@ func runList() error {
 				kind = "fragment"
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", dn, kind, cat.Source(dn))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", dn, kind, cat.Source(dn), truncateRunes(cat.Description(dn), 60))
 	}
 	w.Flush()
 	return nil
+}
+
+// truncateRunes shortens s to at most max runes (a multi-byte-safe "~60
+// chars"), appending an ellipsis when it cuts. tabwriter cannot wrap, so list
+// keeps descriptions on one line.
+func truncateRunes(s string, max int) string {
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return string(rs[:max]) + "…"
 }
 
 func newInitCommand() *cobra.Command {

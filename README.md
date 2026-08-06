@@ -119,26 +119,30 @@ If a project has its own `mise.toml`, tpd's bash profile picks it up as an overr
 
 ### Built-in profiles
 
+<!-- BEGIN tpd profiles -->
+
 | Profile | What it is |
 | --- | --- |
-| [`mise`](internal/catalog/profiles/mise.yaml) | Shared base profile: installs the mise toolchain plus common CLI tools (bat, fzf, jq, ripgrep…). Everything else extends it. |
 | [`amp`](internal/catalog/profiles/amp.yaml) | Sourcegraph Amp coding agent |
+| [`bash`](internal/catalog/profiles/bash.yaml) | Disposable bash shell with shell completion |
+| [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
+| [`claude`](internal/catalog/profiles/claude.yaml) | Anthropic Claude Code |
+| [`codewhale`](internal/catalog/profiles/codewhale.yaml) | CodeWhale, a terminal coding agent |
+| [`codex`](internal/catalog/profiles/codex.yaml) | OpenAI Codex CLI |
+| [`copilot`](internal/catalog/profiles/copilot.yaml) | GitHub Copilot CLI |
+| [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
+| [`gemini`](internal/catalog/profiles/gemini.yaml) | Google Gemini CLI |
+| [`goose`](internal/catalog/profiles/goose.yaml) | Goose, an extensible AI coding agent |
+| [`mise`](internal/catalog/profiles/mise.yaml) | The mise toolchain base with common CLI tools |
 | [`opencode`](internal/catalog/profiles/opencode.yaml) | The opencode AI agent |
 | [`opencode-desktop`](internal/catalog/profiles/opencode-desktop.yaml) | The opencode desktop app (GUI) |
-| [`codex`](internal/catalog/profiles/codex.yaml) | OpenAI Codex CLI |
-| [`claude`](internal/catalog/profiles/claude.yaml) | Anthropic Claude Code |
-| [`gemini`](internal/catalog/profiles/gemini.yaml) | Google Gemini CLI |
-| [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent (earendil-works) |
-| [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
-| [`codewhale`](internal/catalog/profiles/codewhale.yaml) | CodeWhale, a terminal coding agent |
-| [`goose`](internal/catalog/profiles/goose.yaml) | Goose, an extensible AI coding agent |
-| [`qwen`](internal/catalog/profiles/qwen.yaml) | Qwen Code CLI (Alibaba) |
-| [`copilot`](internal/catalog/profiles/copilot.yaml) | GitHub Copilot CLI |
-| [`buzz`](internal/catalog/profiles/buzz.yaml) | Buzz, Block's desktop AI agent (GUI) |
-| [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
-| [`bash`](internal/catalog/profiles/bash.yaml) | Disposable bash shell. |
+| [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent |
 | [`powershell`](internal/catalog/profiles/powershell.yaml) | Disposable PowerShell shell |
+| [`qwen`](internal/catalog/profiles/qwen.yaml) | Qwen Code CLI (Alibaba) |
+| [`t3code`](internal/catalog/profiles/t3code.yaml) | T3 Code desktop app — agent harness control surface |
 | [`trivy`](internal/catalog/profiles/trivy.yaml) | Trivy vulnerability scanner |
+
+<!-- END tpd profiles -->
 
 Most agent built-ins extend the shared `mise` base profile and install their agent as a `tools:` entry. `mise` is the shared base and `bash` is the general-purpose shell profile.
 
@@ -166,6 +170,7 @@ Every launchable profile needs `version`, `image`, and `command`. Fragments only
 | `network` | string | `bridge` (default), `host`, `none`, or a custom name. |
 | `resources` | object | Optional resource limits: `{ memory, cpus }`, enforced as container resource limits (Docker `--memory`/`--cpus` semantics). |
 | `tty` | string | `auto` (default), `true`, or `false`. |
+| `meta` | object | Optional entry metadata: `{ description, tags }`. Describes the entry itself and is never inherited through `extends`; surfaced in `tpd list`, the init wizard, and the generated [catalog docs](docs/catalog.md). |
 | `dbus` | object | Session-bus allowlist: `talk` / `own`, each a map of bus names. |
 
 ### Merge semantics

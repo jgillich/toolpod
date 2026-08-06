@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: T3 Code desktop app — agent harness control surface
 extends:
   - mise
   - gui/display

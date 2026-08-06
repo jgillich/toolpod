@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Elixir and Erlang toolchain with hex and mix caches
 tools:
   elixir: latest
   erlang: latest

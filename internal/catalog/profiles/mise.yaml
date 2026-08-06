@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: The mise toolchain base with common CLI tools
 image: debian:13-slim
 command: ["/usr/bin/mise"]
 repos:

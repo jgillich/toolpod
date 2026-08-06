@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: HashiCorp Vault CLI and token
 mounts:
   ~/.vault-token:
     source: ~/.vault-token

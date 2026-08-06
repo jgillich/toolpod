@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: PHP toolchain with composer cache and build deps
 packages:
   - libxml2-dev
   - libicu-dev

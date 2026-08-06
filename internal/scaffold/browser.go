@@ -1,193 +1,102 @@
 package scaffold
 
 import (
+	"errors"
 	"io"
 	"sort"
 	"strings"
-
-	"github.com/charmbracelet/huh"
 )
 
 // Action values for the fragment-browser loop.
 const (
-	browserUp    = "__up__"
-	browserFiles = "__files__"
+	browserDone   = "__done__"
+	browserCancel = "__cancel__"
 )
 
-// fragTree lists the subdirectories and leaf fragments directly under path in
-// the fragment display-name tree. Top-level fragments (no "/") appear at the
-// root alongside the top-level folders. fragNames must already be deduped —
-// Catalog.FragmentDisplayNames does that upstream.
-func fragTree(fragNames []string, path []string) (dirs, frags []string) {
-	prefix := strings.Join(path, "/")
-	seenDirs := map[string]bool{}
-	seenFrags := map[string]bool{}
+// errNavCancelled reports that the user cancelled the folder navigation.
+var errNavCancelled = errors.New("fragment selection cancelled")
+
+// fragmentNav is the folder → fragments structure backing the picker. Fragments
+// are grouped by their first path segment; names without a "/" sit at the root.
+type fragmentNav struct {
+	folders  []string                   // sorted top-level folder names
+	byFolder map[string][]folderNavItem // each folder's fragment rows
+	topFrags []folderNavItem            // top-level fragment rows
+}
+
+// promptFragmentsBrowserHuh runs the folder-structured fragment picker: one
+// screen of folders whose fragments expand inline below them (Enter toggles a
+// folder, Space toggles a fragment). The picked display names are returned
+// sorted; cancelling returns errNavCancelled.
+func promptFragmentsBrowserHuh(fragNames []string, descs map[string]string, stdin io.Reader, stdout io.Writer) ([]string, error) {
+	nav := buildFragmentNav(fragNames, descs)
+	if len(nav.folders) == 0 && len(nav.topFrags) == 0 {
+		return nil, nil
+	}
+	return runFolderNav(nav, stdin, stdout)
+}
+
+// buildFragmentNav groups the fragment display names into the flat two-level
+// structure the picker renders: sorted folders, each folder's sorted fragment
+// rows, and root-level fragments. Names deeper than two segments flatten — the
+// whole remainder after the folder becomes the row's leaf label, so nothing is
+// dropped.
+func buildFragmentNav(fragNames []string, descs map[string]string) fragmentNav {
+	nav := fragmentNav{byFolder: map[string][]folderNavItem{}}
+	seenFolders := map[string]bool{}
+	seenTop := map[string]bool{}
 	for _, name := range fragNames {
-		var rest string
-		if prefix == "" {
-			rest = name
-		} else {
-			if !strings.HasPrefix(name, prefix+"/") {
-				continue
+		folder, leaf := splitFirst(name)
+		if folder == "" {
+			if !seenTop[name] {
+				seenTop[name] = true
+				nav.topFrags = append(nav.topFrags, fragmentRow(name, leaf, descs))
 			}
-			rest = name[len(prefix)+1:]
+			continue
 		}
-		if i := strings.Index(rest, "/"); i >= 0 {
-			seg := rest[:i]
-			if !seenDirs[seg] {
-				seenDirs[seg] = true
-				dirs = append(dirs, seg)
-			}
-		} else if !seenFrags[rest] {
-			seenFrags[rest] = true
-			frags = append(frags, rest)
+		if !seenFolders[folder] {
+			seenFolders[folder] = true
+			nav.folders = append(nav.folders, folder)
 		}
+		nav.byFolder[folder] = append(nav.byFolder[folder], fragmentRow(name, leaf, descs))
 	}
-	sort.Strings(dirs)
-	sort.Strings(frags)
-	return dirs, frags
+	sort.Strings(nav.folders)
+	for folder := range nav.byFolder {
+		sort.Slice(nav.byFolder[folder], func(i, j int) bool {
+			return nav.byFolder[folder][i].display < nav.byFolder[folder][j].display
+		})
+	}
+	sort.Slice(nav.topFrags, func(i, j int) bool {
+		return nav.topFrags[i].display < nav.topFrags[j].display
+	})
+	return nav
 }
 
-// promptFragmentsBrowserHuh runs the folder-structured fragment picker. Levels
-// with subfolders show a navigation form whose single select fires immediately
-// on Enter (descend, ascend, or open the level's own fragments); levels with
-// no subfolders show a fragments form (multi-select + Done/Back buttons).
-// Selections accumulate across levels and are returned sorted by display name.
-func promptFragmentsBrowserHuh(fragNames []string, stdin io.Reader, stdout io.Writer) ([]string, error) {
-	picked := map[string]bool{}
-	var path []string
-	for {
-		dirs, frags := fragTree(fragNames, path)
-
-		if len(dirs) > 0 {
-			choice, err := promptFolderHuh(path, dirs, len(frags) > 0, stdin, stdout)
-			if err != nil {
-				return nil, err
-			}
-			switch {
-			case strings.HasPrefix(choice, "dir:"):
-				path = append(path, strings.TrimPrefix(choice, "dir:"))
-				continue
-			case choice == browserUp:
-				path = path[:len(path)-1]
-				continue
-			case choice == browserFiles:
-				// Fall through to the fragments form for this level.
-			}
-		}
-
-		done, err := promptFragmentsLevelHuh(path, frags, picked, stdin, stdout)
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			out := make([]string, 0, len(picked))
-			for dn := range picked {
-				out = append(out, dn)
-			}
-			sort.Strings(out)
-			return out, nil
-		}
-		path = path[:len(path)-1]
+// splitFirst returns the first path segment of a display name and the rest; a
+// name with no "/" yields ("", name).
+func splitFirst(name string) (string, string) {
+	if i := strings.Index(name, "/"); i >= 0 {
+		return name[:i], name[i+1:]
 	}
+	return "", name
 }
 
-// promptFolderHuh renders the folder-navigation form. Its single select fires
-// immediately on Enter, so choosing a folder descends without an extra confirm.
-func promptFolderHuh(path, dirs []string, hasFrags bool, stdin io.Reader, stdout io.Writer) (string, error) {
-	opts := make([]huh.Option[string], 0, len(dirs)+2)
-	for _, d := range dirs {
-		opts = append(opts, huh.NewOption("▸ "+d, "dir:"+d))
+// fragmentRow builds a fragment list row. The label shows the leaf (its
+// remainder after the folder prefix) plus the description when one exists.
+func fragmentRow(display, leaf string, descs map[string]string) folderNavItem {
+	label := leaf
+	if d, ok := descs[display]; ok && d != "" {
+		label = leaf + " — " + d
 	}
-	if hasFrags {
-		opts = append(opts, huh.NewOption("✓ fragments here", browserFiles))
-	}
-	if len(path) > 0 {
-		opts = append(opts, huh.NewOption("← up", browserUp))
-	}
-
-	title := "Folder"
-	if len(path) > 0 {
-		title += " — /" + strings.Join(path, "/")
-	}
-
-	var choice string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title(title).
-				Options(opts...).
-				Value(&choice),
-		),
-	).WithInput(stdin).WithOutput(stdout)
-	if err := form.Run(); err != nil {
-		return "", err
-	}
-	return choice, nil
+	return folderNavItem{kind: itemFragment, label: label, display: display}
 }
 
-// promptFragmentsLevelHuh renders the fragments form for one level: a
-// multi-select (space toggles) seeded with the fragments of this level already
-// picked, with the Done/Back buttons in the same group so they stay visible at
-// the bottom (Back hidden at the root). The picked map is updated to the final
-// multi-select state for this level's fragments; the returned bool is true
-// when the user confirmed with Done.
-func promptFragmentsLevelHuh(path, frags []string, picked map[string]bool, stdin io.Reader, stdout io.Writer) (bool, error) {
-	selected := make([]string, 0, len(frags))
-	opts := make([]huh.Option[string], 0, len(frags))
-	for _, f := range frags {
-		opts = append(opts, huh.NewOption(f, f))
-		if picked[fragDisplayName(path, f)] {
-			selected = append(selected, f)
-		}
+// finishPicked returns the accumulated selection, sorted by display name.
+func finishPicked(picked map[string]bool) []string {
+	out := make([]string, 0, len(picked))
+	for dn := range picked {
+		out = append(out, dn)
 	}
-
-	var fields []huh.Field
-	if len(frags) > 0 {
-		title := "Fragments"
-		if len(path) > 0 {
-			title += " — /" + strings.Join(path, "/")
-		}
-		fields = append(fields,
-			huh.NewMultiSelect[string]().
-				Title(title).
-				Options(opts...).
-				Value(&selected),
-		)
-	}
-
-	negative := "Back"
-	if len(path) == 0 {
-		negative = ""
-	}
-	var confirm bool
-	fields = append(fields,
-		huh.NewConfirm().
-			Affirmative("Done").
-			Negative(negative).
-			Value(&confirm),
-	)
-
-	form := huh.NewForm(huh.NewGroup(fields...)).WithInput(stdin).WithOutput(stdout)
-	if err := form.Run(); err != nil {
-		return false, err
-	}
-
-	inSelected := make(map[string]bool, len(selected))
-	for _, f := range selected {
-		inSelected[f] = true
-	}
-	for _, f := range frags {
-		picked[fragDisplayName(path, f)] = inSelected[f]
-	}
-	return confirm, nil
-}
-
-// fragDisplayName joins the current path and a leaf fragment into the display
-// name used to key the picked set (an empty path yields the bare leaf).
-func fragDisplayName(path []string, leaf string) string {
-	if len(path) == 0 {
-		return leaf
-	}
-	return strings.Join(append(append([]string{}, path...), leaf), "/")
+	sort.Strings(out)
+	return out
 }

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Host container engine socket (podman/docker)
 tools:
   docker-cli: latest
   podman: latest

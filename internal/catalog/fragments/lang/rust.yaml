@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Rust toolchain with cargo cache
 caches:
   cargo: ~/.cargo
 tools:

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Helm with chart cache
 tools:
   helm: latest
 caches:

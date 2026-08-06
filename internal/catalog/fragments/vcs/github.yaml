@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: GitHub CLI (gh)
 tools:
   gh: latest
 mounts:

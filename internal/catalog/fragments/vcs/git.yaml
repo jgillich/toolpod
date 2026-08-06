@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Git config and client
 mounts:
   ~/.gitconfig:
     source: ~/.gitconfig

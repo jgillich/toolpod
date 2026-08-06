@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Java toolchain with Maven cache
 tools:
   java: latest
 caches:

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Host docker socket
 tools:
   docker-cli: latest
   docker-compose: latest

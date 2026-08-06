@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Haskell toolchain (cabal, ghcup, stack)
 caches:
   cabal: ~/.cabal
   ghcup: ~/.ghcup

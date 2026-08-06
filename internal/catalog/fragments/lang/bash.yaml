@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Bash shell config mounts and shellcheck
 tools:
   shellcheck: latest
 mounts:

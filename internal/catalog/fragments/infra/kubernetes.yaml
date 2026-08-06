@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: kubectl, k9s, kustomize and kubectx
 tools:
   kubectl: latest
   k9s: latest

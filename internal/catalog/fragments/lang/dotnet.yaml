@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: .NET toolchain with NuGet cache
 tools:
   dotnet: latest
 caches:

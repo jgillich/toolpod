@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Trivy vulnerability scanner
 extends: mise
 command: ["trivy"]
 caches:

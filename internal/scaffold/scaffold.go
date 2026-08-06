@@ -93,12 +93,12 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 			return fmt.Errorf("profile name is required")
 		}
 		if tty {
-			selection, err := promptProfileHuh(builtinProfiles, stdin, stdout)
+			selection, err := promptProfileHuh(builtinProfiles, catalogDescriptions(builtinCat, builtinProfiles), stdin, stdout)
 			if err != nil {
 				return err
 			}
 			if selection == newProfileOption {
-				profileName, bases, err = promptNewProfileHuh(baseNames, stdin, stdout)
+				profileName, bases, err = promptNewProfileHuh(baseNames, catalogDescriptions(cat, baseNames), stdin, stdout)
 				if err != nil {
 					return err
 				}
@@ -175,7 +175,7 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		fragNames := cat.FragmentDisplayNames()
 		var picked []string
 		if tty {
-			p, err := promptFragmentsBrowserHuh(fragNames, stdin, stdout)
+			p, err := promptFragmentsBrowserHuh(fragNames, catalogDescriptions(cat, fragNames), stdin, stdout)
 			if err != nil {
 				return err
 			}
@@ -415,11 +415,33 @@ func promptFragments(names []string, reader *bufio.Reader, stderr io.Writer) []s
 	return strings.Split(line, ",")
 }
 
-func promptProfileHuh(names []string, stdin io.Reader, stdout io.Writer) (string, error) {
+// catalogDescriptions builds a display-name → description map for wizard
+// options. Entries without a description are absent, so labels stay bare.
+func catalogDescriptions(cat profile.Catalog, names []string) map[string]string {
+	descs := map[string]string{}
+	for _, dn := range names {
+		if d := cat.Description(dn); d != "" {
+			descs[dn] = d
+		}
+	}
+	return descs
+}
+
+// metaLabel renders a wizard option label. huh (v1.0.0 and upstream) has no
+// per-option descriptions, so the description rides in the label; the / filter
+// then searches it too.
+func metaLabel(name string, descs map[string]string) string {
+	if d, ok := descs[name]; ok && d != "" {
+		return name + " — " + d
+	}
+	return name
+}
+
+func promptProfileHuh(names []string, descs map[string]string, stdin io.Reader, stdout io.Writer) (string, error) {
 	var selected string
 	opts := []huh.Option[string]{huh.NewOption(newProfileOption, newProfileOption)}
 	for _, n := range names {
-		opts = append(opts, huh.NewOption(n, n))
+		opts = append(opts, huh.NewOption(metaLabel(n, descs), n))
 	}
 	form := huh.NewForm(
 		huh.NewGroup(
@@ -435,12 +457,12 @@ func promptProfileHuh(names []string, stdin io.Reader, stdout io.Writer) (string
 	return selected, nil
 }
 
-func promptNewProfileHuh(baseNames []string, stdin io.Reader, stdout io.Writer) (string, []string, error) {
+func promptNewProfileHuh(baseNames []string, descs map[string]string, stdin io.Reader, stdout io.Writer) (string, []string, error) {
 	var name string
 	var base string
 	opts := make([]huh.Option[string], len(baseNames))
 	for i, n := range baseNames {
-		opts[i] = huh.NewOption(n, n)
+		opts[i] = huh.NewOption(metaLabel(n, descs), n)
 	}
 	form := huh.NewForm(
 		huh.NewGroup(

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Julia toolchain
 caches:
   julia: ~/.julia
 tools:

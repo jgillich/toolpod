@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Scala toolchain (sbt) with sbt, ivy and coursier caches
 tools:
   scala: latest
   sbt: latest

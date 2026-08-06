@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Buzz, Block's desktop AI agent (GUI)
 extends:
   - mise
   - gui/display

@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: TypeScript toolchain (ts-node, tsx, typescript)
 extends: core/lang/javascript
 tools:
   biome: latest

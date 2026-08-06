@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Disposable bash shell with shell completion
 extends:
   - mise
   - shell/bash

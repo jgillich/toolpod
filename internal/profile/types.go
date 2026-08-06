@@ -111,6 +111,16 @@ type Profile struct {
 	Devices     map[string]DeviceBind `yaml:"devices,omitempty"`
 	Dbus        *DbusConfig           `yaml:"dbus,omitempty"`
 	Services    map[string]Service    `yaml:"services,omitempty"`
+	Meta        *Meta                 `yaml:"meta,omitempty"`
+}
+
+// Meta describes a catalog entry itself — never inherited through extends.
+// The leaf entry's own meta is stamped onto a resolved profile; a child that
+// declares none has none. Tags are stored for future consumers; nothing
+// renders them yet.
+type Meta struct {
+	Description string   `yaml:"description,omitempty"`
+	Tags        []string `yaml:"tags,omitempty"`
 }
 
 // Service is a companion container started alongside the launch container.

@@ -80,6 +80,9 @@ func validate(rc RawProfile) error {
 	if err := validateNetwork(rc); err != nil {
 		return err
 	}
+	if err := validateMeta(rc); err != nil {
+		return err
+	}
 	if err := validateResources(rc); err != nil {
 		return err
 	}
@@ -246,6 +249,21 @@ func validateEnv(rc RawProfile) error {
 func validateNetwork(rc RawProfile) error {
 	if rc.Network != "" && (!networkRe.MatchString(rc.Network) || containsControl(rc.Network)) {
 		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("network: invalid network name %q", rc.Network)}
+	}
+	return nil
+}
+
+func validateMeta(rc RawProfile) error {
+	if rc.Meta == nil {
+		return nil
+	}
+	if containsControl(rc.Meta.Description) {
+		return ProfileError{Path: rc.Path, Message: "meta: description must not contain control characters"}
+	}
+	for _, tag := range rc.Meta.Tags {
+		if containsControl(tag) || strings.TrimSpace(tag) == "" {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("meta: invalid tag %q", tag)}
+		}
 	}
 	return nil
 }

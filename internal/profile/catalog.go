@@ -147,6 +147,21 @@ func (c Catalog) Source(displayName string) string {
 	}
 }
 
+// Description returns the meta description of the entry backing a display
+// name. A user entry shadows a core entry of the same name, so its
+// description wins; an entry without meta yields "".
+func (c Catalog) Description(displayName string) string {
+	for _, key := range []string{displayName, "core/" + displayName} {
+		if rc, ok := c.entries[key]; ok {
+			if rc.Meta != nil {
+				return rc.Meta.Description
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // FragmentByDisplayName resolves a fragment display name to its canonical
 // FullName. A user fragment wins over a core fragment of the same name.
 func (c Catalog) FragmentByDisplayName(name string) (string, bool) {
@@ -737,6 +752,9 @@ func validateFragmentName(name string, rc RawProfile) error {
 	}
 	if rc.Image != "" || len(rc.Command) > 0 {
 		return ProfileError{Path: rc.Path, Message: "fragment " + name + " must not set image/command"}
+	}
+	if err := validateMeta(rc); err != nil {
+		return err
 	}
 	return nil
 }

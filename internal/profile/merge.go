@@ -133,6 +133,7 @@ func resolveChain(cat Catalog, key string, seen map[string]bool) (RawProfile, er
 	// Merge the profile's own body last (wins over all extends).
 	merged = MergeProfiles(merged, rc)
 	merged.Path = rc.Path
+	merged.Meta = rc.Meta
 	return merged, nil
 }
 

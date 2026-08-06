@@ -1,4 +1,6 @@
 version: 1
+meta:
+  description: Zig toolchain
 caches:
   zig: ~/.cache/zig
 tools:
