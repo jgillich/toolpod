@@ -22,8 +22,17 @@ import (
 // PortAllocator reserves an unused host port for a published binding.
 // protocol is "tcp", "udp", or "sctp"; hostIP is the requested bind address
 // ("" = all interfaces). Returns the allocated port as a string.
+//
+// Allocation is necessarily best-effort: tpd binds an ephemeral socket to find
+// a free port and closes it before the engine binds the real port at container
+// start, so another process can claim the port in that window. The engine
+// surfaces a collision only as a generic create/start failure, not a distinct
+// tpd error, so no retry is attempted. This does not eliminate the race.
 type PortAllocator func(protocol, hostIP string) (string, error)
 
+// defaultPortAllocator finds a free host port by binding an ephemeral socket
+// and immediately closing it; the bind-then-close window is the best-effort
+// gap documented on PortAllocator.
 func defaultPortAllocator(protocol, hostIP string) (string, error) {
 	addr := net.JoinHostPort(hostIP, "0")
 	switch protocol {
@@ -49,9 +58,13 @@ func Launch(ctx context.Context, opts LaunchOpts) Result {
 }
 
 func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result {
+	diag := opts.Stderr
+	if diag == nil {
+		diag = os.Stderr
+	}
 	progress := opts.Progress
 	if progress == nil {
-		progress = &stderrProgress{}
+		progress = &stderrProgress{out: diag}
 	}
 	userDir := opts.ProfileDir
 	if userDir == "" {
@@ -97,58 +110,73 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		in = os.Stdin
 	}
 
-	cfg, promptReq, err := approval.Filter(resolved, gateStore)
-	if err != nil {
-		return Result{ExitCode: 2, Err: err}
-	}
-
-	if len(promptReq.Items) > 0 {
-		if opts.AssumeYes || opts.AssumeNo {
-			choices := buildChoices(promptReq, opts.AssumeYes)
-			prior, err := gateStore.Load(resolved.FullName)
-			if err != nil {
-				return Result{ExitCode: 2, Err: err}
-			}
-			merged := mergeChoicesIntoState(prior, promptReq, choices)
-			effectiveStore := gateStore
-			if opts.DryRun {
-				effectiveStore = approval.NewEphemeralStore(gateStore, merged)
-			} else {
-				if err := store.Save(resolved.FullName, merged); err != nil {
-					return Result{ExitCode: 2, Err: err}
+	// Approval gate. The Load → Filter → merge → Save transaction runs
+	// under an advisory lock on the profile's state file so concurrent tpd
+	// processes cannot lose each other's approvals. Dry-run never writes
+	// (the ReadOnly/Ephemeral stores below) and a single read of the
+	// rename-replaced state file is always a consistent snapshot, so it
+	// skips locking.
+	var cfg profile.Profile
+	var promptReq approval.PromptRequest
+	gate := func() error {
+		var err error
+		cfg, promptReq, err = approval.Filter(resolved, gateStore)
+		if err != nil {
+			return err
+		}
+		if len(promptReq.Items) > 0 {
+			if opts.AssumeYes || opts.AssumeNo {
+				choices := buildChoices(promptReq, opts.AssumeYes)
+				prior, err := gateStore.Load(resolved.FullName)
+				if err != nil {
+					return err
 				}
-			}
-			cfg, _, err = approval.Filter(resolved, effectiveStore)
-			if err != nil {
-				return Result{ExitCode: 2, Err: err}
-			}
-		} else if opts.DryRun || !isTTY(in) {
-			return Result{ExitCode: 2, Err: fmt.Errorf("unapproved sensitive fields require --yes or --no: %s", summarizeItems(promptReq.Items))}
-		} else {
-			prompt := opts.ApprovalPrompt
-			if prompt == nil {
-				prompt = approval.DefaultPrompt
-			}
-			choices, err := prompt(promptReq, in, w)
-			if err != nil {
-				return Result{ExitCode: 2, Err: fmt.Errorf("approval: %w", err)}
-			}
-			if incomplete(promptReq, choices) {
-				return Result{ExitCode: 2, Err: fmt.Errorf("approval incomplete: %s", summarizeUndecided(promptReq, choices))}
-			}
-			prior, err := gateStore.Load(resolved.FullName)
-			if err != nil {
-				return Result{ExitCode: 2, Err: err}
-			}
-			merged := mergeChoicesIntoState(prior, promptReq, choices)
-			if err := store.Save(resolved.FullName, merged); err != nil {
-				return Result{ExitCode: 2, Err: err}
-			}
-			cfg, _, err = approval.Filter(resolved, store)
-			if err != nil {
-				return Result{ExitCode: 2, Err: err}
+				merged := mergeChoicesIntoState(prior, promptReq, choices)
+				effectiveStore := gateStore
+				if opts.DryRun {
+					effectiveStore = approval.NewEphemeralStore(gateStore, merged)
+				} else {
+					if err := store.Save(resolved.FullName, merged); err != nil {
+						return err
+					}
+				}
+				cfg, _, err = approval.Filter(resolved, effectiveStore)
+				return err
+			} else if opts.DryRun || !isTTY(in) {
+				return fmt.Errorf("unapproved sensitive fields require --yes or --no: %s", summarizeItems(promptReq.Items))
+			} else {
+				prompt := opts.ApprovalPrompt
+				if prompt == nil {
+					prompt = approval.DefaultPrompt
+				}
+				choices, err := prompt(promptReq, in, w)
+				if err != nil {
+					return fmt.Errorf("approval: %w", err)
+				}
+				if incomplete(promptReq, choices) {
+					return fmt.Errorf("approval incomplete: %s", summarizeUndecided(promptReq, choices))
+				}
+				prior, err := gateStore.Load(resolved.FullName)
+				if err != nil {
+					return err
+				}
+				merged := mergeChoicesIntoState(prior, promptReq, choices)
+				if err := store.Save(resolved.FullName, merged); err != nil {
+					return err
+				}
+				cfg, _, err = approval.Filter(resolved, store)
+				return err
 			}
 		}
+		return nil
+	}
+	if opts.DryRun {
+		err = gate()
+	} else {
+		err = approval.WithLock(store, resolved.FullName, gate)
+	}
+	if err != nil {
+		return Result{ExitCode: 2, Err: err}
 	}
 
 	if len(opts.ExtraTools) > 0 {
@@ -156,7 +184,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			cfg.Tools = map[string]profile.Tool{}
 		}
 		for _, t := range opts.ExtraTools {
-			name, ver := parseToolFlag(t)
+			name, ver, err := parseToolFlag(t)
+			if err != nil {
+				return Result{ExitCode: 2, Err: err}
+			}
 			cfg.Tools[name] = profile.Tool{Version: ver}
 		}
 	}
@@ -177,12 +208,16 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 			rt = constructed
 		}
 
-		if dr, ok := rt.(*runtime.DockerRuntime); ok {
-			detected, err := dr.DetectMode(ctx)
-			if err == nil {
-				mode = detected
+		if md, ok := rt.(modeDetector); ok {
+			detected, err := md.DetectMode(ctx)
+			if err != nil {
+				return Result{ExitCode: 3, Err: fmt.Errorf("detect engine mode: %w", err)}
 			}
+			mode = detected
 		}
+	} else {
+		// A dry-run never queries a daemon, so no launch mode can be claimed.
+		mode = workspace.ModeUnknown
 	}
 
 	// The in-container user's home: the host home in Mode A (rootless keep-id
@@ -203,10 +238,10 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		}
 
 		if opts.Verbose {
-			RenderSpec(w, spec)
+			renderSpec(w, spec)
 		}
 
-		sp := newSpinnerProgress(os.Stderr, progress, ui.IsTTY(os.Stderr))
+		sp := newSpinnerProgress(diag, progress, ui.IsTTY(diag))
 		sp.Start()
 		defer sp.Stop()
 
@@ -214,7 +249,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("prepare: %w", err)}
 		}
-		cleanupProxy, busAddr, err := startBusProxy(cfg)
+		cleanupProxy, busAddr, err := startBusProxy(cfg, diag)
 		if err != nil {
 			return Result{ExitCode: 3, Err: fmt.Errorf("dbus: %w", err)}
 		}
@@ -233,7 +268,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 				stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				if err := rt.StopServices(stopCtx, spec); err != nil {
-					fmt.Fprintf(os.Stderr, "tpd: warning: stop services: %v\n", err)
+					fmt.Fprintf(diag, "tpd: warning: stop services: %v\n", err)
 				}
 			}()
 		}
@@ -298,36 +333,51 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 	if err != nil {
 		return Result{ExitCode: 2, Err: err}
 	}
-	if err := RenderSpec(w, spec); err != nil {
+	if err := renderSpec(w, spec); err != nil {
 		return Result{ExitCode: 3, Err: err}
 	}
 	return Result{ExitCode: 0}
 }
 
-type stderrProgress struct{}
-
-func (stderrProgress) WriteProgress(line string) {
-	fmt.Fprintln(os.Stderr, line)
+type stderrProgress struct {
+	out io.Writer
 }
 
-func parseToolFlag(s string) (string, string) {
+func (p stderrProgress) WriteProgress(line string) {
+	fmt.Fprintln(p.out, line)
+}
+
+func parseToolFlag(s string) (string, string, error) {
 	for i, c := range s {
 		if c == '=' {
-			return s[:i], s[i+1:]
+			name, ver := s[:i], s[i+1:]
+			if name == "" || ver == "" {
+				return "", "", fmt.Errorf("malformed tool flag %q: want NAME or NAME=VERSION", s)
+			}
+			return name, ver, nil
 		}
 	}
-	return s, "latest"
+	if s == "" {
+		return "", "", fmt.Errorf("malformed tool flag %q: want NAME or NAME=VERSION", s)
+	}
+	return s, "latest", nil
 }
 
+// defaultApprovalDir returns the directory for stored approval decisions,
+// always absolute: $XDG_DATA_HOME/tpd, else $HOME/.local/share/tpd, else a
+// fixed fallback when no absolute home can be resolved.
 func defaultApprovalDir() string {
-	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
+	if v := os.Getenv("XDG_DATA_HOME"); v != "" && filepath.IsAbs(v) {
 		return filepath.Join(v, "tpd")
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil || home == "" || !filepath.IsAbs(home) {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".local", "share", "tpd")
+	if home != "" && filepath.IsAbs(home) {
+		return filepath.Join(home, ".local", "share", "tpd")
+	}
+	return "/tmp/tpd-approvals"
 }
 
 func buildChoices(req approval.PromptRequest, yes bool) map[string]map[string]bool {

@@ -7,11 +7,11 @@ Go CLI for disposable, reproducible dev environments in a Podman/Docker containe
 - `go test ./...` — full test suite (Go 1.25, CGO off in releases)
 - `go vet ./...` — lint check
 
-CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd/tpd/cli.go`. The launch command (root and `tpd run`) disables interspersed flag parsing (`SetInterspersed(false)`), so flags parse only before the profile name and everything after it reaches the profile's command verbatim. `cmd/tpd/completion.go` provides native shell completion for profile/fragment names via `ValidArgsFunction`; `tpd completion bash|zsh|fish|powershell` prints the activation script.
+CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd/tpd/cli.go`. The launch command (root and `tpd run`) disables interspersed flag parsing (`SetInterspersed(false)`), so flags parse only before the profile name and everything after it reaches the profile's command verbatim. `--command` cannot be combined with positional args (usage error, exit 2) rather than silently discarding them. `cmd/tpd/completion.go` provides native shell completion for profile/fragment names via `ValidArgsFunction`; `tpd completion bash|zsh|fish|powershell` prints the activation script. Bare `tpd`/`tpd run` with no profile is a usage error (help printed, exit 2). Profiles are root positional args, not subcommands, so a profile named `run`/`show`/`edit`/`list` is shadowed by the subcommand in the bare form but stays reachable as `tpd run <name>`; those names are deliberately not in `reservedNames` so existing profiles keep loading.
 
 ## Layout
 - `cmd/tpd/` — entrypoint and CLI (`main.go`, `cli.go`, e2e/profile/cli tests).
-- `pkg/tpd/` — public launch/spec/types API used by the CLI and tests.
+- `pkg/tpd/` — in-module-only launch API (not for external consumers; spec/types live in `internal/`) used by the CLI and tests.
 - `internal/profile/` — YAML schema, `extends` deep-merge, validation, fragment rules.
 - `internal/catalog/` — embedded built-in profiles/fragments (YAML). Add new agents/tools here, not at runtime.
 - `internal/runtime/` — Docker-API client (docker.go, run/exec/prepare), attach, test fake; `docker_build.go` synthesizes derived images for `packages:`.

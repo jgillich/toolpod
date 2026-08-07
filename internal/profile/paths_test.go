@@ -191,6 +191,84 @@ func TestResolveTildesTrimPrefixFallback(t *testing.T) {
 	}
 }
 
+func TestResolveTildesEmbeddedEnvTemplate(t *testing.T) {
+	os.Setenv("TPD_TEST_HOME", "/home/me")
+	t.Cleanup(func() { os.Unsetenv("TPD_TEST_HOME") })
+
+	cfg := Profile{
+		Env: map[string]string{
+			"PATH": `{{ .Env.TPD_TEST_HOME }}/bin`,
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Env["PATH"] != "/home/me/bin" {
+		t.Errorf("PATH = %q, want /home/me/bin (embedded template rendered mid-string)", out.Env["PATH"])
+	}
+}
+
+func TestResolveTildesServiceEmbeddedEnvTemplate(t *testing.T) {
+	os.Setenv("TPD_TEST_SVC_PORT", "5000")
+	t.Cleanup(func() { os.Unsetenv("TPD_TEST_SVC_PORT") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Env:     map[string]string{"ADDR": `127.0.0.1:{{ .Env.TPD_TEST_SVC_PORT }}`},
+			},
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Services["registry"].Env["ADDR"]; got != "127.0.0.1:5000" {
+		t.Errorf("service env ADDR = %q, want 127.0.0.1:5000", got)
+	}
+}
+
+func TestResolveTildesEmbeddedCommandTemplate(t *testing.T) {
+	os.Setenv("TPD_TEST_PORT", "5173")
+	t.Cleanup(func() { os.Unsetenv("TPD_TEST_PORT") })
+
+	cfg := Profile{
+		Command: []string{"sh", "-c", `PORT={{ .Env.TPD_TEST_PORT }} serve`},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Command[2] != "PORT=5173 serve" {
+		t.Errorf("command arg = %q, want %q", out.Command[2], "PORT=5173 serve")
+	}
+}
+
+func TestResolveTildesEnvTemplateRenderedTildeNotExpanded(t *testing.T) {
+	os.Setenv("TPD_TILDE_ENV", "~/data")
+	t.Cleanup(func() { os.Unsetenv("TPD_TILDE_ENV") })
+
+	cfg := Profile{
+		Env:     map[string]string{"DATA_DIR": `{{ .Env.TPD_TILDE_ENV }}`},
+		Command: []string{"run", `{{ .Env.TPD_TILDE_ENV }}`},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Env values and command args are template-rendered but not path-resolved,
+	// so a rendered ~/ is left verbatim rather than expanded.
+	if out.Env["DATA_DIR"] != "~/data" {
+		t.Errorf("DATA_DIR = %q, want ~/data (env values are not tilde-expanded)", out.Env["DATA_DIR"])
+	}
+	if out.Command[1] != "~/data" {
+		t.Errorf("command arg = %q, want ~/data (args are not tilde-expanded)", out.Command[1])
+	}
+}
+
 func TestResolveTildesPortsInEnvironment(t *testing.T) {
 	cfg := Profile{
 		Env: map[string]string{
@@ -317,14 +395,14 @@ func TestResolveTildesPortsInCommand(t *testing.T) {
 
 func TestResolveTildesLiteralBracePassthrough(t *testing.T) {
 	cfg := Profile{
-		Command: []string{"sh", "-c", "echo {{x}} {{y}}"},
+		Command: []string{"sh", "-c", "echo {x} {y}"},
 	}
 	out, err := ResolveTildes(cfg, workspace.ModeRootful, "/home/me", "/root", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Command[2] != "echo {{x}} {{y}}" {
-		t.Errorf("literal braces must pass through untouched, got %q", out.Command[2])
+	if out.Command[2] != "echo {x} {y}" {
+		t.Errorf("single braces must pass through untouched, got %q", out.Command[2])
 	}
 }
 
@@ -391,6 +469,38 @@ func TestResolveFilesTraversalAfterExpansionRejected(t *testing.T) {
 	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
 	if err == nil {
 		t.Fatal("expected error for file target expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesUnknownModeKeepsTildeTargetsLiteral(t *testing.T) {
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			"~/.config/opencode": {Source: "~/.config/opencode", ReadOnly: true},
+		},
+		Caches: map[string]CachePaths{
+			"npm": {"~/.npm"},
+		},
+		Files: map[string]File{
+			"~/bin/run": {Content: "x"},
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeUnknown, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unknown mode (dry-run without a daemon) must not claim a home for
+	// in-container targets; ~/ stays literal. Sources are host paths and still
+	// expand against the host home.
+	if m, ok := out.Mounts["~/.config/opencode"]; !ok {
+		t.Errorf("mount target should stay literal in unknown mode, got %v", out.Mounts)
+	} else if m.Source != "/home/me/.config/opencode" {
+		t.Errorf("mount source = %q, want /home/me/.config/opencode", m.Source)
+	}
+	if got := out.Caches["npm"]; len(got) != 1 || got[0] != "~/.npm" {
+		t.Errorf("cache target should stay literal in unknown mode, got %v", got)
+	}
+	if _, ok := out.Files["~/bin/run"]; !ok {
+		t.Errorf("file target should stay literal in unknown mode, got %v", out.Files)
 	}
 }
 
@@ -468,5 +578,226 @@ func TestResolveTildesServiceFilesRejectDotDot(t *testing.T) {
 	_, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/user", "/home/user", nil)
 	if err == nil {
 		t.Fatal("expected error for '..' in service file target")
+	}
+}
+
+func TestResolveTildesTemplateRenderedTildeExpanded(t *testing.T) {
+	os.Setenv("TPD_TILDE_PATH", "~/.config/foo")
+	t.Cleanup(func() { os.Unsetenv("TPD_TILDE_PATH") })
+
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			`{{ .Env.TPD_TILDE_PATH }}`: {Source: `{{ .Env.TPD_TILDE_PATH }}`},
+		},
+		Caches: map[string]CachePaths{
+			"c": {`{{ .Env.TPD_TILDE_PATH }}`},
+		},
+		Files: map[string]File{
+			`{{ .Env.TPD_TILDE_PATH }}`: {Content: "x"},
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out.Mounts["/home/me/.config/foo"]; !ok {
+		t.Errorf("template-rendered ~ target should expand to /home/me/.config/foo, got %v", out.Mounts)
+	}
+	if out.Mounts["/home/me/.config/foo"].Source != "/home/me/.config/foo" {
+		t.Errorf("template-rendered ~ source = %q, want /home/me/.config/foo", out.Mounts["/home/me/.config/foo"].Source)
+	}
+	if got := out.Caches["c"]; len(got) != 1 || got[0] != "/home/me/.config/foo" {
+		t.Errorf("template-rendered ~ cache = %v, want [/home/me/.config/foo]", got)
+	}
+	if _, ok := out.Files["/home/me/.config/foo"]; !ok {
+		t.Errorf("template-rendered ~ file target should expand to /home/me/.config/foo, got %v", out.Files)
+	}
+}
+
+func TestResolveTildesTemplateRenderedTildeServicePaths(t *testing.T) {
+	os.Setenv("TPD_TILDE_PATH", "~/cache")
+	t.Cleanup(func() { os.Unsetenv("TPD_TILDE_PATH") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Caches: map[string]CachePaths{
+					"c": {`{{ .Env.TPD_TILDE_PATH }}`},
+				},
+				Mounts: map[string]Mount{
+					`{{ .Env.TPD_TILDE_PATH }}`: {Source: `{{ .Env.TPD_TILDE_PATH }}`},
+				},
+				Files: map[string]File{
+					`{{ .Env.TPD_TILDE_PATH }}/conf`: {Content: "x"},
+				},
+			},
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := out.Services["registry"]
+	// Service in-container paths expand ~ against /root.
+	if got := svc.Caches["c"]; len(got) != 1 || got[0] != "/root/cache" {
+		t.Errorf("service cache = %v, want [/root/cache]", got)
+	}
+	if m, ok := svc.Mounts["/root/cache"]; !ok || m.Source != "/home/me/cache" {
+		t.Errorf("service mount = %+v, want target /root/cache with source /home/me/cache", svc.Mounts)
+	}
+	if _, ok := svc.Files["/root/cache/conf"]; !ok {
+		t.Errorf("service file target should expand to /root/cache/conf, got %v", svc.Files)
+	}
+}
+
+func TestResolveTildesMountTraversalAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_TRAVERSAL") })
+
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			`{{ .Env.TPD_TRAVERSAL }}/etc`: {Source: "/tmp"},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for mount target expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesMountSourceTraversalAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_TRAVERSAL") })
+
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			"/etc": {Source: `{{ .Env.TPD_TRAVERSAL }}/etc`},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for mount source expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesCacheTraversalAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_TRAVERSAL") })
+
+	cfg := Profile{
+		Caches: map[string]CachePaths{"c": {`{{ .Env.TPD_TRAVERSAL }}/npm`}},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for cache target expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesServiceMountTraversalAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_TRAVERSAL", "/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_TRAVERSAL") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Mounts: map[string]Mount{
+					`{{ .Env.TPD_TRAVERSAL }}/etc`: {Source: "/tmp"},
+				},
+			},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for service mount target expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesRelativeAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_RELATIVE", "relative/path")
+	t.Cleanup(func() { os.Unsetenv("TPD_RELATIVE") })
+
+	cfg := Profile{
+		Mounts: map[string]Mount{
+			`{{ .Env.TPD_RELATIVE }}`: {Source: "/tmp"},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for mount target rendering a relative path, got nil")
+	}
+}
+
+func TestResolveTildesServiceExposesRendered(t *testing.T) {
+	os.Setenv("TPD_SOCK_DIR", "/run/app")
+	t.Cleanup(func() { os.Unsetenv("TPD_SOCK_DIR") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}/db.sock`},
+			},
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Services["registry"].Exposes["registry"]; got != "/run/app/db.sock" {
+		t.Errorf("rendered expose path = %q, want /run/app/db.sock", got)
+	}
+}
+
+func TestResolveTildesServiceExposeRootParentAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_SOCK_DIR", "/")
+	t.Cleanup(func() { os.Unsetenv("TPD_SOCK_DIR") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}db.sock`},
+			},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for expose path resolving into the root directory, got nil")
+	}
+}
+
+func TestResolveTildesServiceExposeTraversalAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_SOCK_DIR", "/run/..")
+	t.Cleanup(func() { os.Unsetenv("TPD_SOCK_DIR") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}/db.sock`},
+			},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for expose path expanding to a '..' path, got nil")
+	}
+}
+
+func TestResolveTildesServiceExposeRelativeAfterRenderRejected(t *testing.T) {
+	os.Setenv("TPD_SOCK_DIR", "run")
+	t.Cleanup(func() { os.Unsetenv("TPD_SOCK_DIR") })
+
+	cfg := Profile{
+		Services: map[string]Service{
+			"registry": {
+				Image:   "debian:13-slim",
+				Command: []string{"registry"},
+				Exposes: map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}/db.sock`},
+			},
+		},
+	}
+	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
+		t.Fatal("expected error for expose path rendering a relative path, got nil")
 	}
 }

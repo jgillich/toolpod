@@ -588,6 +588,204 @@ func TestValidateServicesExposesMustBeAbsolute(t *testing.T) {
 	}
 }
 
+func TestValidateServicesExposePaths(t *testing.T) {
+	valid := []string{
+		"/run/app/db.sock",
+		"/var/run/docker.sock",
+		"/tmp/tpd-svc/x.sock",
+	}
+	for _, p := range valid {
+		rc := validServiceProfile()
+		svc := rc.Services["registry"]
+		svc.Exposes = map[string]string{"registry": p}
+		rc.Services["registry"] = svc
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(exposes=%q) = %v, want nil", p, err)
+		}
+	}
+	invalid := []string{
+		"/db.sock",              // parent dir is root
+		"/",                     // the root dir itself
+		"/run/../db.sock",       // traversal
+		"/run/app/../../x.sock", // traversal
+	}
+	for _, p := range invalid {
+		rc := validServiceProfile()
+		svc := rc.Services["registry"]
+		svc.Exposes = map[string]string{"registry": p}
+		rc.Services["registry"] = svc
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(exposes=%q) = nil, want error", p)
+		}
+	}
+}
+
+func TestValidateServicesExposeControlChar(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Exposes = map[string]string{"registry": "/run/\x00sock"}
+	rc.Services["registry"] = svc
+	if err := validate(rc); err == nil {
+		t.Fatal("expected error for control character in expose path, got nil")
+	}
+}
+
+func TestValidateServicesExposeTemplateAllowed(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Exposes = map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}/db.sock`}
+	rc.Services["registry"] = svc
+	if err := validate(rc); err != nil {
+		t.Errorf("template expose path should validate pre-expansion: %v", err)
+	}
+}
+
+func TestValidateServicesExposeTemplateLiteralDotDotRejected(t *testing.T) {
+	rc := validServiceProfile()
+	svc := rc.Services["registry"]
+	svc.Exposes = map[string]string{"registry": `{{ .Env.TPD_SOCK_DIR }}/../db.sock`}
+	rc.Services["registry"] = svc
+	if err := validate(rc); err == nil {
+		t.Fatal("expected error for literal '..' in template expose path, got nil")
+	}
+}
+
+func TestValidateServicesImage(t *testing.T) {
+	valid := []string{"debian", "debian:13-slim", "docker.io/library/debian:13", "ghcr.io/org/repo:v1"}
+	for _, img := range valid {
+		rc := validServiceProfile()
+		svc := rc.Services["registry"]
+		svc.Image = img
+		rc.Services["registry"] = svc
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(service image=%q) = %v, want nil", img, err)
+		}
+	}
+	invalid := []string{"debian:13-slim\nRUN id", "../evil", "debian\x00x", "debian:13 slim"}
+	for _, img := range invalid {
+		rc := validServiceProfile()
+		svc := rc.Services["registry"]
+		svc.Image = img
+		rc.Services["registry"] = svc
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(service image=%q) = nil, want error", img)
+		}
+	}
+}
+
+func TestValidateServicesMountAndCachePaths(t *testing.T) {
+	base := validServiceProfile()
+	invalid := []struct {
+		name string
+		svc  Service
+	}{
+		{"relative mount target", Service{Image: "x", Command: []string{"x"}, Mounts: map[string]Mount{"relative": {Source: "/tmp"}}}},
+		{"relative mount source", Service{Image: "x", Command: []string{"x"}, Mounts: map[string]Mount{"/tmp": {Source: "relative"}}}},
+		{"dotdot mount target", Service{Image: "x", Command: []string{"x"}, Mounts: map[string]Mount{"/etc/../x": {Source: "/tmp"}}}},
+		{"control in mount source", Service{Image: "x", Command: []string{"x"}, Mounts: map[string]Mount{"/tmp": {Source: "/tmp/\n"}}}},
+		{"relative cache path", Service{Image: "x", Command: []string{"x"}, Caches: map[string]CachePaths{"c": {"relative"}}}},
+		{"dotdot cache path", Service{Image: "x", Command: []string{"x"}, Caches: map[string]CachePaths{"c": {"~/../x"}}}},
+	}
+	for _, tt := range invalid {
+		rc := base
+		rc.Services = map[string]Service{"s": tt.svc}
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(service %s) = nil, want error", tt.name)
+		}
+	}
+}
+
+func TestValidateMounts(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	cases := []struct {
+		name    string
+		target  string
+		m       Mount
+		wantErr bool
+	}{
+		{"tilde target", "~/.config/foo", Mount{Source: "~/.config/foo"}, false},
+		{"absolute target", "/etc/hosts", Mount{Source: "/etc/hosts"}, false},
+		{"template target", `{{ .Env.XDG_RUNTIME_DIR }}`, Mount{Source: "/tmp", Optional: true}, false},
+		{"template source", "/tmp", Mount{Source: `{{ or (index .Env "DOCKER_HOST") "/var/run/docker.sock" }}`, Optional: true}, false},
+		{"service-socket exempt", "/sock", Mount{Service: "registry", Socket: "registry"}, false},
+		{"relative source", "~/.config/foo", Mount{Source: "relative/path"}, true},
+		{"relative target", "relative", Mount{Source: "/tmp"}, true},
+		{"dotdot target", "/etc/../x", Mount{Source: "/tmp"}, true},
+		{"dotdot source", "~/.config", Mount{Source: "~/../x"}, true},
+		{"control in target", "/tmp/\x00x", Mount{Source: "/tmp"}, true},
+		{"control in source", "/tmp", Mount{Source: "/tmp/\n"}, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := RawProfile{Profile: base}
+			rc.Mounts = map[string]Mount{tt.target: tt.m}
+			if tt.m.Service != "" {
+				rc.Services = map[string]Service{"registry": {Image: "x", Command: []string{"x"}, Exposes: map[string]string{"registry": "/run/registry.sock"}}}
+			}
+			err := validate(rc)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateMountsRejectsRelativeSourceForBindMount(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Mounts = map[string]Mount{"/data": {Source: "data"}}
+	err := validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "mount source") {
+		t.Fatalf("expected mount source error, got: %v", err)
+	}
+}
+
+func TestValidateCaches(t *testing.T) {
+	base := Profile{Version: 1, Image: "x", Command: []string{"sh"}}
+	valid := []CachePaths{
+		{"~/.npm"},
+		{"/var/lib/containers/storage"},
+		{`{{ .Env.XDG_CACHE_HOME }}/npm`},
+	}
+	for _, paths := range valid {
+		rc := RawProfile{Profile: base}
+		rc.Caches = map[string]CachePaths{"c": paths}
+		if err := validate(rc); err != nil {
+			t.Errorf("validate(caches=%v) = %v, want nil", paths, err)
+		}
+	}
+	invalid := []CachePaths{
+		{"relative/path"},
+		{"~/../x"},
+		{"/tmp/\x00x"},
+	}
+	for _, paths := range invalid {
+		rc := RawProfile{Profile: base}
+		rc.Caches = map[string]CachePaths{"c": paths}
+		if err := validate(rc); err == nil {
+			t.Errorf("validate(caches=%v) = nil, want error", paths)
+		}
+	}
+}
+
+func TestValidateFilesRejectsControlChar(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Files = map[string]File{"/tmp/\x00x": {Content: "hi"}}
+	if err := validate(rc); err == nil {
+		t.Fatal("expected error for control character in file target, got nil")
+	}
+}
+
+func TestValidateFilesAllowsTemplateTarget(t *testing.T) {
+	rc := RawProfile{Profile: Profile{Version: 1, Image: "x", Command: []string{"sh"}}}
+	rc.Files = map[string]File{`{{ .Env.HOME }}/.config/foo`: {Content: "hi"}}
+	if err := validate(rc); err != nil {
+		t.Errorf("template file target should validate: %v", err)
+	}
+}
+
 func TestValidateServiceNameRegex(t *testing.T) {
 	rc := validServiceProfile()
 	rc.Services["bad/name"] = rc.Services["registry"]

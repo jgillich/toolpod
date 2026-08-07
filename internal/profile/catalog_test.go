@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jgillich/tpd/internal/catalog"
 )
 
 // fixtureCatalog loads the stable testdata/catalog fixture (never the live
@@ -31,6 +33,24 @@ func fixtureCatalogWith(t *testing.T, load func(pfs, ffs fs.ReadFileFS, userDir 
 		t.Fatal("testdata/catalog must be a fs.ReadFileFS")
 	}
 	return load(fsys, fsys, userDir)
+}
+
+func TestBuiltinCatalogResolves(t *testing.T) {
+	cat, err := LoadCatalog(catalog.Profiles, catalog.Fragments, "")
+	if err != nil {
+		t.Fatalf("LoadCatalog(embedded): %v", err)
+	}
+	for _, name := range cat.Names() {
+		var err error
+		if cat.IsFragment(name) {
+			_, err = ResolveFragmentWithProv(cat, name)
+		} else {
+			_, err = ResolveProfileWithProv(cat, name)
+		}
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 }
 
 func TestRawProfileFullName(t *testing.T) {

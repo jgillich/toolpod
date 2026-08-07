@@ -65,19 +65,36 @@ func TestFieldTitle(t *testing.T) {
 	}
 }
 
-func TestFieldSectionsPreselectsAll(t *testing.T) {
+func TestFieldSectionsPreselectsOnlyPriorApproved(t *testing.T) {
 	req := PromptRequest{ProfileName: "test", Items: []SensitiveItem{
-		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib()},
+		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib(), PriorApproved: true},
+		{Field: "mounts", Key: "~/aws", Value: "~/aws", Source: testContrib()},
 		{Field: "env", Key: "A", Value: "A=1", Source: testContrib()},
 	}}
 	sections, preselected := fieldSections(req)
 	if len(sections) != 2 {
 		t.Fatalf("sections = %d, want 2", len(sections))
 	}
+	if len(preselected[0]) != 1 || preselected[0][0] != "mounts\x00~/.ssh" {
+		t.Errorf("preselect = %v, want only the prior-approved mount pre-selected", preselected[0])
+	}
+	if len(preselected[1]) != 0 {
+		t.Errorf("all-new env section should have nothing pre-selected, got %v", preselected[1])
+	}
+}
+
+func TestFieldSectionsPreselectsNothingWhenAllNew(t *testing.T) {
+	req := PromptRequest{ProfileName: "test", Items: []SensitiveItem{
+		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib()},
+		{Field: "env", Key: "A", Value: "A=1", Source: testContrib()},
+	}}
+	_, preselected := fieldSections(req)
 	if len(preselected) != 2 {
 		t.Fatalf("preselected buffers = %d, want 2", len(preselected))
 	}
-	if len(preselected[0]) != 1 || preselected[0][0] != "mounts\x00~/.ssh" || len(preselected[1]) != 1 {
-		t.Errorf("preselect = %v, want every item pre-selected", preselected)
+	for i, ids := range preselected {
+		if len(ids) != 0 {
+			t.Errorf("section %d pre-selects %v, want nothing for all-new items", i, ids)
+		}
 	}
 }

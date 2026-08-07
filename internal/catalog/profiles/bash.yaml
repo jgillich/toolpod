@@ -3,7 +3,7 @@ meta:
   description: Disposable bash shell with shell completion
 extends:
   - mise
-  - shell/bash
+  - core/lang/bash
 command: ["bash", "-l"]
 files:
   /etc/profile.d/mise.sh:

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -28,6 +29,11 @@ var extrepoCatalogBase = "https://extrepo-team.pages.debian.net/extrepo-data/deb
 const (
 	maxExtrepoIndexSize = 8 << 20
 	maxExtrepoKeySize   = 256 << 10
+
+	// extrepoHTTPTimeout bounds catalog and key fetches. http.Client.Timeout
+	// covers the whole transfer and is derived from the request context, so
+	// caller cancellation still wins over the bound.
+	extrepoHTTPTimeout = 30 * time.Second
 )
 
 // extrepoEnabledPolicies mirrors the default /etc/extrepo/config.yaml of the
@@ -183,6 +189,7 @@ func httpGet(ctx context.Context, url string, max int64) ([]byte, error) {
 			}
 			return nil
 		},
+		Timeout: extrepoHTTPTimeout,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -298,6 +305,16 @@ func readImageFileEntry(ctx context.Context, cli *client.Client, containerID, im
 	}
 	if hdr.Typeflag == tar.TypeSymlink {
 		return nil, resolveLinkTarget(path, hdr.Linkname), nil
+	}
+	if hdr.Typeflag == tar.TypeLink {
+		// A hardlink entry carries no body (Size 0); its Linkname points at the
+		// inode's other path, resolved against the archive root when relative.
+		// Reading 0 bytes (the old behavior) silently returned empty content.
+		target := hdr.Linkname
+		if !filepath.IsAbs(target) {
+			target = filepath.Join("/", target)
+		}
+		return nil, filepath.Clean(target), nil
 	}
 	if hdr.Size > 1<<20 {
 		return nil, "", fmt.Errorf("read %s from %s: file exceeds 1 MiB", path, imageRef)

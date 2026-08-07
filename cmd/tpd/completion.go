@@ -16,9 +16,10 @@ func loadCatalog() (profile.Catalog, error) {
 }
 
 // completeProfileNames completes profile names for the launch commands (bare
-// form and `tpd run`). Once
-// the profile name is given, everything after it is passthrough to the
-// profile's command, so there is nothing left for tpd to complete.
+// form and `tpd run`). Once the profile name is given, everything after it is
+// passthrough to the profile's command: tpd offers no more names but keeps
+// file completion (ShellCompDirectiveDefault) so the shell completes the
+// contained command's own file arguments.
 func completeProfileNames(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveDefault
@@ -41,10 +42,11 @@ func completeNames(c *cobra.Command, args []string, toComplete string) ([]string
 }
 
 // completeNamesOnce completes profile and fragment names for single-positional
-// commands (show, edit): nothing once the name is given.
+// commands (show, edit): nothing once the name is given — the command takes no
+// more positionals, so file completion would only offer invalid args.
 func completeNamesOnce(c *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
-		return nil, cobra.ShellCompDirectiveDefault
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	return completeNames(c, args, toComplete)
 }

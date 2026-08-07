@@ -32,13 +32,19 @@ func subpathSupportedByVersion(ver types.Version) bool {
 	return atLeast(ver.Version, 27, 1, 0)
 }
 
-// atLeast compares a dotted version string against a threshold, ignoring
-// non-numeric suffixes (pre-releases like 6.0.0-rc1 compare as 6.0.0).
+// atLeast compares a dotted version string against a threshold. A prerelease
+// suffix (6.0.0-rc1, 27.1.0-beta1, ...) never satisfies any threshold:
+// subpath detection is deliberately conservative, and wrongly enabling
+// subpaths on an engine that ignores them would silently mount the whole
+// volume at each target.
 func atLeast(v string, maj, min, pat int) bool {
+	if isPrerelease(v) {
+		return false
+	}
 	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
 	var nums [3]int
 	for i := 0; i < len(parts) && i < 3; i++ {
-		n, err := strconv.Atoi(strings.TrimFunc(parts[i], func(r rune) bool { return r < '0' || r > '9' }))
+		n, err := strconv.Atoi(parts[i])
 		if err != nil {
 			return false
 		}
@@ -52,4 +58,18 @@ func atLeast(v string, maj, min, pat int) bool {
 	default:
 		return nums[2] >= pat
 	}
+}
+
+// isPrerelease reports whether a dotted version carries a non-numeric suffix
+// on any component (e.g. -rc1, -beta1, -dev, +build), i.e. anything other
+// than a plain stable release.
+func isPrerelease(v string) bool {
+	for _, part := range strings.Split(strings.TrimPrefix(v, "v"), ".") {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return true
+			}
+		}
+	}
+	return false
 }

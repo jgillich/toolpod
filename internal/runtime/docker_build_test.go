@@ -13,7 +13,9 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/client"
 )
@@ -273,7 +275,7 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", "sha256:abc123", nil, []string{"git"}, &recordingWriter{}); err != nil {
+	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "sha256:abc123", nil, []string{"git"}, &recordingWriter{}); err != nil {
 		t.Fatalf("buildDerivedImage: %v", err)
 	}
 	want := OwnershipLabels()
@@ -379,12 +381,52 @@ func TestSynthesizeDockerfileRepos(t *testing.T) {
 	if strings.Count(got, "rm -f /etc/apt/apt.conf.d/docker-clean") != 1 {
 		t.Errorf("docker-clean must be removed exactly once (bootstrap RUN):\n%s", got)
 	}
+	if !strings.Contains(got, "install -y --no-install-recommends \\\n        'mise'\n") {
+		t.Errorf("repos+packages dockerfile must install the quoted package:\n%s", got)
+	}
 	if strings.Contains(got, "rm -rf /var/lib/apt/lists/*") {
 		t.Errorf("no RUN may clean apt lists:\n%s", got)
 	}
 	aptMount := "--mount=type=cache,id=" + aptID + ",target=/var/cache/apt,sharing=locked"
 	if c := strings.Count(got, aptMount); c != 2 {
 		t.Errorf("apt cache mount must appear on both RUNs, got %d:\n%s", c, got)
+	}
+}
+
+func TestSynthesizeDockerfileReposOnly(t *testing.T) {
+	const baseRef = "base:1"
+	const aptID, listsID = "tpd-abc-apt", "tpd-abc-lists"
+	repos := []resolvedRepo{
+		{name: "mise"},
+		{name: "nodejs"},
+	}
+	got := synthesizeDockerfile(baseRef, repos, nil, aptID, listsID)
+	if !strings.Contains(got, "FROM "+baseRef+"\n") {
+		t.Errorf("dockerfile must start with FROM baseRef:\n%s", got)
+	}
+	// A repos-only profile still gets the repository/bootstrap steps…
+	for _, want := range []string{
+		"COPY extrepo/mise.sources",
+		"COPY extrepo/nodejs.sources",
+		"COPY extrepo/mise.asc /etc/apt/keyrings/mise.asc",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dockerfile must contain %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "apt-get -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends ca-certificates") {
+		t.Errorf("dockerfile must bootstrap ca-certificates when repos present:\n%s", got)
+	}
+	// …but no package-install RUN: the ca-certificates install ends the line,
+	// while the package RUN would carry a backslash continuation.
+	if strings.Contains(got, "--no-install-recommends \\\n") {
+		t.Errorf("repos-only dockerfile must not emit a package-install RUN:\n%s", got)
+	}
+	if strings.Count(got, "apt-get update") != 1 {
+		t.Errorf("repos-only dockerfile must have a single apt-get update (the bootstrap):\n%s", got)
+	}
+	if c := strings.Count(got, "--mount=type=cache,id="+aptID); c != 1 {
+		t.Errorf("apt cache mount must appear only on the bootstrap RUN, got %d:\n%s", c, got)
 	}
 }
 
@@ -491,6 +533,80 @@ func TestDrainBuildStreamMissingPackageDedup(t *testing.T) {
 	}
 	if c := strings.Count(err.Error(), "libxml2-dev"); c != 1 {
 		t.Errorf("missing package should be reported once, got %d in %q", c, err.Error())
+	}
+}
+
+// concurrentBuildFake serves the image endpoints ensureDerivedImage uses:
+// GET /images/<ref>/json (present flips to true once a build completes) and
+// POST /build. buildDur simulates a real build so a racing goroutine is still
+// blocked on the per-tag lock when the first builder publishes.
+type concurrentBuildFake struct {
+	mu       sync.Mutex
+	present  bool
+	builds   int
+	buildDur time.Duration
+}
+
+func (f *concurrentBuildFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/json"):
+		f.mu.Lock()
+		present := f.present
+		f.mu.Unlock()
+		if !present {
+			http.Error(w, `{"message":"No such image"}`, http.StatusNotFound)
+			return
+		}
+		fmt.Fprint(w, `{"Id":"sha256:derived"}`)
+	case strings.HasSuffix(r.URL.Path, "/build"):
+		f.mu.Lock()
+		f.builds++
+		f.mu.Unlock()
+		io.Copy(io.Discard, r.Body)
+		time.Sleep(f.buildDur)
+		f.mu.Lock()
+		f.present = true
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"stream":"Successfully built derived\n"}`+"\n")
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func TestEnsureDerivedImageSerializesConcurrentBuilds(t *testing.T) {
+	fake := &concurrentBuildFake{buildDur: 150 * time.Millisecond}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDir := buildLockDir
+	buildLockDir = t.TempDir()
+	t.Cleanup(func() { buildLockDir = oldDir })
+
+	const tag = "tpd/packages:concurrenttest"
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < len(errs); i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = ensureDerivedImage(context.Background(), cli, tag, "sha256:baseid", nil, []string{"git"}, NoopProgressWriter{})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
+	if fake.builds != 1 {
+		t.Errorf("two concurrent launches of the same derived tag must build once, got %d builds", fake.builds)
 	}
 }
 

@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,39 +65,47 @@ func renderTemplate(s string, data tmplData) (string, error) {
 // mount/cache targets (→ runtimeHome) per spec §5.6, then renders
 // {{ }} text/template expressions against the host environment. Files
 // targets expand ~ (→ runtimeHome) too, and each File.Content is rendered
-// as a template. Absolute paths are left as-is. The mode is informational
-// only here; the caller has already determined runtimeHome based on the mode.
+// as a template. Absolute paths are left as-is. ModeUnknown (dry-run without
+// a daemon) keeps ~ targets literal rather than claiming a home; the caller
+// otherwise determines runtimeHome based on the mode.
 func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
 	out := cfg
 	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports}
 
+	// resolveTarget resolves an in-container mount/cache/file target. In
+	// unknown mode (dry-run without a detected engine mode) a ~-prefixed target
+	// stays literal instead of expanding against the host home, which would
+	// claim a rootless container home no daemon confirmed. Sources are host
+	// paths and keep expanding against hostHome regardless of mode.
+	resolveTarget := func(raw string, d tmplData) (string, error) {
+		return resolvePath(raw, runtimeHome, d)
+	}
+	if mode == workspace.ModeUnknown {
+		resolveTarget = resolveUnknownPath
+	}
+
 	if out.Mounts != nil {
 		expanded := make(map[string]Mount, len(out.Mounts))
 		for target, m := range out.Mounts {
-			newTarget, err := expandTarget(target, runtimeHome, data)
+			newTarget, err := resolveTarget(target, data)
 			if err != nil {
-				return out, err
-			}
-			m.Source, err = expandSource(m.Source, hostHome, data)
-			if err != nil {
-				return out, err
-			}
-			// An empty rendered path is a config error (a bind mount with no
-			// source or target fails confusingly later); optional mounts
-			// degrade to absent. Service-socket mounts have no source by
-			// definition, so only bind mounts are checked for one.
-			isServiceMount := m.Service != ""
-			if newTarget == "" {
-				if m.Optional {
+				if m.Optional && errors.Is(err, errEmptyPath) {
 					continue
 				}
-				return out, fmt.Errorf("mount %q resolved to an empty path after template expansion (is the host variable set?)", target)
+				return out, fmt.Errorf("mount %q: %w", target, err)
 			}
-			if !isServiceMount && m.Source == "" {
-				if m.Optional {
-					continue
+			// An empty rendered source is a config error (a bind mount with no
+			// source fails confusingly later); optional mounts degrade to
+			// absent. Service-socket mounts have no source by definition, so
+			// only bind mounts are checked for one.
+			if m.Service == "" {
+				m.Source, err = resolvePath(m.Source, hostHome, data)
+				if err != nil {
+					if m.Optional && errors.Is(err, errEmptyPath) {
+						continue
+					}
+					return out, fmt.Errorf("mount %q source: %w", target, err)
 				}
-				return out, fmt.Errorf("mount %q resolved to an empty path after template expansion (is the host variable set?)", target)
 			}
 			expanded[newTarget] = m
 		}
@@ -108,12 +117,9 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 		for name, paths := range out.Caches {
 			var exps CachePaths
 			for _, p := range paths {
-				e, err := expandTarget(p, runtimeHome, data)
+				e, err := resolveTarget(p, data)
 				if err != nil {
-					return out, err
-				}
-				if e == "" {
-					return out, fmt.Errorf("cache %s resolved to an empty target after template expansion (is the host variable set?)", name)
+					return out, fmt.Errorf("cache %s: %w", name, err)
 				}
 				exps = append(exps, e)
 			}
@@ -125,23 +131,10 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 	if out.Files != nil {
 		expanded := make(map[string]File, len(out.Files))
 		for target, f := range out.Files {
-			newTarget, err := expandTarget(target, runtimeHome, data)
+			newTarget, err := resolveTarget(target, data)
 			if err != nil {
-				return out, err
+				return out, fmt.Errorf("file %q: %w", target, err)
 			}
-			if newTarget == "" {
-				return out, fmt.Errorf("file %q resolved to an empty target after template expansion (is the host variable set?)", target)
-			}
-			// Template expansion can inject ".." segments that validateFiles
-			// never saw (e.g. {{ .Env.X }} with X=/..); reject them here so the
-			// resolved target is a clean path. Clean then normalizes //, /./,
-			// and trailing-slash noise; it cannot introduce "..".
-			for _, seg := range strings.Split(newTarget, "/") {
-				if seg == ".." {
-					return out, fmt.Errorf("file %q resolved to path %q containing '..' after template expansion", target, newTarget)
-				}
-			}
-			newTarget = filepath.Clean(newTarget)
 			f.Content, err = renderTemplate(f.Content, data)
 			if err != nil {
 				return out, fmt.Errorf("file %s: %w", target, err)
@@ -153,9 +146,6 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 
 	if out.Env != nil {
 		for k, v := range out.Env {
-			if !strings.HasPrefix(v, "{{") {
-				continue
-			}
 			rendered, err := renderTemplate(v, data)
 			if err != nil {
 				return out, fmt.Errorf("environment %s: %w", k, err)
@@ -180,20 +170,20 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 				svcMounts := make(map[string]Mount, len(svc.Mounts))
 				for target, m := range svc.Mounts {
 					// Targets are in-container paths; expand against /root.
-					newTarget, err := expandTarget(target, serviceHome, data)
+					newTarget, err := resolvePath(target, serviceHome, data)
 					if err != nil {
-						return out, err
-					}
-					// Sources are host paths; expand against hostHome.
-					m.Source, err = expandSource(m.Source, hostHome, data)
-					if err != nil {
-						return out, err
-					}
-					if newTarget == "" || m.Source == "" {
-						if m.Optional {
+						if m.Optional && errors.Is(err, errEmptyPath) {
 							continue
 						}
-						return out, fmt.Errorf("service %s mount %q resolved to an empty path after template expansion", name, target)
+						return out, fmt.Errorf("service %s mount %q: %w", name, target, err)
+					}
+					// Sources are host paths; expand against hostHome.
+					m.Source, err = resolvePath(m.Source, hostHome, data)
+					if err != nil {
+						if m.Optional && errors.Is(err, errEmptyPath) {
+							continue
+						}
+						return out, fmt.Errorf("service %s mount %q source: %w", name, target, err)
 					}
 					svcMounts[newTarget] = m
 				}
@@ -205,12 +195,9 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 					var exps CachePaths
 					for _, p := range paths {
 						// Cache paths are in-container paths; expand against /root.
-						e, err := expandTarget(p, serviceHome, data)
+						e, err := resolvePath(p, serviceHome, data)
 						if err != nil {
-							return out, err
-						}
-						if e == "" {
-							return out, fmt.Errorf("service %s cache %s resolved to an empty target", name, cacheName)
+							return out, fmt.Errorf("service %s cache %s: %w", name, cacheName, err)
 						}
 						exps = append(exps, e)
 					}
@@ -222,19 +209,10 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 				expandedFiles := make(map[string]File, len(svc.Files))
 				for target, f := range svc.Files {
 					// File targets are in-container paths; expand against /root.
-					newTarget, err := expandTarget(target, serviceHome, data)
+					newTarget, err := resolvePath(target, serviceHome, data)
 					if err != nil {
-						return out, err
+						return out, fmt.Errorf("service %s file %q: %w", name, target, err)
 					}
-					if newTarget == "" {
-						return out, fmt.Errorf("service %s file %q resolved to an empty target", name, target)
-					}
-					for _, seg := range strings.Split(newTarget, "/") {
-						if seg == ".." {
-							return out, fmt.Errorf("service %s file %q resolved to path %q containing '..'", name, target, newTarget)
-						}
-					}
-					newTarget = filepath.Clean(newTarget)
 					f.Content, err = renderTemplate(f.Content, data)
 					if err != nil {
 						return out, fmt.Errorf("service %s file %s: %w", name, target, err)
@@ -243,11 +221,24 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 				}
 				svc.Files = expandedFiles
 			}
+			if len(svc.Exposes) > 0 {
+				exposes := make(map[string]string, len(svc.Exposes))
+				for socketName, exposePath := range svc.Exposes {
+					// Expose paths are in-container socket paths; expand
+					// against /root and re-check the expose syntax.
+					resolved, err := resolvePath(exposePath, serviceHome, data)
+					if err != nil {
+						return out, fmt.Errorf("service %s exposes %s: %w", name, socketName, err)
+					}
+					if err := checkExposePath(resolved); err != nil {
+						return out, fmt.Errorf("service %s exposes %s: %w", name, socketName, err)
+					}
+					exposes[socketName] = resolved
+				}
+				svc.Exposes = exposes
+			}
 			if svc.Env != nil {
 				for k, v := range svc.Env {
-					if !strings.HasPrefix(v, "{{") {
-						continue
-					}
 					rendered, err := renderTemplate(v, data)
 					if err != nil {
 						return out, fmt.Errorf("service %s environment %s: %w", name, k, err)
@@ -270,32 +261,72 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 	return out, nil
 }
 
-// renderArgs renders args that start with "{{" as templates; all other
-// args pass through literally (so shell snippets with literal braces work).
+// renderArgs renders args containing a {{ }} template expression; args
+// without one pass through unchanged, so shell snippets with single braces
+// or no braces are untouched.
 func renderArgs(args []string, data tmplData) ([]string, error) {
 	out := make([]string, len(args))
 	for i, a := range args {
-		if strings.HasPrefix(a, "{{") {
-			rendered, err := renderTemplate(a, data)
-			if err != nil {
-				return nil, fmt.Errorf("arg %d: %w", i, err)
-			}
-			out[i] = rendered
-			continue
+		rendered, err := renderTemplate(a, data)
+		if err != nil {
+			return nil, fmt.Errorf("arg %d: %w", i, err)
 		}
-		out[i] = a
+		out[i] = rendered
 	}
 	return out, nil
 }
 
-func expandTarget(path, runtimeHome string, data tmplData) (string, error) {
-	path = expandTilde(path, runtimeHome)
-	return renderTemplate(path, data)
+// errEmptyPath is returned by resolvePath when a rendered path resolves empty.
+// Optional mounts treat it as "drop the mount"; everything else propagates it.
+var errEmptyPath = errors.New("resolved to an empty path after template expansion (is the host variable set?)")
+
+// resolvePath renders raw as a {{ }} template, expands a resulting ~/ against
+// home, and validates the resolved path: non-empty, absolute (after tilde
+// expansion), and free of ".." segments. Rendering happens before tilde
+// expansion so a ~/ produced by a template is honored. Validation exempts
+// templates from the raw absolute/~-prefix rule, so a template that renders a
+// relative path is rejected here. The result is cleaned; Clean cannot
+// introduce "..".
+func resolvePath(raw, home string, data tmplData) (string, error) {
+	rendered, err := renderTemplate(raw, data)
+	if err != nil {
+		return "", err
+	}
+	if rendered == "" {
+		return "", errEmptyPath
+	}
+	if !isAbsOrTilde(rendered) {
+		return "", fmt.Errorf("resolved to path %q that is neither absolute nor ~-prefixed after template expansion", rendered)
+	}
+	expanded := expandTilde(rendered, home)
+	if !filepath.IsAbs(expanded) {
+		return "", fmt.Errorf("resolved to path %q that is not absolute after tilde expansion", expanded)
+	}
+	if hasDotDot(expanded) {
+		return "", fmt.Errorf("resolved to path %q containing '..' after template expansion", expanded)
+	}
+	return filepath.Clean(expanded), nil
 }
 
-func expandSource(path, hostHome string, data tmplData) (string, error) {
-	path = expandTilde(path, hostHome)
-	return renderTemplate(path, data)
+// resolveUnknownPath validates an in-container path without expanding a
+// leading ~/: no engine mode has been detected, so no home can be claimed.
+// Absolute paths pass through cleaned; ~-prefixed targets stay literal so the
+// dry-run preview shows the unexpanded target instead of a guessed home.
+func resolveUnknownPath(raw string, data tmplData) (string, error) {
+	rendered, err := renderTemplate(raw, data)
+	if err != nil {
+		return "", err
+	}
+	if rendered == "" {
+		return "", errEmptyPath
+	}
+	if !isAbsOrTilde(rendered) {
+		return "", fmt.Errorf("resolved to path %q that is neither absolute nor ~-prefixed after template expansion", rendered)
+	}
+	if hasDotDot(rendered) {
+		return "", fmt.Errorf("resolved to path %q containing '..' after template expansion", rendered)
+	}
+	return filepath.Clean(rendered), nil
 }
 
 func expandTilde(path, home string) string {

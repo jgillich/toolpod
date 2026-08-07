@@ -36,8 +36,11 @@ var (
 )
 
 func validate(rc RawProfile) error {
-	if rc.Version == 0 {
-		return ProfileError{Path: rc.Path, Message: "missing required field: version"}
+	if rc.Version != 1 {
+		if rc.Version == 0 {
+			return ProfileError{Path: rc.Path, Message: "missing required field: version"}
+		}
+		return ProfileError{Path: rc.Path, Message: fmt.Sprintf("unsupported version: %d (want 1)", rc.Version)}
 	}
 	if len(rc.Command) == 0 {
 		return ProfileError{Path: rc.Path, Message: "missing required field: command"}
@@ -69,6 +72,12 @@ func validate(rc RawProfile) error {
 		return err
 	}
 	if err := validateFiles(rc); err != nil {
+		return err
+	}
+	if err := validateMounts(rc); err != nil {
+		return err
+	}
+	if err := validateCaches(rc); err != nil {
 		return err
 	}
 	if err := validateTools(rc); err != nil {
@@ -193,23 +202,106 @@ func validateRepos(rc RawProfile) error {
 	return nil
 }
 
+// isAbsOrTilde reports whether s is an absolute path or a ~-prefixed home
+// reference ("~", "~/..."). ~user forms are not valid tpd paths.
+func isAbsOrTilde(s string) bool {
+	return filepath.IsAbs(s) || s == "~" || strings.HasPrefix(s, "~/")
+}
+
+// hasDotDot reports whether any "/"-separated segment of path is "..".
+func hasDotDot(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// checkPath validates a pre-expansion path used as a mount/cache/file target
+// or bind-mount source: absolute or ~-prefixed, free of ".." segments and
+// control characters. A {{ }} template is exempt from the prefix rule (it
+// cannot be evaluated here) but must still be free of ".." and control chars;
+// ResolveTildes re-checks the rendered result.
+func checkPath(value, what string) error {
+	if value == "" {
+		return nil
+	}
+	if containsControl(value) {
+		return fmt.Errorf("%s %q: must not contain control characters", what, value)
+	}
+	if !strings.Contains(value, "{{") && !isAbsOrTilde(value) {
+		return fmt.Errorf("%s %q: must be an absolute path or ~-prefixed", what, value)
+	}
+	if hasDotDot(value) {
+		return fmt.Errorf("%s %q: must not contain '..' segments", what, value)
+	}
+	return nil
+}
+
+// checkExposePath validates a service expose socket path: absolute, under a
+// non-root parent dir, and free of ".." segments. The runtime bind-mounts the
+// socket's parent dir from the host run-dir and joins the socket name onto it,
+// so a root parent or a ".." segment would place the socket outside the
+// run-dir. ResolveTildes re-checks the rendered path.
+func checkExposePath(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("path must be absolute")
+	}
+	if hasDotDot(path) {
+		return fmt.Errorf("path %q must not contain '..' segments", path)
+	}
+	if filepath.Dir(path) == "/" {
+		return fmt.Errorf("path %q must be inside a non-root directory", path)
+	}
+	return nil
+}
+
 // validateFiles checks each file target: absolute or ~-prefixed, and free of
-// ".." segments. The tar is rooted at "/", so a ".." target could traverse
-// outside the intended location. Rejecting raw ".." segments covers the
-// literal target; template expansion can inject new ".." segments, so
-// ResolveTildes re-checks the expanded target and cleans the result.
+// ".." segments and control characters. The tar is rooted at "/", so a ".."
+// target could traverse outside the intended location. Rejecting raw ".."
+// segments covers the literal target; template expansion can inject new ".."
+// segments, so ResolveTildes re-checks the expanded target and cleans the
+// result.
 func validateFiles(rc RawProfile) error {
 	for target, f := range rc.Files {
-		if target != "~" && !strings.HasPrefix(target, "~/") && !strings.HasPrefix(target, "/") {
-			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q must be an absolute path or ~-prefixed", target)}
-		}
-		for _, seg := range strings.Split(target, "/") {
-			if seg == ".." {
-				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q must not contain '..' segments", target)}
-			}
+		if err := checkPath(target, "files: target"); err != nil {
+			return ProfileError{Path: rc.Path, Message: err.Error()}
 		}
 		if f.Mode > 0o7777 {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("files: target %q: mode %o out of range (want 0-07777)", target, f.Mode)}
+		}
+	}
+	return nil
+}
+
+// validateMounts checks each mount's raw paths: the target must be absolute or
+// ~-prefixed and free of ".." segments and control characters; bind-mount
+// sources follow the same rule. Service-socket mounts carry no source (the
+// socket comes from the service's exposes), so only their target is checked
+// here; validateMountServices enforces the service/socket pairing.
+func validateMounts(rc RawProfile) error {
+	for target, m := range rc.Mounts {
+		if err := checkPath(target, "mount target"); err != nil {
+			return ProfileError{Path: rc.Path, Message: err.Error()}
+		}
+		if m.Service == "" && m.Socket == "" {
+			if err := checkPath(m.Source, "mount source"); err != nil {
+				return ProfileError{Path: rc.Path, Message: err.Error()}
+			}
+		}
+	}
+	return nil
+}
+
+// validateCaches checks each cache target: absolute or ~-prefixed, free of
+// ".." segments and control characters.
+func validateCaches(rc RawProfile) error {
+	for _, paths := range rc.Caches {
+		for _, p := range paths {
+			if err := checkPath(p, "cache path"); err != nil {
+				return ProfileError{Path: rc.Path, Message: err.Error()}
+			}
 		}
 	}
 	return nil
@@ -296,6 +388,12 @@ func validateServices(rc RawProfile) error {
 		if svc.Image == "" {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: image is required", name)}
 		}
+		if strings.ContainsAny(svc.Image, "\x00\n\r") {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: image: must not contain control characters", name)}
+		}
+		if _, err := reference.ParseNormalizedNamed(svc.Image); err != nil {
+			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: image: invalid image reference %q: %v", name, svc.Image, err)}
+		}
 		if len(svc.Command) == 0 {
 			return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: command is required", name)}
 		}
@@ -355,13 +453,37 @@ func validateServices(rc RawProfile) error {
 			if !profileNameRe.MatchString(socketName) {
 				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: invalid socket name (must match %s)", name, socketName, profileNameRe)}
 			}
-			if !filepath.IsAbs(socketPath) {
-				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: path must be absolute", name, socketName)}
+			if containsControl(socketPath) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: path must not contain control characters", name, socketName)}
+			}
+			// A {{ }} template is exempt from the absolute/non-root-prefix rule
+			// (it cannot be evaluated here) but still must be free of literal
+			// ".."; ResolveTildes re-checks the rendered path.
+			if !strings.Contains(socketPath, "{{") {
+				if err := checkExposePath(socketPath); err != nil {
+					return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: %v", name, socketName, err)}
+				}
+			}
+			if hasDotDot(socketPath) {
+				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: exposes %s: path %q must not contain '..' segments", name, socketName, socketPath)}
 			}
 		}
 		for mountTarget, m := range svc.Mounts {
 			if m.Service != "" || m.Socket != "" {
 				return ProfileError{Path: rc.Path, Message: fmt.Sprintf("services: %s: mount %s: must not use service/socket (no inter-service dependencies in v1)", name, mountTarget)}
+			}
+			if err := checkPath(mountTarget, fmt.Sprintf("services: %s: mount target", name)); err != nil {
+				return ProfileError{Path: rc.Path, Message: err.Error()}
+			}
+			if err := checkPath(m.Source, fmt.Sprintf("services: %s: mount source", name)); err != nil {
+				return ProfileError{Path: rc.Path, Message: err.Error()}
+			}
+		}
+		for _, paths := range svc.Caches {
+			for _, p := range paths {
+				if err := checkPath(p, fmt.Sprintf("services: %s: cache path", name)); err != nil {
+					return ProfileError{Path: rc.Path, Message: err.Error()}
+				}
 			}
 		}
 	}

@@ -253,6 +253,58 @@ func TestProfileEditBrokenUserOnlyFileStillOpens(t *testing.T) {
 	}
 }
 
+func TestEditBuiltinEditorFailureWithoutWriteRemovesSeed(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 1\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "bash")
+	if err == nil {
+		t.Fatalf("edit with a failing editor must return an error:\n%s", out)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("unchanged seed must be removed after editor failure, stat: %v", statErr)
+	}
+}
+
+func TestEditBuiltinEditorFailureAfterWritePreservesSeed(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nprintf '\\n# edited before failure\\n' >> \"$1\"\nexit 1\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "bash")
+	if err == nil {
+		t.Fatalf("edit with a failing editor must return an error:\n%s", out)
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("changed seed must be preserved after editor failure: %v", readErr)
+	}
+	if !strings.Contains(string(data), "# edited before failure") {
+		t.Errorf("expected the editor's changes to persist despite the failure, got:\n%s", data)
+	}
+}
+
+func TestEditBuiltinNoEditRemovesSeed(t *testing.T) {
+	cfg := t.TempDir()
+	target := filepath.Join(cfg, "tpd", "profiles", "bash.yaml")
+	env := []string{
+		"XDG_CONFIG_HOME=" + cfg,
+		"EDITOR=" + writeEditor(t, cfg, "editor", "#!/bin/sh\nexit 0\n"),
+	}
+	out, err := runTpdEnv(t, env, "edit", "bash")
+	if err != nil {
+		t.Fatalf("edit with a no-op editor should succeed: %v\n%s", err, out)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("untouched seed must be removed after a no-op edit, stat: %v", statErr)
+	}
+}
+
 // A write can leave the mtime unchanged on overlayfs under load; the saved
 // check must fall back to content so a real save is not mistaken for a quit.
 func TestEditSavedDetectsContentChangeWithUnchangedMtime(t *testing.T) {

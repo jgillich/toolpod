@@ -15,3 +15,16 @@ func TestComputeMountTargetRootful(t *testing.T) {
 		t.Errorf("rootful target = %q, want /workspace", got)
 	}
 }
+
+func TestComputeMountTargetUnknown(t *testing.T) {
+	got := ComputeMountTarget("/home/me/projects/myapp", ModeUnknown)
+	if got != "" {
+		t.Errorf("unknown target = %q, want empty (no claim without a daemon)", got)
+	}
+}
+
+func TestModeUnknownString(t *testing.T) {
+	if ModeUnknown.String() != "unknown" {
+		t.Errorf("ModeUnknown.String() = %q, want unknown", ModeUnknown.String())
+	}
+}

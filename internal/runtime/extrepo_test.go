@@ -1,12 +1,19 @@
 package runtime
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/base64"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/docker/docker/client"
 	"gopkg.in/yaml.v3"
 )
 
@@ -125,6 +132,44 @@ func TestFetchExtrepoIndexRedirectWithoutLocation(t *testing.T) {
 
 	if _, err := fetchExtrepoIndex(context.Background(), "trixie"); err == nil {
 		t.Error("fetchExtrepoIndex must fail on a 3xx response without a Location header")
+	}
+}
+
+func TestFetchExtrepoIndexContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {} // hang until the client gives up
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	old := extrepoCatalogBase
+	extrepoCatalogBase = "http://" + ln.Addr().String()
+	defer func() { extrepoCatalogBase = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := fetchExtrepoIndex(ctx, "trixie")
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("fetchExtrepoIndex returned nil error after cancellation")
+		}
+		if !strings.Contains(err.Error(), "context canceled") {
+			t.Errorf("error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetchExtrepoIndex did not return after context cancellation")
 	}
 }
 
@@ -324,5 +369,66 @@ func TestResolveLinkTarget(t *testing.T) {
 		if got := resolveLinkTarget(c.path, c.linkname); got != c.want {
 			t.Errorf("resolveLinkTarget(%q, %q) = %q, want %q", c.path, c.linkname, got, c.want)
 		}
+	}
+}
+
+// copyFileTar wraps a single header+body into the one-entry tar Docker's
+// CopyFromContainer returns.
+func copyFileTar(hdr *tar.Header, body []byte) []byte {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(hdr); err != nil {
+		panic(err)
+	}
+	if len(body) > 0 {
+		if _, err := tw.Write(body); err != nil {
+			panic(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+func TestReadImageCodenameResolvesHardlink(t *testing.T) {
+	// /etc/os-release may be a hardlink (not a symlink) to
+	// /usr/lib/os-release in some base images; a hardlink tar entry carries
+	// no body, so extraction must follow the link instead of returning empty
+	// content.
+	osRelease := []byte("VERSION_CODENAME=trixie\n")
+	stat := base64.StdEncoding.EncodeToString([]byte(`{"name":"os-release","size":0}`))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/create"):
+			fmt.Fprint(w, `{"Id":"c1"}`)
+		case strings.HasSuffix(r.URL.Path, "/archive"):
+			w.Header().Set("X-Docker-Container-Path-Stat", stat)
+			switch r.URL.Query().Get("path") {
+			case "/etc/os-release":
+				w.Write(copyFileTar(&tar.Header{Name: "/etc/os-release", Typeflag: tar.TypeLink, Linkname: "/usr/lib/os-release"}, nil))
+			case "/usr/lib/os-release":
+				w.Write(copyFileTar(&tar.Header{Name: "/usr/lib/os-release", Size: int64(len(osRelease))}, osRelease))
+			default:
+				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codename, err := readImageCodename(context.Background(), cli, "base:1")
+	if err != nil {
+		t.Fatalf("readImageCodename: %v", err)
+	}
+	if codename != "trixie" {
+		t.Errorf("codename = %q, want trixie (hardlink must resolve to the linked file's content)", codename)
 	}
 }

@@ -2,6 +2,7 @@ package tpd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,7 @@ func proxyFilterArgs(cfg profile.Profile) []string {
 // When the profile has a dbus allowlist, the bus fails closed: an error is
 // returned (and Launch aborts) if there is no host session bus to proxy or
 // xdg-dbus-proxy is not installed, instead of silently disabling the bus.
-func startBusProxy(cfg profile.Profile) (func(), string, error) {
+func startBusProxy(cfg profile.Profile, diag io.Writer) (func(), string, error) {
 	if !dbusEnabled(cfg) {
 		return nil, "", nil
 	}
@@ -88,10 +89,10 @@ func startBusProxy(cfg profile.Profile) (func(), string, error) {
 		args = append(args, "--log")
 	}
 	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = diag
+	cmd.Stderr = diag
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "tpd: warning: start xdg-dbus-proxy: %v\n", err)
+		fmt.Fprintf(diag, "tpd: warning: start xdg-dbus-proxy: %v\n", err)
 		return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy did not start")
 	}
 	// Wait for the proxy to create its socket so container clients don't race
@@ -103,13 +104,13 @@ func startBusProxy(cfg profile.Profile) (func(), string, error) {
 		}
 		if time.Now().After(deadline) {
 			if err := cmd.Process.Kill(); err != nil {
-				fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+				fmt.Fprintf(diag, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
 			}
 			if _, err := cmd.Process.Wait(); err != nil {
-				fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+				fmt.Fprintf(diag, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
 			}
 			if err := os.Remove(sockPath); err != nil {
-				fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+				fmt.Fprintf(diag, "tpd: warning: remove socket %s: %v\n", sockPath, err)
 			}
 			return nil, "", fmt.Errorf("profile requires filtered D-Bus but xdg-dbus-proxy did not start")
 		}
@@ -117,13 +118,13 @@ func startBusProxy(cfg profile.Profile) (func(), string, error) {
 	}
 	cleanup := func() {
 		if err := cmd.Process.Kill(); err != nil {
-			fmt.Fprintf(os.Stderr, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
+			fmt.Fprintf(diag, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
 		}
 		if _, err := cmd.Process.Wait(); err != nil {
-			fmt.Fprintf(os.Stderr, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
+			fmt.Fprintf(diag, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
 		}
 		if err := os.Remove(sockPath); err != nil {
-			fmt.Fprintf(os.Stderr, "tpd: warning: remove socket %s: %v\n", sockPath, err)
+			fmt.Fprintf(diag, "tpd: warning: remove socket %s: %v\n", sockPath, err)
 		}
 	}
 	return cleanup, "unix:path=" + sockPath, nil

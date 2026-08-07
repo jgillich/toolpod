@@ -33,17 +33,44 @@ local function safe_relative_path(s, allow_nested)
   return true
 end
 
+-- GET a URL and return the body string. http.get throws in mise and returns
+-- (resp, err) in vfox, so it is pcall-wrapped for portability; both runtimes
+-- report HTTP status separately, and non-200 bodies (e.g. GitHub rate-limit
+-- pages) must not be treated as data.
+local function http_get_body(url)
+  local ok, resp, err = pcall(http.get, { url = url })
+  if not ok or not resp then
+    return nil, "request error: " .. tostring(err or resp)
+  end
+  if resp.status_code ~= 200 then
+    return nil, "HTTP " .. resp.status_code
+  end
+  return resp.body
+end
+
 function PLUGIN:BackendInstall(ctx)
   local cmd = require("cmd")
   local json = require("json")
   local file = require("file")
   local http = require("http")
 
+  if RUNTIME.osType ~= "linux" then
+    error("appimage: backend requires Linux")
+  end
+
   local repo = ctx.tool
   local version = ctx.version
   local install_path = ctx.install_path
   local download_path = ctx.download_path
   local options = ctx.options
+
+  -- Validate before any network or filesystem mutation; the launcher embeds
+  -- these verbatim, so a hostile exe/name must never reach a path on disk.
+  local exe = options.exe or "AppRun"
+  local name = options.name or repo:match("([^/]+)$")
+  if not safe_relative_path(exe, true) or not safe_relative_path(name, false) then
+    error("appimage: invalid exe/name option for " .. repo)
+  end
 
   local function find_release(repo, version)
     local url
@@ -52,9 +79,9 @@ function PLUGIN:BackendInstall(ctx)
     else
       url = "https://api.github.com/repos/" .. repo .. "/releases/tags/v" .. version
     end
-    local resp, err = http.get({ url = url })
-    if err == nil then
-      local release = json.decode(resp.body)
+    local body = http_get_body(url)
+    if body then
+      local release = json.decode(body)
       if type(release) == "table" and release.assets then
         return release
       end
@@ -62,13 +89,11 @@ function PLUGIN:BackendInstall(ctx)
     -- fallback for pinned versions: list releases and match v(%d[%w%._+-]*)$
     -- ("latest" intentionally never matches here, so a bare "latest" that
     -- reaches the fallback still fails closed)
-    local list, lerr = http.get({
-      url = "https://api.github.com/repos/" .. repo .. "/releases?per_page=100",
-    })
+    local list, lerr = http_get_body("https://api.github.com/repos/" .. repo .. "/releases?per_page=100")
     if lerr ~= nil then
       error("failed to fetch releases: " .. lerr)
     end
-    local releases = json.decode(list.body)
+    local releases = json.decode(list or "")
     if type(releases) == "table" then
       for _, r in ipairs(releases) do
         if not r.prerelease then
@@ -142,9 +167,9 @@ function PLUGIN:BackendInstall(ctx)
       local is_summary = a.name:match("SHA256SUMS$")
       local is_single = a.name == asset_name .. ".sha256"
       if is_summary or is_single then
-        local body, herr = http.get({ url = a.browser_download_url })
-        if herr == nil and body and body.body then
-          for line in body.body:gmatch("[^\r\n]+") do
+        local body = http_get_body(a.browser_download_url)
+        if body then
+          for line in body:gmatch("[^\r\n]+") do
             local sum, fname = line:match("^(%x+)%s+[%*]?(.+)%s*$")
             if sum and (fname == asset_name or fname:match("[^/]*$") == asset_name) then
               return sum
@@ -181,9 +206,11 @@ function PLUGIN:BackendInstall(ctx)
   end
 
   local appimage = file.join_path(download_path, "app.AppImage")
-  local dload_err = http.download_file({ url = asset.browser_download_url }, appimage)
-  if dload_err ~= nil then
-    error("download failed: " .. dload_err)
+  -- http.download_file throws in mise (including on non-2xx via error_for_status)
+  -- but returns a single error value in vfox; pcall normalizes both.
+  local dload_ok, dload_err = pcall(http.download_file, { url = asset.browser_download_url }, appimage)
+  if not dload_ok or dload_err ~= nil then
+    error("download failed: " .. tostring(dload_err))
   end
 
   local actual = cmd.exec("sha256sum " .. shq(appimage)):match("^(%x+)")
@@ -201,14 +228,14 @@ function PLUGIN:BackendInstall(ctx)
 
   -- Swap the bundled xdg-open for the image wrapper that forwards URLs to the
   -- host's XDG desktop portal (AppRun prepends the bundle's usr/bin to PATH).
+  -- The wrapper is staged to a temp name first and the original renamed aside
+  -- only once the swap can complete; on any failure the original is restored,
+  -- and the trailing `|| true` keeps cmd.exec from raising on a restore miss.
   local xdg = file.join_path(install_path, "app", "usr", "bin", "xdg-open")
-  cmd.exec("[ -f " .. shq(xdg) .. " ] && [ -f /usr/local/bin/xdg-open ] && mv " .. shq(xdg) .. " " .. shq(xdg .. ".real") .. " && cp /usr/local/bin/xdg-open " .. shq(xdg) .. " && chmod +x " .. shq(xdg) .. " || true")
+  local xdg_new = xdg .. ".new"
+  local xdg_real = xdg .. ".real"
+  cmd.exec("if [ -f " .. shq(xdg) .. " ] && [ -f /usr/local/bin/xdg-open ]; then cp /usr/local/bin/xdg-open " .. shq(xdg_new) .. " && mv " .. shq(xdg) .. " " .. shq(xdg_real) .. " && mv " .. shq(xdg_new) .. " " .. shq(xdg) .. " && chmod +x " .. shq(xdg) .. " || { [ -f " .. shq(xdg_real) .. " ] && mv " .. shq(xdg_real) .. " " .. shq(xdg) .. " || true; }; fi")
 
-  local exe = options.exe or "AppRun"
-  local name = options.name or repo:match("([^/]+)$")
-  if not safe_relative_path(exe, true) or not safe_relative_path(name, false) then
-    error("appimage: invalid exe/name option for " .. repo)
-  end
   local launcher = '#!/usr/bin/env bash\nexec "$(dirname "$0")/../app/' .. exe .. '" "$@"\n'
   local bin_dir = file.join_path(install_path, "bin")
   local launcher_path = file.join_path(bin_dir, name)

@@ -1,11 +1,15 @@
 package approval
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"golang.org/x/sys/unix"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,7 +74,7 @@ func (s *FSStore) Load(fullName string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readStateFile(path)
 	if os.IsNotExist(err) {
 		return State{}, nil
 	}
@@ -79,14 +83,32 @@ func (s *FSStore) Load(fullName string) (State, error) {
 	}
 	var st State
 	if err := yaml.Unmarshal(data, &st); err != nil {
-		return State{}, err
+		return State{}, fmt.Errorf("approval state for profile %q at %s is corrupt: %v; repair or delete the file to reset approvals", fullName, path, err)
 	}
 	return st, nil
+}
+
+// readStateFile opens the state file with O_NOFOLLOW, so a symlinked final
+// component is rejected atomically: there is no Lstat-then-read window for
+// a link to be swapped in between the check and the read.
+func readStateFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return nil, fmt.Errorf("approval state %s is a symlink; refusing to follow it", path)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 func (s *FSStore) Save(fullName string, st State) error {
 	path, err := s.pathFor(fullName)
 	if err != nil {
+		return err
+	}
+	if err := rejectSymlink(path); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -96,11 +118,54 @@ func (s *FSStore) Save(fullName string, st State) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// Write a temp file in the same directory, fsync, then rename into
+	// place so readers never observe a partial file and a crash never
+	// leaves a torn state file. CreateTemp opens with mode 0600.
+	f, err := os.CreateTemp(filepath.Dir(path), "approval-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	renameDone := false
+	defer func() {
+		if !renameDone {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	renameDone = true
+	return nil
+}
+
+// rejectSymlink refuses to save over a state file that is a symlink. Save's
+// rename would replace the link rather than follow it, but an operator-placed
+// link is better surfaced than silently clobbered. Load rejects links with
+// O_NOFOLLOW (readStateFile) instead, which is race-free.
+func rejectSymlink(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("approval state %s is a symlink; refusing to follow it", path)
+	}
+	return nil
 }
 
 // yamlState is the on-disk representation. A field present in Approved

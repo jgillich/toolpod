@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -40,6 +42,11 @@ type fakeDocker struct {
 	createdCnts    []string
 	removedCnts    []string
 	networks       []network.Summary
+
+	failVolumeRemove    bool
+	failContainerRemove bool
+	failContainerList   bool
+	failImageList       bool
 }
 
 func newFakeDocker(t *testing.T, images []image.Summary, volumes []*volume.Volume) *fakeDocker {
@@ -77,6 +84,10 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"Name":%q,"Driver":"local"}`, opts.Name)
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.41/volumes/"):
+		if f.failVolumeRemove {
+			http.Error(w, "volume is in use", http.StatusConflict)
+			return
+		}
 		f.removedVolumes = append(f.removedVolumes, path.Base(r.URL.Path))
 		w.WriteHeader(http.StatusNoContent)
 
@@ -87,6 +98,10 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/images/json"):
+		if f.failImageList {
+			http.Error(w, "daemon error", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(f.images); err != nil {
 			f.t.Errorf("encode images: %v", err)
@@ -112,6 +127,10 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
+		if f.failContainerList {
+			http.Error(w, "daemon error", http.StatusInternalServerError)
+			return
+		}
 		out := f.containers
 		if fs := r.URL.Query().Get("filters"); fs != "" {
 			args, err := filters.FromJSON(fs)
@@ -150,6 +169,10 @@ func (f *fakeDocker) handle(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"Id":"probe-container","Warnings":[]}`)
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1.41/containers/"):
+		if f.failContainerRemove {
+			http.Error(w, "container busy", http.StatusConflict)
+			return
+		}
 		f.removedCnts = append(f.removedCnts, path.Base(r.URL.Path))
 		w.WriteHeader(http.StatusNoContent)
 
@@ -223,6 +246,130 @@ func TestCheckPermissionsNoImageSkipsContainerProbe(t *testing.T) {
 	}
 	if !strings.Contains(c.Message, "no local image") {
 		t.Errorf("message should explain the skipped probe; got %q", c.Message)
+	}
+}
+
+func TestCheckPermissionsReportsFailedCleanup(t *testing.T) {
+	f := newFakeDocker(t, []image.Summary{{ID: "sha256:localbase"}}, nil)
+	f.failVolumeRemove = true
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkPermissions(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn (cleanup failure must be surfaced): %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "probe cleanup failed") {
+		t.Errorf("message should mention failed cleanup; got %q", c.Message)
+	}
+}
+
+func TestCheckPermissionsCleansUpVolumeOnMidCheckFailure(t *testing.T) {
+	f := newFakeDocker(t, []image.Summary{{ID: "sha256:localbase"}}, nil)
+	f.failImageList = true
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkPermissions(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if len(f.removedVolumes) != 1 {
+		t.Errorf("probe volume left behind on failure path: created=%v removed=%v", f.createdVolumes, f.removedVolumes)
+	}
+}
+
+func TestCheckRuntimeReachableUnsupportedScheme(t *testing.T) {
+	cli, err := client.NewClientWithOpts(client.WithHost("ssh://docker@example.com:22"), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+
+	c := checkRuntimeReachable(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "unsupported") {
+		t.Errorf("message should explain the unsupported scheme; got %q", c.Message)
+	}
+}
+
+func TestRunChecksShortCircuitsAfterRuntimeFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+srv.Listener.Addr().String()), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	res := runChecks(ctx, rt, Options{Workspace: t.TempDir(), ProfileDir: t.TempDir()})
+
+	if res.Checks[0].Name != "runtime" || res.Checks[0].Status != Fail {
+		t.Fatalf("runtime check = %+v, want fail", res.Checks[0])
+	}
+	for _, c := range res.Checks {
+		switch c.Name {
+		case "rootless", "mise base image", "derived images", "volumes", "legacy resources", "permissions", "leaked containers", "stale dbus sockets":
+			if c.Status != Skip {
+				t.Errorf("dependent check %q = %s, want skip", c.Name, c.Status)
+			}
+		case "profiles", "fragments", "project tools", "workspace", "selinux":
+			if c.Status == Skip {
+				t.Errorf("independent check %q should not be skipped", c.Name)
+			}
+		}
+	}
+}
+
+func TestRunChecksSkipMessageReflectsUnsupportedScheme(t *testing.T) {
+	cli, err := client.NewClientWithOpts(client.WithHost("ssh://docker@example.com:22"), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+	res := runChecks(context.Background(), rt, Options{Workspace: t.TempDir(), ProfileDir: t.TempDir()})
+
+	if res.Checks[0].Name != "runtime" || res.Checks[0].Status != Fail {
+		t.Fatalf("runtime check = %+v, want fail", res.Checks[0])
+	}
+	for _, c := range res.Checks {
+		if c.Name == "rootless" && c.Message != "skipped: unsupported daemon host scheme" {
+			t.Errorf("skip message = %q, want unsupported-scheme reason", c.Message)
+		}
+	}
+}
+
+func TestCheckProjectToolsMiseTomlParseError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mise.toml"), []byte("tools = {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := checkProjectTools(context.Background(), dir)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "mise.toml") {
+		t.Errorf("message should name mise.toml; got %q", c.Message)
+	}
+}
+
+func TestCheckProjectToolsMiseTomlValid(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mise.toml"), []byte("tools = {\"node\" = \"22\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := checkProjectTools(context.Background(), dir)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "node@22") {
+		t.Errorf("message should list node@22; got %q", c.Message)
 	}
 }
 
@@ -367,6 +514,63 @@ func TestRandomSuffix(t *testing.T) {
 	}
 }
 
+func TestCheckRuntimeReachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"Name":"podman","OSType":"linux"}`))
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+srv.Listener.Addr().String()), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+
+	c := checkRuntimeReachable(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "podman") {
+		t.Errorf("message should name the engine; got %q", c.Message)
+	}
+}
+
+func TestCheckRootless(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"rootless":true}`))
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+srv.Listener.Addr().String()), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+
+	c := checkRootless(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "yes") {
+		t.Errorf("message should describe rootless mode; got %q", c.Message)
+	}
+}
+
+func TestCheckRootlessUnsupportedScheme(t *testing.T) {
+	cli, err := client.NewClientWithOpts(client.WithHost("ssh://docker@example.com:22"), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &dockerRT{cli: cli}
+
+	c := checkRootless(context.Background(), rt)
+	if c.Status != Fail {
+		t.Fatalf("status = %s, want fail: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "unsupported") {
+		t.Errorf("message should explain the unsupported daemon host; got %q", c.Message)
+	}
+}
+
 func TestCheckSELinux(t *testing.T) {
 	c := checkSELinux(true)
 	if c.Status != Pass || c.Name != "selinux" {
@@ -473,10 +677,10 @@ func TestCheckUserOverridesNoUserFiles(t *testing.T) {
 	}
 }
 
-func TestCheckLeakedContainersWarnsOnLabeled(t *testing.T) {
+func TestCheckLeakedContainersWarnsOnExitedLabeled(t *testing.T) {
 	f := newFakeDocker(t, nil, nil)
 	f.containers = []types.Container{
-		{ID: "abc123", Names: []string{"/tpd-node"}, Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+		{ID: "abc123", Names: []string{"/tpd-node"}, State: "exited", Labels: map[string]string{runtime.OwnershipLabel: "true"}},
 	}
 	rt := &dockerRT{cli: f.client(t)}
 
@@ -514,7 +718,7 @@ func TestCheckLeakedContainersIgnoresUnlabeled(t *testing.T) {
 	}
 }
 
-func TestCheckLeakedContainersRunningSidecarWithConsumersNotFlagged(t *testing.T) {
+func TestCheckLeakedContainersRunningContainersAreActiveNotLeaked(t *testing.T) {
 	f := newFakeDocker(t, nil, nil)
 	f.containers = []types.Container{
 		{
@@ -533,37 +737,34 @@ func TestCheckLeakedContainersRunningSidecarWithConsumersNotFlagged(t *testing.T
 	rt := &dockerRT{cli: f.client(t)}
 
 	c := checkLeakedContainers(context.Background(), rt)
-	if c.Status != Warn {
-		t.Fatalf("status = %s, want warn (the non-sidecar consumer is still flagged): %s", c.Status, c.Message)
+	if c.Status == Warn {
+		t.Fatalf("status = %s, want not warn (running containers are active, not leaks): %s", c.Status, c.Message)
 	}
-	if !strings.Contains(c.Message, "tpd-main") {
-		t.Errorf("message should still list the non-sidecar consumer; got %q", c.Message)
+	for _, want := range []string{"tpd-main", "tpd-svc-db"} {
+		if !strings.Contains(c.Message, want) {
+			t.Errorf("message should list active container %q; got %q", want, c.Message)
+		}
 	}
-	if strings.Contains(c.Message, "tpd-svc-db") {
-		t.Errorf("running sidecar with a live consumer should not be flagged; got %q", c.Message)
+	if strings.Contains(c.Message, "remove with") {
+		t.Errorf("active containers should not trigger remediation; got %q", c.Message)
 	}
 }
 
-func TestCheckLeakedContainersRunningSidecarNoConsumersFlagged(t *testing.T) {
+func TestCheckLeakedContainersCreatedStateIsActiveNotLeaked(t *testing.T) {
 	f := newFakeDocker(t, nil, nil)
 	f.containers = []types.Container{
 		{
 			ID:     "sidecar",
 			Names:  []string{"/tpd-svc-db"},
-			State:  "running",
+			State:  "created",
 			Labels: map[string]string{runtime.OwnershipLabel: "true", runtime.ServiceRoleLabel: runtime.ServiceRoleSidecar, runtime.ServiceLabel: "db"},
 		},
 	}
 	rt := &dockerRT{cli: f.client(t)}
 
 	c := checkLeakedContainers(context.Background(), rt)
-	if c.Status != Warn {
-		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
-	}
-	for _, want := range []string{"tpd-svc-db", "docker rm -f"} {
-		if !strings.Contains(c.Message, want) {
-			t.Errorf("message should contain %q; got %q", want, c.Message)
-		}
+	if c.Status == Warn {
+		t.Fatalf("status = %s, want not warn (created sidecar is active): %s", c.Status, c.Message)
 	}
 }
 
@@ -590,7 +791,46 @@ func TestCheckLeakedContainersStoppedSidecarFlagged(t *testing.T) {
 		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
 	}
 	if !strings.Contains(c.Message, "tpd-svc-db") {
-		t.Errorf("message should list the stopped sidecar; got %q", c.Message)
+		t.Errorf("message should list the exited sidecar as a leak; got %q", c.Message)
+	}
+	if !strings.Contains(c.Message, "tpd-main") {
+		t.Errorf("message should note the active main container; got %q", c.Message)
+	}
+}
+
+func TestCheckLeakedContainersRemediationUsesEngine(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{ID: "dead", Names: []string{"/tpd-old"}, State: "dead", Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+	}
+	rt := &dockerRT{cli: f.client(t), engine: "podman"}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "podman rm -f /tpd-old") {
+		t.Errorf("remediation should use podman; got %q", c.Message)
+	}
+	if strings.Contains(c.Message, "docker rm") {
+		t.Errorf("remediation should not hardcode docker; got %q", c.Message)
+	}
+}
+
+func TestCheckLeakedContainersActiveAndLeaked(t *testing.T) {
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{ID: "live", Names: []string{"/tpd-live"}, State: "running", Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+		{ID: "stale", Names: []string{"/tpd-stale"}, State: "exited", Labels: map[string]string{runtime.OwnershipLabel: "true"}},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkLeakedContainers(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "tpd-stale") || !strings.Contains(c.Message, "tpd-live") {
+		t.Errorf("message should list both the leak and the active container; got %q", c.Message)
 	}
 }
 
@@ -601,7 +841,7 @@ func TestCheckStaleBusSocketsWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := checkStaleBusSockets()
+	c := checkStaleBusSockets(context.Background(), &dockerRT{})
 	if c.Status != Warn {
 		t.Fatalf("status = %s, want warn: %s", c.Status, c.Message)
 	}
@@ -614,7 +854,7 @@ func TestCheckStaleBusSocketsPass(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 
-	c := checkStaleBusSockets()
+	c := checkStaleBusSockets(context.Background(), &dockerRT{})
 	if c.Status != Pass {
 		t.Fatalf("status = %s, want pass: %s", c.Status, c.Message)
 	}
@@ -720,5 +960,94 @@ func TestCheckServiceNetworkWrongDriver(t *testing.T) {
 	}
 	if !strings.Contains(c.Message, "bridge") {
 		t.Errorf("message should name the failed driver invariant; got %q", c.Message)
+	}
+}
+func TestCheckStaleBusSocketsActiveSocketPass(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	sock := filepath.Join(dir, "tpd-bus-123.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	defer os.Remove(sock)
+
+	c := checkStaleBusSockets(context.Background(), &dockerRT{})
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass (socket owned by a live process): %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckStaleBusSocketsActiveViaContainerMount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	sock := filepath.Join(dir, "tpd-bus-456.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{
+			ID:     "main",
+			Names:  []string{"/tpd-main"},
+			State:  "running",
+			Labels: map[string]string{runtime.OwnershipLabel: "true"},
+			Mounts: []types.MountPoint{{Source: sock}},
+		},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkStaleBusSockets(context.Background(), rt)
+	if c.Status != Pass {
+		t.Fatalf("status = %s, want pass (socket mounted by a running container): %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckStaleBusSocketsExitedContainerStillStale(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	sock := filepath.Join(dir, "tpd-bus-456.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeDocker(t, nil, nil)
+	f.containers = []types.Container{
+		{
+			ID:     "dead",
+			Names:  []string{"/tpd-dead"},
+			State:  "exited",
+			Labels: map[string]string{runtime.OwnershipLabel: "true"},
+			Mounts: []types.MountPoint{{Source: sock}},
+		},
+	}
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkStaleBusSockets(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn (exited container does not keep a socket live): %s", c.Status, c.Message)
+	}
+}
+
+func TestCheckStaleBusSocketsContainerListErrorSurfaced(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	sock := filepath.Join(dir, "tpd-bus-123.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeDocker(t, nil, nil)
+	f.failContainerList = true
+	rt := &dockerRT{cli: f.client(t)}
+
+	c := checkStaleBusSockets(context.Background(), rt)
+	if c.Status != Warn {
+		t.Fatalf("status = %s, want warn (container-list failure must be surfaced): %s", c.Status, c.Message)
+	}
+	if !strings.Contains(c.Message, "cannot list containers") {
+		t.Errorf("message should name the container-list failure; got %q", c.Message)
+	}
+	if strings.Contains(c.Message, "stale:") {
+		t.Errorf("staleness should not be asserted on incomplete data; got %q", c.Message)
 	}
 }

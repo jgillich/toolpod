@@ -92,3 +92,29 @@ func TestMergeYAMLEmptyExistingFallsBack(t *testing.T) {
 		t.Errorf("empty existing should fall back to generated:\n%s", out)
 	}
 }
+
+func TestMergeYAMLScalarExtendsNormalized(t *testing.T) {
+	existing := "version: 1\nextends: core/mise\ncommand: [zsh]\n"
+	generated := "version: 1\nextends:\n    - core/opencode\n    - core/lang/javascript\n"
+	out, err := mergeYAML([]byte(existing), []byte(generated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The scalar extends becomes a list so the generated bases are not dropped.
+	for _, want := range []string{"- core/mise", "- core/opencode", "- core/lang/javascript"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s after scalar-extends merge, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "extends: core/mise") {
+		t.Errorf("scalar extends should be rewritten as a list, got:\n%s", out)
+	}
+}
+
+func TestMergeYAMLTabsRejected(t *testing.T) {
+	generated := "version: 1\nextends:\n    - core/mise\n"
+	existing := "version: 1\n\tcommand: [bash]\n"
+	if _, err := mergeYAML([]byte(existing), []byte(generated)); err == nil {
+		t.Fatal("expected error for tab-indented existing file")
+	}
+}

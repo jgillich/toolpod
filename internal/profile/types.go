@@ -24,6 +24,24 @@ func (r Ref) FullName() string {
 	return r.Namespace + "/" + r.Name
 }
 
+// checkKnownFields rejects mapping keys outside a type's schema, mirroring the
+// yaml.v3 KnownFields error shape. Custom UnmarshalYAML methods decode via
+// yaml.Node.Decode, which bypasses the outer decoder's KnownFields setting, so
+// they must enforce the key set themselves. Non-mapping nodes are left to
+// Decode's type check, which reports the mismatch accurately.
+func checkKnownFields(node *yaml.Node, typ string, known map[string]bool) error {
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if !known[key.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", key.Line, key.Value, typ)}}
+		}
+	}
+	return nil
+}
+
 // ExtendsList is the yaml-decoded extends field. Raw holds the strings as
 // written; Resolved is filled by Resolve splitting each Raw string against the
 // registered namespaces. MarshalYAML emits Resolved (canonical strings) when
@@ -165,6 +183,9 @@ func (t *Tool) UnmarshalYAML(node *yaml.Node) error {
 	case yaml.ScalarNode:
 		return node.Decode(&t.Version)
 	case yaml.MappingNode:
+		if err := checkKnownFields(node, "profile.Tool", map[string]bool{"version": true, "sha256": true}); err != nil {
+			return err
+		}
 		var raw struct {
 			Version string    `yaml:"version"`
 			SHA256  yaml.Node `yaml:"sha256"`
@@ -224,6 +245,11 @@ type Mount struct {
 // service-socket mounts, so a mount without an explicit read_only key gets
 // the kind-appropriate default.
 func (m *Mount) UnmarshalYAML(value *yaml.Node) error {
+	if err := checkKnownFields(value, "profile.Mount", map[string]bool{
+		"source": true, "service": true, "socket": true, "read_only": true, "optional": true, "create": true,
+	}); err != nil {
+		return err
+	}
 	type plain Mount
 	var raw plain
 	if err := value.Decode(&raw); err != nil {

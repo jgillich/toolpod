@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/client"
 )
@@ -86,5 +88,94 @@ func TestEnsureImagePulledPullsMissingImage(t *testing.T) {
 	}
 	if daemon.pulls != 1 {
 		t.Errorf("missing image must be pulled, got %d pull(s)", daemon.pulls)
+	}
+}
+
+// prepareBuildFake serves the endpoints Prepare needs for a spec without
+// caches (subpath probe disabled by version) and a single derived-image build:
+// /version, /images/<ref>/json (the base image always present, the derived
+// tag appearing once a build completes), and /build.
+type prepareBuildFake struct {
+	mu          sync.Mutex
+	builds      int
+	derivedSeen bool
+	buildDur    time.Duration
+}
+
+func (f *prepareBuildFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/version"):
+		fmt.Fprint(w, `{"Version":"26.1.0"}`)
+	case strings.HasSuffix(r.URL.Path, "/json"):
+		f.mu.Lock()
+		derived := strings.Contains(r.URL.Path, "tpd/packages")
+		present := !derived || f.derivedSeen
+		f.mu.Unlock()
+		if !present {
+			http.Error(w, `{"message":"No such image"}`, http.StatusNotFound)
+			return
+		}
+		id := "sha256:baseid"
+		if derived {
+			id = "sha256:derivedid"
+		}
+		fmt.Fprintf(w, `{"Id":%q}`, id)
+	case strings.HasSuffix(r.URL.Path, "/build"):
+		f.mu.Lock()
+		f.builds++
+		f.mu.Unlock()
+		io.Copy(io.Discard, r.Body)
+		time.Sleep(f.buildDur)
+		f.mu.Lock()
+		f.derivedSeen = true
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"stream":"Successfully built derived\n"}`+"\n")
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func TestPrepareSerializesConcurrentDerivedBuilds(t *testing.T) {
+	fake := &prepareBuildFake{buildDur: 150 * time.Millisecond}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(
+		client.WithHost("tcp://"+srv.Listener.Addr().String()),
+		client.WithVersion("1.41"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDir := buildLockDir
+	buildLockDir = t.TempDir()
+	t.Cleanup(func() { buildLockDir = oldDir })
+
+	rt := &DockerRuntime{cli: cli}
+	spec := Spec{Image: "debian:13-slim", Packages: []string{"git"}}
+	var wg sync.WaitGroup
+	refs := make([]string, 2)
+	errs := make([]error, 2)
+	for i := 0; i < len(errs); i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			refs[i], errs[i] = rt.Prepare(context.Background(), spec, NoopProgressWriter{}, false)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
+	derived := DerivedTag("sha256:baseid", []string{"git"}, nil)
+	for i, ref := range refs {
+		if ref != derived {
+			t.Errorf("goroutine %d image ref = %q, want derived %q", i, ref, derived)
+		}
+	}
+	if fake.builds != 1 {
+		t.Errorf("concurrent Prepare for the same derived tag must build once, got %d", fake.builds)
 	}
 }

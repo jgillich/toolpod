@@ -5,7 +5,8 @@ import (
 )
 
 type dockerRT struct {
-	cli *client.Client
+	cli    *client.Client
+	engine string // detected engine name ("docker" or "podman"), set by the runtime check
 }
 
 func newRuntime() (*dockerRT, error) {

@@ -1,11 +1,14 @@
 package scaffold
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -707,6 +710,252 @@ func TestFragmentFileExistenceWarning(t *testing.T) {
 	// All fragment mounts are optional, so missing sources should not produce warnings.
 	if strings.Contains(stderr.String(), "does not exist") {
 		t.Errorf("stderr should not contain file-existence warnings for optional mounts, got: %q", stderr.String())
+	}
+}
+
+func TestRedirectedStdoutUsesTextPrompts(t *testing.T) {
+	dir := t.TempDir()
+	input := strings.NewReader("opencode\nlang/javascript\n")
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Interactive: true,
+		ProfileDir:  dir,
+	}, input, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v\nstderr: %s", err, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "\x1b[") {
+		t.Error("redirected stdout must not receive ANSI escape codes (huh UI launched with non-TTY stdout)")
+	}
+	if !strings.Contains(stderr.String(), "Profile:") {
+		t.Errorf("expected text prompt on stderr, got: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); err != nil {
+		t.Errorf("profile should be generated via the text fallback: %v", err)
+	}
+}
+
+func TestOverwriteActionMissingTargetReplaces(t *testing.T) {
+	action, err := overwriteAction(false, Options{}, false, filepath.Join(t.TempDir(), "nope.yaml"), strings.NewReader(""), &bytes.Buffer{}, bufio.NewReader(strings.NewReader("")))
+	if err != nil {
+		t.Fatalf("overwriteAction: %v", err)
+	}
+	if action != writeReplace {
+		t.Errorf("action = %v, want writeReplace", action)
+	}
+}
+
+func TestOverwriteActionPermissionErrorSurfaced(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-based tests are meaningless as root")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Skipf("chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	_, err := overwriteAction(false, Options{}, false, filepath.Join(dir, "opencode.yaml"), strings.NewReader(""), &bytes.Buffer{}, bufio.NewReader(strings.NewReader("")))
+	if err == nil {
+		t.Fatal("expected permission error from overwriteAction")
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("error should surface the permission failure, got: %v", err)
+	}
+}
+
+func TestWritePermissionFailureSurfaced(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-based tests are meaningless as root")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected an error writing to a read-only profile dir")
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("error should surface the permission failure, got: %v", err)
+	}
+}
+
+func TestDryRunExistingTargetDoesNotWrite(t *testing.T) {
+	dir := t.TempDir()
+	original := "version: 1\n# keep me\ncommand: [zsh]\n"
+	if err := os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		DryRun:     true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencode.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Errorf("dry-run must not modify an existing target, got:\n%s", data)
+	}
+	if !strings.Contains(stdout.String(), "dry-run") {
+		t.Errorf("expected dry-run output, got: %s", stdout.String())
+	}
+}
+
+func TestForceMergeMutuallyExclusiveWithoutTarget(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Force:      true,
+		Merge:      true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error for --force with --merge on a missing target")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should mention mutual exclusivity, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "opencode.yaml")); !os.IsNotExist(err) {
+		t.Error("no file should be written when flags conflict")
+	}
+}
+
+func TestForceMergeMutuallyExclusiveBeforeDryRun(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Force:      true,
+		Merge:      true,
+		DryRun:     true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("dry-run must not bypass mutual exclusion, got: %v", err)
+	}
+}
+
+func TestResolveGeneratedProfileDoesNotMutateCatalog(t *testing.T) {
+	cat, err := fixtureLoader(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := cat.Names()
+	content := "version: 1\nextends:\n  - core/lang/javascript\ncommand: [bash]\n"
+	_, _ = resolveGeneratedProfile(content, "opencode", cat)
+	if !reflect.DeepEqual(before, cat.Names()) {
+		t.Errorf("catalog mutated: before %v, after %v", before, cat.Names())
+	}
+	if _, ok := cat.Get("opencode"); ok {
+		t.Error("generated profile leaked into caller's catalog")
+	}
+}
+
+func TestIsIncompleteProfileErr(t *testing.T) {
+	for _, msg := range []string{"missing required field: image", "missing required field: command"} {
+		if !isIncompleteProfileErr(profile.ProfileError{Message: msg}) {
+			t.Errorf("isIncompleteProfileErr(%q) = false, want true", msg)
+		}
+	}
+	for _, msg := range []string{"image: invalid image reference", "unsupported version: 2 (want 1)", "mount /x: service requires socket"} {
+		if isIncompleteProfileErr(profile.ProfileError{Message: msg}) {
+			t.Errorf("isIncompleteProfileErr(%q) = true, want false", msg)
+		}
+	}
+	if isIncompleteProfileErr(fmt.Errorf("missing required field: image")) {
+		t.Error("wrapped non-ProfileError should not count as incomplete")
+	}
+}
+
+func TestValidateGeneratedIncompleteImageWarning(t *testing.T) {
+	cat, err := fixtureLoader(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	content := "version: 1\nextends:\n  - core/lang/javascript\ncommand: [bash]\n"
+	if err := validateGenerated(content, "opencode", filepath.Join("profiles", "opencode.yaml"), cat, &stderr); err != nil {
+		t.Fatalf("validateGenerated should warn, not error: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "not runnable") {
+		t.Errorf("expected not-runnable warning, got: %q", stderr.String())
+	}
+}
+
+func TestValidateGeneratedRejectsRealErrors(t *testing.T) {
+	cat, err := fixtureLoader(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	content := "version: 1\nextends:\n  - core/lang/javascript\ncommand: [bash]\nimage: \"bad image\"\n"
+	err = validateGenerated(content, "opencode", filepath.Join("profiles", "opencode.yaml"), cat, &stderr)
+	if err == nil {
+		t.Fatal("expected a validation error for a malformed image reference")
+	}
+	if !strings.Contains(err.Error(), "invalid image reference") {
+		t.Errorf("error should cite the image problem, got: %v", err)
+	}
+}
+
+func TestMergeRejectsInvalidMergedContent(t *testing.T) {
+	dir := t.TempDir()
+	// Schema-valid but semantically invalid: a service mount without a socket.
+	// It loads as a catalog entry but fails resolution, so the merged-content
+	// validation (not the catalog load) must surface it.
+	if err := os.WriteFile(filepath.Join(dir, "opencode.yaml"), []byte("version: 1\nmounts:\n  /sock:\n    service: dbus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), Options{
+		Name:       "opencode",
+		Extends:    []string{"lang/javascript"},
+		Merge:      true,
+		ProfileDir: dir,
+	}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error when merged content fails validation")
+	}
+	if !strings.Contains(err.Error(), "generated config failed validation") {
+		t.Errorf("error should name the validation failure, got: %v", err)
+	}
+}
+
+func TestWriteFileAtomicLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "p.yaml")
+	if err := writeFileAtomic(target, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "p.yaml" {
+		t.Errorf("expected only p.yaml in the dir, got: %v", entries)
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Errorf("target mode = %o, want 0644", fi.Mode().Perm())
 	}
 }
 

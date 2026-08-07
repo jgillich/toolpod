@@ -20,6 +20,26 @@ func fakePortAllocator() PortAllocator {
 	}
 }
 
+func TestBuildPortSpecsDefaultsHostIPToLoopback(t *testing.T) {
+	specs, _, err := buildPortSpecs(map[string]profile.PortBind{
+		"8080": {},
+		"7000": {Host: "7000", HostIP: "0.0.0.0"},
+	}, fakePortAllocator())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range specs {
+		got[s.Container] = s.HostIP
+	}
+	if got["8080"] != "127.0.0.1" {
+		t.Errorf("omitted host IP = %q, want 127.0.0.1", got["8080"])
+	}
+	if got["7000"] != "0.0.0.0" {
+		t.Errorf("explicit 0.0.0.0 = %q, want unchanged", got["7000"])
+	}
+}
+
 func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
 	cfg := profile.Profile{
 		Version: 1,
@@ -31,6 +51,7 @@ func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
 			"5432": {Host: "5432"},
 			"53":   {Protocol: "udp"},
 			"9000": {Host: "9000", HostIP: "127.0.0.1"},
+			"7000": {Host: "7000", HostIP: "0.0.0.0"},
 		},
 	}
 	opts := LaunchOpts{ProfileName: "web", Workspace: "/p", PortAllocator: fakePortAllocator()}
@@ -38,10 +59,11 @@ func TestBuildSpecPortsAllocationAndTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPorts := []PortSpec{
-		{Container: "53", HostPort: "40002", Protocol: "udp"},
-		{Container: "5432", HostPort: "5432", Protocol: "tcp"},
-		{Container: "8080", HostPort: "40001", Protocol: "tcp"},
+	wantPorts := []runtime.PortSpec{
+		{Container: "53", HostIP: "127.0.0.1", HostPort: "40002", Protocol: "udp"},
+		{Container: "5432", HostIP: "127.0.0.1", HostPort: "5432", Protocol: "tcp"},
+		{Container: "7000", HostIP: "0.0.0.0", HostPort: "7000", Protocol: "tcp"},
+		{Container: "8080", HostIP: "127.0.0.1", HostPort: "40001", Protocol: "tcp"},
 		{Container: "9000", HostIP: "127.0.0.1", HostPort: "9000", Protocol: "tcp"},
 	}
 	if len(spec.PortSpecs) != len(wantPorts) {
@@ -74,7 +96,7 @@ func TestBuildSpecDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []DeviceSpec{
+	want := []runtime.DeviceSpec{
 		{Container: "/dev/bus/usb", Host: "/dev/bus/usb", Perms: "rwm", Cgroup: true},
 		{Container: "/dev/fuse", Host: "/dev/fuse", Perms: "rwm"},
 		{Container: "/dev/nvidia0", Host: "/dev/nvidia0", Perms: "rw"},
@@ -259,21 +281,11 @@ func TestBuildSpecCommandFlagForNonShellProfile(t *testing.T) {
 	}
 }
 
-func TestBuildSpecCommandFlagOverridesArgs(t *testing.T) {
+func TestBuildSpecCommandRejectsArgs(t *testing.T) {
 	cfg := profile.Profile{Version: 1, Image: "img", Command: []string{"opencode"}}
 	opts := LaunchOpts{Command: "/bin/bash", Args: []string{"config", "view"}, Workspace: "/home/me/proj"}
-	spec, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantCmd := []string{"sh", "-c", "/bin/bash"}
-	if len(spec.Command) != len(wantCmd) {
-		t.Fatalf("Command = %v, want %v (Command should override Args)", spec.Command, wantCmd)
-	}
-	for i, c := range spec.Command {
-		if c != wantCmd[i] {
-			t.Errorf("Command[%d] = %q, want %q", i, c, wantCmd[i])
-		}
+	if _, err := buildSpec(opts, cfg, workspace.ModeRootful, "/home/me", "/root"); err == nil {
+		t.Fatal("expected error for Command combined with Args (ambiguous combination)")
 	}
 }
 

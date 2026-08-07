@@ -52,6 +52,28 @@ func serviceSocketPath(name string, mode workspace.Mode, exposePath string) stri
 	return filepath.Join(serviceRunDir(name, mode), exposePath)
 }
 
+// validateServiceExposePath rejects an expose socket path that would escape the
+// host run-dir: it must be absolute, free of ".." segments, and sit below a
+// non-root parent. The socket's parent dir is bind-mounted from the run-dir and
+// the socket name is joined onto it, so a root parent or traversal would place
+// the socket over the service container root or outside the run-dir. This is
+// the runtime boundary check (mirrors internal/profile.checkExposePath) so a
+// hand-built Spec is safe even without the profile validator.
+func validateServiceExposePath(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("expose path %q must be absolute", path)
+	}
+	for _, seg := range strings.Split(path, "/") {
+		if seg == ".." {
+			return fmt.Errorf("expose path %q must not contain '..' segments", path)
+		}
+	}
+	if filepath.Dir(path) == "/" {
+		return fmt.Errorf("expose path %q must be inside a non-root directory", path)
+	}
+	return nil
+}
+
 // acquireServiceLock takes an exclusive flock on the service's lockfile,
 // creating the ~/.local/share/tpd parent (mode 0700) on first use. The kernel
 // releases the lock when the owning process dies, so a SIGKILL'd tpd never
@@ -154,7 +176,13 @@ func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc Service
 	name := svc.Name
 	containerName := serviceContainerName(name, spec.Workspace.Mode)
 
-	existing, err := findServiceContainer(ctx, d.cli, containerName)
+	for _, exposePath := range svc.Exposes {
+		if err := validateServiceExposePath(exposePath); err != nil {
+			return fmt.Errorf("service %s: %w", name, err)
+		}
+	}
+
+	existing, err := findServiceContainer(ctx, d.cli, name, containerName)
 	if err != nil {
 		return fmt.Errorf("find service container %s: %w", containerName, err)
 	}
@@ -166,7 +194,7 @@ func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc Service
 		if err := d.cli.ContainerRemove(ctx, existing.ID, container.RemoveOptions{Force: true}); err != nil {
 			return fmt.Errorf("remove stale service container %s: %w", existing.ID, err)
 		}
-	case existing.Labels[ServiceHashLabel] == svc.Hash:
+	case existing.Labels[ServiceHashLabel] == svc.Hash && serviceSocketsReusable(name, spec.Workspace.Mode, svc):
 		// Reuse never probes: the running daemon is already healthy by
 		// definition, and probing it would add latency for no signal.
 		// --pull still refreshes a mutable base tag.
@@ -179,9 +207,9 @@ func (d *DockerRuntime) startService(ctx context.Context, spec Spec, svc Service
 		fillBindings(bindings, name, spec.Workspace.Mode, svc)
 		return nil
 	default:
-		// The new config wins immediately even under a live consumer: the
-		// old daemon is replaced, accepting a brief outage for consumers
-		// rather than blocking the launch on the stale config.
+		// A stale hash or a missing expose socket forces recreation, even
+		// under a live consumer: the old daemon is replaced, accepting a
+		// brief outage rather than blocking the launch.
 		consumers, err := serviceConsumers(ctx, d.cli, name)
 		if err != nil {
 			return err
@@ -219,14 +247,8 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 			return err
 		}
 		derivedRef := DerivedTag(baseID, svc.Packages, svc.Repos)
-		exists, err := imageExists(ctx, d.cli, derivedRef)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			if err := buildDerivedImage(ctx, d.cli, derivedRef, svc.Image, baseID, svc.Repos, svc.Packages, w); err != nil {
-				return fmt.Errorf("build service image: %w", err)
-			}
+		if err := ensureDerivedImage(ctx, d.cli, derivedRef, baseID, svc.Repos, svc.Packages, w); err != nil {
+			return fmt.Errorf("service derived image: %w", err)
 		}
 		imageRef = derivedRef
 	}
@@ -415,9 +437,38 @@ func fillBindings(bindings map[string]string, name string, mode workspace.Mode, 
 	}
 }
 
+// serviceSocketsReusable reports whether every exposed socket of a running
+// service still exists on the host as a real socket. A live container whose
+// sockets were unlinked (e.g. by the force-removal of a predecessor) cannot
+// serve, so a hash match alone does not justify reuse.
+func serviceSocketsReusable(name string, mode workspace.Mode, svc ServiceSpec) bool {
+	for _, exposePath := range svc.Exposes {
+		st, err := os.Lstat(serviceSocketPath(name, mode, exposePath))
+		if err != nil || st.Mode()&os.ModeSocket == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ForeignServiceContainerError reports that a container not created by tpd
+// occupies a service's deterministic name. tpd never stops, removes, or creates
+// over such a container: the owner must rename or remove it.
+type ForeignServiceContainerError struct {
+	ServiceName    string
+	ContainerName string
+}
+
+func (e *ForeignServiceContainerError) Error() string {
+	return fmt.Sprintf("container %q is not tpd-owned (a tpd service container needs %s=true and %s=%s); rename or remove it before using service %s", e.ContainerName, OwnershipLabel, ServiceLabel, e.ServiceName, e.ServiceName)
+}
+
 // findServiceContainer locates the container with the exact deterministic
-// service name (names may arrive slash-prefixed), including stopped ones.
-func findServiceContainer(ctx context.Context, cli *client.Client, containerName string) (*types.Container, error) {
+// service name (names may arrive slash-prefixed), including stopped ones. A
+// name match that lacks tpd's ownership labels is a foreign container: it is
+// reported as a ForeignServiceContainerError so callers never reuse, stop,
+// remove, or create over it.
+func findServiceContainer(ctx context.Context, cli *client.Client, serviceName, containerName string) (*types.Container, error) {
 	f := filters.NewArgs(filters.Arg("name", containerName))
 	list, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
@@ -425,9 +476,13 @@ func findServiceContainer(ctx context.Context, cli *client.Client, containerName
 	}
 	for i := range list {
 		for _, n := range list[i].Names {
-			if strings.TrimPrefix(n, "/") == containerName {
-				return &list[i], nil
+			if strings.TrimPrefix(n, "/") != containerName {
+				continue
 			}
+			if list[i].Labels[OwnershipLabel] != "true" || list[i].Labels[ServiceLabel] != serviceName {
+				return nil, &ForeignServiceContainerError{ServiceName: serviceName, ContainerName: containerName}
+			}
+			return &list[i], nil
 		}
 	}
 	return nil, nil
@@ -449,12 +504,14 @@ func (d *DockerRuntime) ensureServiceAttached(ctx context.Context, containerID, 
 	return d.ConnectContainerToNetwork(ctx, containerID, ServiceNetworkName, []string{ServiceNetworkAlias(name)})
 }
 
-// serviceConsumers returns the display names of all non-exited containers
-// whose tpd.uses-service label lists name. The lookup is a label-presence
-// filter plus an in-Go membership match: a value filter can't substring-match
-// safely (a service named "a" would match "ab,cd"). All: true so a
-// created-but-not-started main container from a concurrent launch still counts
-// as a live consumer; only exited/dead containers release a service.
+// serviceConsumers returns the display names of all non-exited tpd-owned
+// containers whose tpd.uses-service label lists name. The lookup is a
+// label-presence filter plus an in-Go membership match: a value filter can't
+// substring-match safely (a service named "a" would match "ab,cd"). All: true
+// so a created-but-not-started main container from a concurrent launch still
+// counts as a live consumer; only exited/dead containers release a service.
+// Containers without tpd.managed=true are foreign and never count as
+// consumers, so they cannot pin a service against replacement or removal.
 func serviceConsumers(ctx context.Context, cli *client.Client, name string) ([]string, error) {
 	f := filters.NewArgs(filters.Arg("label", UsesServiceLabel))
 	list, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
@@ -464,6 +521,9 @@ func serviceConsumers(ctx context.Context, cli *client.Client, name string) ([]s
 	var consumers []string
 	for _, c := range list {
 		if c.State == "exited" || c.State == "dead" {
+			continue
+		}
+		if c.Labels[OwnershipLabel] != "true" {
 			continue
 		}
 		for _, n := range strings.Split(c.Labels[UsesServiceLabel], ",") {
@@ -622,7 +682,7 @@ func (d *DockerRuntime) stopService(ctx context.Context, name string, mode works
 	}
 
 	containerName := serviceContainerName(name, mode)
-	c, err := findServiceContainer(ctx, d.cli, containerName)
+	c, err := findServiceContainer(ctx, d.cli, name, containerName)
 	if err != nil {
 		return fmt.Errorf("find service container %s: %w", containerName, err)
 	}

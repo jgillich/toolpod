@@ -3,6 +3,7 @@ package prune
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,6 +49,9 @@ type Result struct {
 	VolumesRemoved  []string
 	ImagesRemoved   []string
 	NetworksRemoved []string
+	// Errors records every requested removal that failed; Run also returns a
+	// non-nil error so the CLI exits nonzero even when the rest succeeded.
+	Errors []error
 }
 
 // Run prunes tpd-managed Docker resources (volumes, derived images, and the
@@ -77,12 +81,16 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	scopeNetworks := opts.Networks
 
 	var usedVolumes, usedImages map[string]bool
+	var deferVolumes, deferImages bool
 	if !opts.All && (scopeVolumes || scopeImages) {
-		var err error
-		usedVolumes, usedImages, err = computeUsed(ctx, cli)
+		u, err := computeUsed(ctx, cli)
 		if err != nil {
 			return Result{}, fmt.Errorf("compute used: %w", err)
 		}
+		usedVolumes, usedImages = u.volumes, u.images
+		// Assessment incomplete: treat every candidate as used so nothing is
+		// pruned whose ownership can't be established.
+		deferVolumes, deferImages = u.deferVolumes, u.deferImages
 	}
 
 	var removeVolumes, removeImages []string
@@ -93,7 +101,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 			return Result{}, fmt.Errorf("list volumes: %w", err)
 		}
 		for _, v := range existing {
-			if opts.All || !volumeUsed(v.Name, usedVolumes) {
+			if opts.All || (!deferVolumes && !volumeUsed(v.Name, usedVolumes)) {
 				removeVolumes = append(removeVolumes, v.Name)
 			}
 		}
@@ -104,7 +112,7 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 			return Result{}, fmt.Errorf("list images: %w", err)
 		}
 		for _, ref := range existing {
-			if opts.All || !usedImages[ref] {
+			if opts.All || (!deferImages && !usedImages[ref]) {
 				removeImages = append(removeImages, ref)
 			}
 		}
@@ -118,11 +126,11 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 	}
 
 	if len(removeVolumes) > 0 || len(removeImages) > 0 {
-		// A resource referenced by a running container must never be removed,
+		// A resource referenced by an active container must never be removed,
 		// even under --all (which only relaxes the catalog-liveness check).
 		volumesInUse, imagesInUse, err := runningContainerRefs(ctx, cli)
 		if err != nil {
-			return Result{}, fmt.Errorf("list running containers: %w", err)
+			return Result{}, fmt.Errorf("list active containers: %w", err)
 		}
 		var keptV, keptI []string
 		for _, name := range removeVolumes {
@@ -164,98 +172,121 @@ func run(ctx context.Context, cli dockerClient, opts Options) (Result, error) {
 		removeNetworks = keptN
 	}
 
+	// All selected scopes collapse into one prompt so the user approves or
+	// rejects the whole operation at once.
+	networkNames := make([]string, len(removeNetworks))
+	for i, n := range removeNetworks {
+		networkNames[i] = n.Name
+	}
+	sections := confirmSections(scopeVolumes, scopeImages, scopeNetworks, removeVolumes, removeImages, networkNames)
+	if len(sections) == 0 {
+		return Result{}, nil
+	}
+	if !opts.Force && !confirm(sections, os.Stdin) {
+		return Result{}, nil
+	}
+
 	var result Result
-
-	if scopeVolumes && len(removeVolumes) > 0 {
-		if opts.Force || confirm("volumes", removeVolumes, os.Stdin) {
-			for _, name := range removeVolumes {
-				inUse, err := volumeInUse(ctx, cli, name)
-				if err != nil {
-					return result, fmt.Errorf("re-check volume %s: %w", name, err)
-				}
-				if inUse {
-					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", name)
-					continue
-				}
-				if err := cli.VolumeRemove(ctx, name, true); err != nil {
-					fmt.Fprintf(os.Stderr, "  failed to remove volume %s: %v\n", name, err)
-				} else {
-					result.VolumesRemoved = append(result.VolumesRemoved, name)
-				}
+	if scopeVolumes {
+		for _, name := range removeVolumes {
+			inUse, err := volumeInUse(ctx, cli, name)
+			if err != nil {
+				return result, fmt.Errorf("re-check volume %s: %w", name, err)
+			}
+			if inUse {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", name)
+				continue
+			}
+			if err := cli.VolumeRemove(ctx, name, true); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("remove volume %s: %w", name, err))
+			} else {
+				result.VolumesRemoved = append(result.VolumesRemoved, name)
+			}
+		}
+	}
+	if scopeImages {
+		for _, ref := range removeImages {
+			inUse, err := imageInUseNow(ctx, cli, ref)
+			if err != nil {
+				return result, fmt.Errorf("re-check image %s: %w", ref, err)
+			}
+			if inUse {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", ref)
+				continue
+			}
+			if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("remove image %s: %w", ref, err))
+			} else {
+				result.ImagesRemoved = append(result.ImagesRemoved, ref)
+			}
+		}
+	}
+	if scopeNetworks {
+		for _, n := range removeNetworks {
+			// Re-scan so a container attached while the prompt was open
+			// protects the network.
+			inUse, err := runningContainerNetworks(ctx, cli)
+			if err != nil {
+				return result, fmt.Errorf("re-check network %s: %w", n.Name, err)
+			}
+			if inUse[n.Name] || inUse[n.ID] {
+				fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", n.Name)
+				continue
+			}
+			if err := cli.NetworkRemove(ctx, n.ID); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("remove network %s: %w", n.Name, err))
+			} else {
+				result.NetworksRemoved = append(result.NetworksRemoved, runtime.ServiceNetworkName)
 			}
 		}
 	}
 
-	if scopeImages && len(removeImages) > 0 {
-		if opts.Force || confirm("images", removeImages, os.Stdin) {
-			for _, ref := range removeImages {
-				inUse, err := imageInUseNow(ctx, cli, ref)
-				if err != nil {
-					return result, fmt.Errorf("re-check image %s: %w", ref, err)
-				}
-				if inUse {
-					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", ref)
-					continue
-				}
-				if _, err := cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true}); err != nil {
-					fmt.Fprintf(os.Stderr, "  failed to remove image %s: %v\n", ref, err)
-				} else {
-					result.ImagesRemoved = append(result.ImagesRemoved, ref)
-				}
-			}
-		}
-	}
-
-	if scopeNetworks && len(removeNetworks) > 0 {
-		names := make([]string, len(removeNetworks))
-		for i, n := range removeNetworks {
-			names[i] = n.Name
-		}
-		if opts.Force || confirm("networks", names, os.Stdin) {
-			for _, n := range removeNetworks {
-				// Re-scan so a container attached while the prompt was open
-				// protects the network.
-				inUse, err := runningContainerNetworks(ctx, cli)
-				if err != nil {
-					return result, fmt.Errorf("re-check network %s: %w", n.Name, err)
-				}
-				if inUse[n.Name] || inUse[n.ID] {
-					fmt.Fprintf(os.Stderr, "skipping %s: in use by a running container\n", n.Name)
-					continue
-				}
-				if err := cli.NetworkRemove(ctx, n.ID); err != nil {
-					fmt.Fprintf(os.Stderr, "  failed to remove network %s: %v\n", n.Name, err)
-				} else {
-					result.NetworksRemoved = append(result.NetworksRemoved, runtime.ServiceNetworkName)
-				}
-			}
-		}
+	if len(result.Errors) > 0 {
+		return result, fmt.Errorf("failed to remove %d resource(s): %w", len(result.Errors), errors.Join(result.Errors...))
 	}
 
 	return result, nil
 }
 
-// runningContainerRefs returns the tpd-managed resources referenced by running
-// containers: volume names by mount, and image IDs by inspect. Only tpd's own
-// containers (ownership label) are considered.
+// liveContainer reports whether a container state holds its resources in use.
+// Exited/dead containers release them and count as leaks, not active resources.
+func liveContainer(state string) bool {
+	switch state {
+	case "running", "created", "paused", "restarting":
+		return true
+	}
+	return false
+}
+
+// runningContainerRefs returns the tpd resources referenced by active
+// containers (running, created, paused, restarting), regardless of their
+// ownership labels: a foreign container that mounts a tpd-named volume or runs
+// a derived image must protect it too. An inspect failure aborts so prune
+// never continues past an unassessable live candidate.
 func runningContainerRefs(ctx context.Context, cli dockerClient) (volumes map[string]bool, images map[string]bool, err error) {
-	f := filters.NewArgs()
-	f.Add("label", runtime.OwnershipLabel+"=true")
-	containers, err := cli.ContainerList(ctx, container.ListOptions{Filters: f})
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		return nil, nil, err
 	}
 	volumes, images = map[string]bool{}, map[string]bool{}
 	for _, c := range containers {
+		if !liveContainer(c.State) {
+			continue
+		}
 		insp, _, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
 		if err != nil {
 			return nil, nil, fmt.Errorf("inspect container %s: %w", c.ID, err)
 		}
 		for _, m := range insp.Mounts {
-			if m.Type == mount.TypeVolume {
+			// Only tpd-named volumes count — they are the only removal
+			// candidates, so a foreign volume never blocks a real prune.
+			if m.Type == mount.TypeVolume && isTpdVolume(m.Name) {
 				volumes[m.Name] = true
 			}
 		}
+		// Protection matches by content ID against the tpd/packages
+		// candidates, so collecting every active container's image ID is
+		// precise: only a container actually running a derived image matches.
 		images[insp.Image] = true
 	}
 	return volumes, images, nil
@@ -289,7 +320,7 @@ func runningContainerNetworks(ctx context.Context, cli dockerClient) (map[string
 	return inUse, nil
 }
 
-// imageInUse reports whether the derived image ref is referenced by a running
+// imageInUse reports whether the derived image ref is referenced by an active
 // container, resolved by comparing the ref's image ID against the used set.
 // Inspection failures are returned so prune fails closed instead of treating an
 // unresolvable image as unused.
@@ -314,40 +345,58 @@ func imageInUseNow(ctx context.Context, cli dockerClient, ref string) (bool, err
 	return imageInUse(ctx, cli, ref, images)
 }
 
-// computeUsed walks every resolvable profile (built-in + user) and returns
-// the set of tpd-managed volume names and tpd/packages:<hash> image refs
-// that would be produced by some current profile. Profiles whose base image
-// is not present locally contribute no derived-image hashes (no local base
-// ⇒ no possible derived image).
-func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[string]bool, error) {
-	usedVolumes := map[string]bool{}
-	usedImages := map[string]bool{}
+// usage is the set of tpd resources the resolvable profile catalog would
+// produce, plus deferral flags when part of the catalog can't be assessed. A
+// deferral means "treat every candidate as used": the association back to a
+// profile is unknown, so pruning could remove something an unassessable
+// profile owns.
+type usage struct {
+	volumes map[string]bool
+	images  map[string]bool
+	// deferVolumes: some profile's cache usage can't be assessed (a user file
+	// was skipped by tolerant loading, or a profile failed to resolve).
+	deferVolumes bool
+	// deferImages: some profile declares packages/repos but its base image is
+	// not present locally, so the derived tag (which hashes the base ID) can't
+	// be recomputed offline.
+	deferImages bool
+}
+
+// computeUsed walks every profile (built-in + user) and returns the tpd volume
+// names and tpd/packages:<hash> image refs it would produce, deferring when a
+// profile can't be assessed. Profiles whose base image is not present locally
+// contribute no derived-image hashes — and defer, since a derived image built
+// earlier still exists but can't be associated.
+func computeUsed(ctx context.Context, cli dockerClient) (usage, error) {
+	u := usage{volumes: map[string]bool{}, images: map[string]bool{}}
 
 	userDir := profile.DefaultProfileDir()
 	cat, err := profile.LoadProfilesTolerant(userDir, func(msg string) {
 		fmt.Fprintf(os.Stderr, "  warning: skipping %s\n", msg)
+		u.deferVolumes = true
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("load profiles: %w", err)
+		return usage{}, fmt.Errorf("load profiles: %w", err)
 	}
 	names := cat.ProfileNames()
 	if len(names) == 0 {
-		return usedVolumes, usedImages, nil
+		return u, nil
 	}
 
 	for _, name := range names {
 		cfg, err := profile.ResolveProfile(cat, name)
 		if err != nil {
-			// A profile that fails to resolve can't be launched, so it
-			// contributes no used resources; skip it.
+			// An unresolvable profile's caches can't be determined; keep them
+			// rather than risk pruning a volume the profile owns.
+			u.deferVolumes = true
 			continue
 		}
 		for cacheName := range cfg.Caches {
-			usedVolumes["tpd-cache-"+cacheName] = true
+			u.volumes["tpd-cache-"+cacheName] = true
 		}
 		for _, svc := range cfg.Services {
 			for cacheName := range svc.Caches {
-				usedVolumes["tpd-cache-"+cacheName] = true
+				u.volumes["tpd-cache-"+cacheName] = true
 			}
 			if len(svc.Packages) > 0 || len(svc.Repos) > 0 {
 				if svc.Image == "" {
@@ -355,6 +404,7 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 				}
 				inspect, _, err := cli.ImageInspectWithRaw(ctx, svc.Image)
 				if err != nil {
+					u.deferImages = true
 					continue
 				}
 				svcRepos := make(map[string]runtime.Repo, len(svc.Repos))
@@ -362,7 +412,7 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 					svcRepos[rname] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
 				}
 				if tag := runtime.DerivedTag(inspect.ID, svc.Packages, svcRepos); tag != "" {
-					usedImages[tag] = true
+					u.images[tag] = true
 				}
 			}
 		}
@@ -371,7 +421,10 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 		}
 		inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image)
 		if err != nil {
-			// Base image not present locally ⇒ no derived image yet.
+			// Base image not present locally ⇒ the derived tag can't be
+			// computed; keep every derived image rather than prune one we
+			// can't associate to a profile.
+			u.deferImages = true
 			continue
 		}
 		repos := make(map[string]runtime.Repo, len(cfg.Repos))
@@ -379,10 +432,10 @@ func computeUsed(ctx context.Context, cli dockerClient) (map[string]bool, map[st
 			repos[name] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
 		}
 		if tag := runtime.DerivedTag(inspect.ID, cfg.Packages, repos); tag != "" {
-			usedImages[tag] = true
+			u.images[tag] = true
 		}
 	}
-	return usedVolumes, usedImages, nil
+	return u, nil
 }
 
 // volumeUsed reports whether name is a cache volume some profile uses: the
@@ -474,14 +527,39 @@ func isTpdVolume(name string) bool {
 	return strings.HasPrefix(name, "tpd-")
 }
 
-func confirm(kind string, items []string, r io.Reader) bool {
+// confirmSection is one resource type's candidate list in a confirmation
+// prompt; multiple sections render in a single prompt.
+type confirmSection struct {
+	kind  string
+	items []string
+}
+
+// confirmSections collects the candidate lists for confirmation, one section
+// per scope that has candidates. All selected scopes yield a single prompt.
+func confirmSections(scopeVolumes, scopeImages, scopeNetworks bool, removeVolumes, removeImages, removeNetworks []string) []confirmSection {
+	var sections []confirmSection
+	if scopeVolumes && len(removeVolumes) > 0 {
+		sections = append(sections, confirmSection{"volumes", removeVolumes})
+	}
+	if scopeImages && len(removeImages) > 0 {
+		sections = append(sections, confirmSection{"images", removeImages})
+	}
+	if scopeNetworks && len(removeNetworks) > 0 {
+		sections = append(sections, confirmSection{"networks", removeNetworks})
+	}
+	return sections
+}
+
+func confirm(sections []confirmSection, r io.Reader) bool {
 	if f, ok := r.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
 		fmt.Fprintln(os.Stderr, "Error: cannot prompt for confirmation in non-interactive shell. Use --force.")
 		return false
 	}
-	fmt.Printf("The following %s will be removed:\n", kind)
-	for _, item := range items {
-		fmt.Printf("  %s\n", item)
+	for _, s := range sections {
+		fmt.Printf("The following %s will be removed:\n", s.kind)
+		for _, item := range s.items {
+			fmt.Printf("  %s\n", item)
+		}
 	}
 	fmt.Print("Proceed? [y/N] ")
 	scanner := bufio.NewScanner(r)

@@ -12,6 +12,10 @@ type SensitiveItem struct {
 	Key    string
 	Value  string
 	Source profile.Contributor
+	// PriorApproved reports whether the stored state already approved this
+	// key. The UI pre-selects such items and leaves newly introduced ones
+	// unselected, so a profile change cannot silently re-approve old grants.
+	PriorApproved bool
 }
 
 // PromptRequest is what the dialog renders. Empty Items = no prompt.
@@ -186,7 +190,9 @@ func decide(field, key, value string, c profile.Contributor, st State, req Promp
 	// Hash mismatch or no stored state for this field → prompt.
 	af, hasField := st.Approved[field]
 	if st.Hash != req.Hash || !hasField {
-		req.Items = append(req.Items, item(field, key, value, c))
+		it := item(field, key, value, c)
+		it.PriorApproved = hasField && containsKey(af.Keys, key)
+		req.Items = append(req.Items, it)
 		return true, req
 	}
 	if containsKey(af.Keys, key) {
@@ -294,7 +300,11 @@ func applyNetworkField(v string, c profile.Contributor, field string, st State, 
 		}
 		return "", req
 	}
-	req.Items = append(req.Items, item(field, "", v, c))
+	it := item(field, "", v, c)
+	if hasField && af.Network != nil {
+		it.PriorApproved = *af.Network
+	}
+	req.Items = append(req.Items, it)
 	return v, req
 }
 

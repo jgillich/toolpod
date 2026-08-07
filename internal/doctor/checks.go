@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/docker/api/types/container"
@@ -22,20 +23,43 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// runtimeDependentChecks require a reachable daemon; on a runtime failure they
+// are reported as Skip instead of each failing individually.
+var runtimeDependentChecks = []struct {
+	name string
+	run  func(context.Context, *dockerRT) Check
+}{
+	{"rootless", checkRootless},
+	{"service network", checkServiceNetwork},
+	{"mise base image", checkMiseBaseImage},
+	{"derived images", checkDerivedImages},
+	{"volumes", checkVolumes},
+	{"legacy resources", checkUnlabeledLegacyResources},
+	{"permissions", checkPermissions},
+	{"leaked containers", checkLeakedContainers},
+	{"stale dbus sockets", checkStaleBusSockets},
+}
+
 func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 	var checks []Check
 
-	checks = append(checks, checkRuntimeReachable(ctx, rt))
-	checks = append(checks, checkRootless(ctx, rt))
-	checks = append(checks, checkServiceNetwork(ctx, rt))
+	runtimeCheck := checkRuntimeReachable(ctx, rt)
+	checks = append(checks, runtimeCheck)
 	checks = append(checks, checkSELinux(runtime.SELinuxEnforcing()))
-	checks = append(checks, checkMiseBaseImage(ctx, rt))
-	checks = append(checks, checkDerivedImages(ctx, rt))
-	checks = append(checks, checkVolumes(ctx, rt))
-	checks = append(checks, checkUnlabeledLegacyResources(ctx, rt))
-	checks = append(checks, checkPermissions(ctx, rt))
-	checks = append(checks, checkLeakedContainers(ctx, rt))
-	checks = append(checks, checkStaleBusSockets())
+
+	if runtimeCheck.Status != Fail {
+		for _, rc := range runtimeDependentChecks {
+			checks = append(checks, rc.run(ctx, rt))
+		}
+	} else {
+		skipMsg := "skipped: daemon unreachable"
+		if strings.HasPrefix(runtimeCheck.Message, "unsupported") {
+			skipMsg = "skipped: unsupported daemon host scheme"
+		}
+		for _, rc := range runtimeDependentChecks {
+			checks = append(checks, Check{Name: rc.name, Status: Skip, Message: skipMsg})
+		}
+	}
 
 	userDir := opts.ProfileDir
 	if userDir == "" {
@@ -55,7 +79,12 @@ func runChecks(ctx context.Context, rt *dockerRT, opts Options) Result {
 }
 
 func checkRuntimeReachable(ctx context.Context, rt *dockerRT) Check {
-	info, err := rt.cli.Info(ctx)
+	// Reject daemon hosts the raw HTTP checks cannot dial (ssh://, npipe://)
+	// before querying /info, so unsupported schemes are reported clearly.
+	if _, _, err := runtime.NewDaemonHTTPClient(rt.cli.DaemonHost()); err != nil {
+		return Check{Name: "runtime", Status: Fail, Message: err.Error()}
+	}
+	info, err := runtime.DaemonInfo(ctx, rt.cli)
 	if err != nil {
 		return Check{Name: "runtime", Status: Fail, Message: "unreachable: " + err.Error()}
 	}
@@ -63,6 +92,7 @@ func checkRuntimeReachable(ctx context.Context, rt *dockerRT) Check {
 	if info.OSType == "" || strings.Contains(info.Name, "podman") {
 		engine = "podman"
 	}
+	rt.engine = engine
 	return Check{Name: "runtime", Status: Pass, Message: fmt.Sprintf("%s at %s", engine, rt.cli.DaemonHost())}
 }
 
@@ -188,18 +218,37 @@ func checkVolumes(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "volumes", Status: Pass, Message: strings.Join(found, ", ")}
 }
 
-func checkPermissions(ctx context.Context, rt *dockerRT) Check {
+func checkPermissions(ctx context.Context, rt *dockerRT) (check Check) {
 	suffix, err := randomSuffix(8)
 	if err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot generate a safe probe name: " + err.Error()}
 	}
 	probe := "tpd-diag-" + suffix
+
+	var cleanupIssues []string
+	defer func() {
+		if len(cleanupIssues) == 0 {
+			return
+		}
+		suffix := "probe cleanup failed: " + strings.Join(cleanupIssues, "; ")
+		if check.Status == Pass || check.Status == Info {
+			check.Status = Warn
+			check.Message = suffix
+		} else {
+			check.Message += " (" + suffix + ")"
+		}
+	}()
+
 	if _, err := rt.cli.VolumeCreate(ctx, volume.CreateOptions{Name: probe}); err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create volumes: " + err.Error()}
 	}
-	if err := rt.cli.VolumeRemove(ctx, probe, true); err != nil {
-		return Check{Name: "permissions", Status: Warn, Message: "created probe volume but could not remove " + probe + " (remove manually): " + err.Error()}
-	}
+	defer func() {
+		cctx, cancel := cleanupCtx()
+		defer cancel()
+		if err := rt.cli.VolumeRemove(cctx, probe, true); err != nil {
+			cleanupIssues = append(cleanupIssues, "volume "+probe+": "+err.Error())
+		}
+	}()
 
 	images, err := rt.cli.ImageList(ctx, image.ListOptions{})
 	if err != nil {
@@ -213,10 +262,24 @@ func checkPermissions(ctx context.Context, rt *dockerRT) Check {
 	if err != nil {
 		return Check{Name: "permissions", Status: Fail, Message: "cannot create containers: " + err.Error()}
 	}
-	if err := rt.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
-		return Check{Name: "permissions", Status: Warn, Message: "created container but could not remove probe: " + err.Error()}
-	}
+	defer func() {
+		cctx, cancel := cleanupCtx()
+		defer cancel()
+		if err := rt.cli.ContainerRemove(cctx, resp.ID, container.RemoveOptions{Force: true}); err != nil {
+			cleanupIssues = append(cleanupIssues, "container "+resp.ID+": "+err.Error())
+		}
+	}()
+
 	return Check{Name: "permissions", Status: Pass, Message: "can create containers and volumes"}
+}
+
+// cleanupCtx returns a short-lived context so probe cleanup is still attempted
+// after the doctor deadline expires instead of being abandoned with a stale
+// context. cleanupTimeout is a var so tests can shrink it.
+var cleanupTimeout = 5 * time.Second
+
+func cleanupCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), cleanupTimeout)
 }
 
 // firstRunableImage returns a create-time reference for the first image with
@@ -283,7 +346,7 @@ func checkUnlabeledLegacyResources(ctx context.Context, rt *dockerRT) Check {
 	return Check{Name: "legacy resources", Status: Info, Message: "may not be tpd-owned; not pruned automatically: " + strings.Join(unlabeled, ", ")}
 }
 
-func checkStaleBusSockets() Check {
+func checkStaleBusSockets(ctx context.Context, rt *dockerRT) Check {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
 		return Check{Name: "stale dbus sockets", Status: Pass, Message: "no XDG_RUNTIME_DIR"}
@@ -292,7 +355,77 @@ func checkStaleBusSockets() Check {
 	if len(matches) == 0 {
 		return Check{Name: "stale dbus sockets", Status: Pass, Message: "none"}
 	}
-	return Check{Name: "stale dbus sockets", Status: Warn, Message: strings.Join(matches, ", ")}
+	sort.Strings(matches)
+	mounted, listErr := mountedBusSockets(ctx, rt)
+	var active, stale []string
+	for _, m := range matches {
+		if mounted[m] || socketHasLiveOwner(m) {
+			active = append(active, m)
+		} else {
+			stale = append(stale, m)
+		}
+	}
+	// A container-list failure invalidates the container-mount signal, so
+	// sockets may be misreported stale; surface it instead of silently
+	// degrading to host-signal-only.
+	if listErr != nil {
+		return Check{Name: "stale dbus sockets", Status: Warn, Message: "cannot list containers: " + listErr.Error() + " (stale-socket assessment incomplete)"}
+	}
+	if len(stale) == 0 {
+		return Check{Name: "stale dbus sockets", Status: Pass, Message: "none stale"}
+	}
+	msg := "stale: " + strings.Join(stale, ", ")
+	if len(active) > 0 {
+		msg += " (active: " + strings.Join(active, ", ") + ")"
+	}
+	return Check{Name: "stale dbus sockets", Status: Warn, Message: msg}
+}
+
+// mountedBusSockets returns the host paths mounted into non-exited tpd-owned
+// containers; a socket held this way is live even though its socket object
+// lives in the container's netns and may not appear in the host's socket table
+// (it does when the container shares the host netns).
+func mountedBusSockets(ctx context.Context, rt *dockerRT) (map[string]bool, error) {
+	mounted := map[string]bool{}
+	if rt == nil || rt.cli == nil {
+		return mounted, nil
+	}
+	f := filters.NewArgs()
+	f.Add("label", runtime.OwnershipLabel+"=true")
+	containers, err := rt.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range containers {
+		if c.State == "exited" || c.State == "dead" {
+			continue
+		}
+		for _, m := range c.Mounts {
+			if m.Source != "" {
+				mounted[m.Source] = true
+			}
+		}
+	}
+	return mounted, nil
+}
+
+// socketHasLiveOwner reports whether the socket object at path is still
+// bound. The kernel's unix socket table lists bound pathname sockets; once the
+// last fd closes the socket is garbage-collected and its entry disappears even
+// though the pathname file may linger on disk. Container-held sockets are
+// detected by mountedBusSockets because they usually live in another netns.
+func socketHasLiveOwner(path string) bool {
+	data, err := os.ReadFile("/proc/net/unix")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 8 && fields[len(fields)-1] == path {
+			return true
+		}
+	}
+	return false
 }
 
 func checkLeakedContainers(ctx context.Context, rt *dockerRT) Check {
@@ -303,41 +436,40 @@ func checkLeakedContainers(ctx context.Context, rt *dockerRT) Check {
 		return Check{Name: "leaked containers", Status: Warn, Message: err.Error()}
 	}
 
-	consumedServices := map[string]bool{}
+	// running/created/paused/restarting containers are active resources of a
+	// live session; only exited/dead owned containers are cleanup leaks.
+	var leaked, active []string
 	for _, c := range containers {
-		// Count non-exited containers (running/created/paused) as consumers —
-		// a created-state main container is a real consumer (same fix as
-		// StopServices). This prevents doctor from flagging a healthy
-		// sidecar during the concurrent-create window.
-		if c.State == "exited" || c.State == "dead" {
-			continue
-		}
-		if c.Labels[runtime.ServiceRoleLabel] == runtime.ServiceRoleSidecar {
-			continue
-		}
-		if uses := c.Labels[runtime.UsesServiceLabel]; uses != "" {
-			for _, name := range strings.Split(uses, ",") {
-				consumedServices[strings.TrimSpace(name)] = true
-			}
-		}
-	}
-
-	var leaked []string
-	for _, c := range containers {
-		if c.Labels[runtime.ServiceRoleLabel] == runtime.ServiceRoleSidecar {
-			if c.State == "running" && consumedServices[c.Labels[runtime.ServiceLabel]] {
-				continue
-			}
-			leaked = append(leaked, strings.Join(c.Names, ","))
-		} else {
-			leaked = append(leaked, strings.Join(c.Names, ","))
+		names := strings.Join(c.Names, ",")
+		switch c.State {
+		case "exited", "dead":
+			leaked = append(leaked, names)
+		default:
+			active = append(active, names)
 		}
 	}
 	sort.Strings(leaked)
-	if len(leaked) == 0 {
+	sort.Strings(active)
+
+	if len(leaked) == 0 && len(active) == 0 {
 		return Check{Name: "leaked containers", Status: Pass, Message: "none"}
 	}
-	return Check{Name: "leaked containers", Status: Warn, Message: strings.Join(leaked, ", ") + " (remove with: docker rm -f ...)"}
+	var parts []string
+	if len(leaked) > 0 {
+		engine := "docker"
+		if rt.engine != "" {
+			engine = rt.engine
+		}
+		parts = append(parts, "leaked (exited/dead): "+strings.Join(leaked, ", ")+" (remove with: "+engine+" rm -f "+strings.Join(leaked, " ")+")")
+	}
+	if len(active) > 0 {
+		parts = append(parts, "active: "+strings.Join(active, ", "))
+	}
+	status := Pass
+	if len(leaked) > 0 {
+		status = Warn
+	}
+	return Check{Name: "leaked containers", Status: status, Message: strings.Join(parts, "; ")}
 }
 
 func checkProfileValidity(userDir string) Check {
@@ -433,10 +565,23 @@ func checkProjectTools(ctx context.Context, workspace string) Check {
 	if data, err := os.ReadFile(toolsFile); err == nil {
 		tools = parseToolVersions(string(data))
 	}
+	var parseErrs []string
 	if data, err := os.ReadFile(miseFile); err == nil {
-		tools = append(tools, parseMiseToml(string(data))...)
+		parsed, err := parseMiseToml(string(data))
+		if err != nil {
+			parseErrs = append(parseErrs, err.Error())
+		} else {
+			tools = append(tools, parsed...)
+		}
 	}
 
+	if len(parseErrs) > 0 {
+		msg := "mise.toml parse error: " + strings.Join(parseErrs, "; ")
+		if len(tools) > 0 {
+			msg += " (detected: " + strings.Join(tools, ", ") + ")"
+		}
+		return Check{Name: "project tools", Status: Warn, Message: msg}
+	}
 	if len(tools) == 0 {
 		return Check{Name: "project tools", Status: Info, Message: "none detected (no mise.toml or .tool-versions)"}
 	}
@@ -478,12 +623,12 @@ func parseToolVersions(content string) []string {
 	return tools
 }
 
-func parseMiseToml(content string) []string {
+func parseMiseToml(content string) ([]string, error) {
 	var data struct {
 		Tools map[string]any `toml:"tools"`
 	}
 	if _, err := toml.Decode(content, &data); err != nil {
-		return nil
+		return nil, err
 	}
 	var tools []string
 	for name, val := range data.Tools {
@@ -503,5 +648,5 @@ func parseMiseToml(content string) []string {
 		}
 	}
 	sort.Strings(tools)
-	return tools
+	return tools, nil
 }

@@ -18,11 +18,13 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/jgillich/tpd/internal/mise"
@@ -78,7 +80,6 @@ func (d *DockerRuntime) CreateContainer(ctx context.Context, spec Spec) (CreateR
 		return CreateResult{}, fmt.Errorf("build mounts: %w", err)
 	}
 	envList := buildEnv(spec, runtimeHome)
-	containerName := containerNameFor(spec.ProfileName) + randomID(8)
 
 	exposedPorts, portBindings := buildPortBindings(spec)
 	devices := buildDevices(spec)
@@ -86,38 +87,50 @@ func (d *DockerRuntime) CreateContainer(ctx context.Context, spec Spec) (CreateR
 
 	tty := spec.TTY == "true" || ((spec.TTY == "auto" || spec.TTY == "") && term.IsTerminal(int(os.Stdout.Fd())))
 
-	resp, err := d.cli.ContainerCreate(ctx, &container.Config{
-		Image:        spec.Image,
-		Cmd:          cmd,
-		Env:          envList,
-		User:         rootUser,
-		Tty:          tty,
-		OpenStdin:    true,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-		WorkingDir:   spec.RuntimeHome,
-		Labels:       spec.Labels,
-		Hostname:     strings.ReplaceAll(spec.ProfileName, "/", "-"),
-		Entrypoint:   []string{},
-		ExposedPorts: exposedPorts,
-	}, &container.HostConfig{
-		Mounts:       mounts,
-		NetworkMode:  container.NetworkMode(spec.Network),
-		UsernsMode:   userns,
-		SecurityOpt:  d.securityOpts(),
-		AutoRemove:   false,
-		PortBindings: portBindings,
-		Init:         &initEnabled,
-		Resources: container.Resources{
-			Devices:           devices,
-			DeviceCgroupRules: cgroupRules,
-			Memory:            spec.Resources.MemoryBytes,
-			NanoCPUs:          spec.Resources.NanoCPUs,
-		},
-	}, &network.NetworkingConfig{}, nil, containerName)
-	if err != nil {
-		return CreateResult{}, fmt.Errorf("create container: %w", err)
+	create := func(name string) (container.CreateResponse, error) {
+		return d.cli.ContainerCreate(ctx, &container.Config{
+			Image:        spec.Image,
+			Cmd:          cmd,
+			Env:          envList,
+			User:         rootUser,
+			Tty:          tty,
+			OpenStdin:    true,
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+			WorkingDir:   spec.RuntimeHome,
+			Labels:       spec.Labels,
+			Hostname:     strings.ReplaceAll(spec.ProfileName, "/", "-"),
+			Entrypoint:   []string{},
+			ExposedPorts: exposedPorts,
+		}, &container.HostConfig{
+			Mounts:       mounts,
+			NetworkMode:  container.NetworkMode(spec.Network),
+			UsernsMode:   userns,
+			SecurityOpt:  d.securityOpts(),
+			AutoRemove:   false,
+			PortBindings: portBindings,
+			Init:         &initEnabled,
+			Resources: container.Resources{
+				Devices:           devices,
+				DeviceCgroupRules: cgroupRules,
+				Memory:            spec.Resources.MemoryBytes,
+				NanoCPUs:          spec.Resources.NanoCPUs,
+			},
+		}, &network.NetworkingConfig{}, nil, name)
+	}
+
+	// The random name suffix can collide with a leftover container from a
+	// crashed launch; regenerate the name and retry instead of failing.
+	var resp container.CreateResponse
+	for attempt := 0; attempt < containerNameAttempts; attempt++ {
+		resp, err = create(containerNameFor(spec.ProfileName) + randomID(8))
+		if err == nil {
+			break
+		}
+		if !errdefs.IsConflict(err) || attempt == containerNameAttempts-1 {
+			return CreateResult{}, fmt.Errorf("create container: %w", err)
+		}
 	}
 
 	if len(spec.Files) > 0 {
@@ -332,11 +345,7 @@ func (d *DockerRuntime) RunContainer(ctx context.Context, spec Spec, created Cre
 	}
 
 	for _, p := range spec.PortSpecs {
-		ip := p.HostIP
-		if ip == "" || ip == "0.0.0.0" {
-			ip = "127.0.0.1"
-		}
-		fmt.Fprintf(os.Stderr, "listening on %s://%s:%s\r\n", p.Protocol, ip, p.HostPort)
+		fmt.Fprintf(os.Stderr, "listening on %s://%s:%s\r\n", p.Protocol, p.HostIP, p.HostPort)
 	}
 
 	// Pump streams AFTER start. This blocks until the container exits and
@@ -481,6 +490,14 @@ func suspendSequenceIndex(b []byte) int {
 // fallback) never leaves a running container behind.
 const signalTeardownGrace = 10 * time.Second
 
+// resumeOutputTimeout bounds the post-SIGCONT output gate; after it elapses the
+// terminal is reasserted instead of blocking resume on a quiet app.
+const resumeOutputTimeout = 2 * time.Second
+
+// containerNameAttempts bounds regenerating the container name when the random
+// suffix collides with a leftover container.
+const containerNameAttempts = 3
+
 // forwardSignalThenFallback forwards a signal to the container and, if it
 // hasn't stopped within grace (runDone signals normal exit), force-removes it.
 func forwardSignalThenFallback(wg *sync.WaitGroup, grace time.Duration, runDone <-chan struct{}, forward func(), cleanupOnce func()) {
@@ -507,10 +524,14 @@ func (d *DockerRuntime) suspendSession(ctx context.Context, containerID string, 
 	}
 	if waitForApp {
 		if !d.waitForContainerProcessStopped(ctx, containerID, 500*time.Millisecond) {
-			_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP)
+			if err := d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP); err != nil {
+				fmt.Fprintf(os.Stderr, "tpd: suspend container: %v\n", err)
+			}
 		}
 	} else {
-		_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP)
+		if err := d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGTSTP); err != nil {
+			fmt.Fprintf(os.Stderr, "tpd: suspend container: %v\n", err)
+		}
 	}
 	disableMouseModes(os.Stdout)
 	if err := term.Restore(int(os.Stdin.Fd()), oldState); err != nil {
@@ -526,8 +547,17 @@ func (d *DockerRuntime) suspendSession(ctx context.Context, containerID string, 
 	}
 	_ = unix.SetNonblock(int(os.Stdin.Fd()), false)
 	resumeOutputReady := armResumeOutput()
-	_ = d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGCONT)
-	<-resumeOutputReady
+	if err := d.signalContainerForegroundGroup(ctx, containerID, syscall.SIGCONT); err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: resume container: %v\n", err)
+	}
+	// Wait for the first byte of resumed output so input can't race ahead of
+	// SIGCONT, but bound the wait: an app that stays silent after CONT would
+	// otherwise block resume forever.
+	select {
+	case <-resumeOutputReady:
+	case <-time.After(resumeOutputTimeout):
+		fmt.Fprintln(os.Stderr, "tpd: warning: no output after resume; reasserting terminal")
+	}
 	// fg may apply the shell's saved job settings after delivering SIGCONT.
 	if _, err := term.MakeRaw(int(os.Stdin.Fd())); err != nil {
 		fmt.Fprintf(os.Stderr, "tpd: reassert raw terminal: %v\n", err)
@@ -550,27 +580,38 @@ func waitForForegroundTerminal(fd int) error {
 	}
 }
 
+// containerTopColumn returns the index of the named ContainerTop title
+// (case-insensitive), or -1.
+func containerTopColumn(titles []string, name string) int {
+	for i, title := range titles {
+		if strings.EqualFold(title, name) {
+			return i
+		}
+	}
+	return -1
+}
+
 func (d *DockerRuntime) waitForContainerProcessStopped(ctx context.Context, containerID string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
 		top, err := d.cli.ContainerTop(ctx, containerID, nil)
 		if err == nil {
-			statIndex := -1
-			pidIndex := -1
-			for i, title := range top.Titles {
-				switch strings.ToUpper(title) {
-				case "STAT":
-					statIndex = i
-				case "PID":
-					pidIndex = i
-				}
-			}
+			statIndex := containerTopColumn(top.Titles, "STAT")
+			pidIndex := containerTopColumn(top.Titles, "PID")
 			if statIndex >= 0 {
 				for _, process := range top.Processes {
-					if statIndex >= len(process) || (pidIndex >= 0 && pidIndex < len(process) && process[pidIndex] == "1") {
+					if statIndex >= len(process) {
 						continue
 					}
-					if strings.Contains(process[statIndex], "T") {
+					// PID 1 is the init (tini) and never stops itself; skip it
+					// only when the PID column identifies it.
+					if pidIndex >= 0 && pidIndex < len(process) && process[pidIndex] == "1" {
+						continue
+					}
+					// Stopped state is the leading STAT rune; a substring match
+					// would treat e.g. "DT" (uninterruptible + threaded) as stopped.
+					r, _ := utf8.DecodeRuneInString(process[statIndex])
+					if r == 'T' || r == 't' {
 						return true
 					}
 				}
@@ -583,26 +624,108 @@ func (d *DockerRuntime) waitForContainerProcessStopped(ctx context.Context, cont
 	}
 }
 
+// signalContainerForegroundGroup sends sig to the app's process group in the
+// container. The group is asked of the container (ps) because it depends on
+// the init layout; when it can't be determined, the legacy PID 2 group is
+// signalled so suspend keeps working.
 func (d *DockerRuntime) signalContainerForegroundGroup(ctx context.Context, containerID string, sig syscall.Signal) error {
+	group := 2
+	pgid, err := d.foregroundAppPGID(ctx, containerID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tpd: warning: container group signal: %v; falling back to -2\n", err)
+	} else {
+		group = pgid
+	}
+	_, err = d.runContainerExec(ctx, containerID, []string{"kill", "-" + strconv.Itoa(int(sig)), "--", "-" + strconv.Itoa(group)})
+	return err
+}
+
+// foregroundAppPGID asks the container which process group the app runs in, so
+// group signalling targets the real group instead of an assumed one.
+func (d *DockerRuntime) foregroundAppPGID(ctx context.Context, containerID string) (int, error) {
+	appPID, err := d.foregroundAppPID(ctx, containerID)
+	if err != nil {
+		return 0, err
+	}
+	out, err := d.runContainerExec(ctx, containerID, []string{"ps", "-o", "pgid=", "-p", strconv.Itoa(appPID)})
+	if err != nil {
+		return 0, fmt.Errorf("query pgid of pid %d: %w", appPID, err)
+	}
+	pgid, err := strconv.Atoi(strings.TrimSpace(out))
+	// PGID 1 is the init's group; kill -- -1 broadcasts to every process in
+	// the namespace instead of targeting the group, so it is never a valid
+	// signal target.
+	if err != nil || pgid <= 1 {
+		return 0, fmt.Errorf("invalid pgid %q for pid %d", strings.TrimSpace(out), appPID)
+	}
+	return pgid, nil
+}
+
+// foregroundAppPID is the container's main process: tini holds PID 1 and the
+// app replaces the launch wrapper through the exec chain, so it is the lowest
+// non-init PID.
+func (d *DockerRuntime) foregroundAppPID(ctx context.Context, containerID string) (int, error) {
+	top, err := d.cli.ContainerTop(ctx, containerID, nil)
+	if err != nil {
+		return 0, err
+	}
+	pidIndex := containerTopColumn(top.Titles, "PID")
+	if pidIndex < 0 {
+		return 0, errors.New("process table has no PID column")
+	}
+	appPID := 0
+	for _, process := range top.Processes {
+		if pidIndex >= len(process) {
+			continue
+		}
+		pid, err := strconv.Atoi(process[pidIndex])
+		if err != nil || pid <= 1 {
+			continue
+		}
+		if appPID == 0 || pid < appPID {
+			appPID = pid
+		}
+	}
+	if appPID == 0 {
+		return 0, errors.New("no app process in container")
+	}
+	return appPID, nil
+}
+
+// runContainerExec runs cmd in the container as root and returns its stdout.
+// It blocks until the exec finishes and reports a non-zero exit code so
+// signal-path failures surface instead of being dropped.
+func (d *DockerRuntime) runContainerExec(ctx context.Context, containerID string, cmd []string) (string, error) {
 	execResp, err := d.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          []string{"kill", "-" + strconv.Itoa(int(sig)), "--", "-2"},
+		Cmd:          cmd,
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
 		User:         "0",
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	// Attaching provides the completion barrier that local job control gets
-	// from kill(2), so input cannot race ahead of SIGCONT delivery.
+	// Attaching blocks until the exec finishes, giving the caller the same
+	// completion barrier local job control gets from kill(2) so input cannot
+	// race ahead of signal delivery.
 	attached, err := d.cli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer attached.Close()
-	_, err = io.Copy(io.Discard, attached.Reader)
-	return err
+	var stdout bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, io.Discard, attached.Reader); err != nil {
+		return stdout.String(), err
+	}
+	inspect, err := d.cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return stdout.String(), err
+	}
+	if inspect.ExitCode != 0 {
+		return stdout.String(), fmt.Errorf("exec %v: exit code %d", cmd, inspect.ExitCode)
+	}
+	return stdout.String(), nil
 }
 
 func disableMouseModes(dst io.Writer) {
@@ -860,12 +983,17 @@ func buildDeviceCgroupRules(spec Spec) []string {
 			fmt.Fprintf(os.Stderr, "warning: device %s: cannot stat %s, no cgroup rule emitted\n", d.Container, d.Host)
 			continue
 		}
-		rule := fmt.Sprintf("%s %d:%d rwm", prefix, major, minor)
+		// Only character/block nodes map to a device-cgroup rule; anything
+		// else is not a device node and gets no rule (and never a broad one).
 		if prefix == "" {
-			rule = fmt.Sprintf("c %d:* rwm", major)
-			fmt.Fprintf(os.Stderr, "warning: device %s: no device type for %d:%d, using broad rule %s\n", d.Container, major, minor, rule)
+			fmt.Fprintf(os.Stderr, "warning: device %s: %s is not a character or block device, no cgroup rule emitted\n", d.Container, d.Host)
+			continue
 		}
-		out = append(out, rule)
+		perms := d.Perms
+		if perms == "" {
+			perms = "rwm"
+		}
+		out = append(out, fmt.Sprintf("%s %d:%d %s", prefix, major, minor, perms))
 	}
 	return out
 }
@@ -921,10 +1049,17 @@ func shellQuote(cmd []string) string {
 	return strings.Join(parts, " ")
 }
 
+// randomIDFallbackCounter keeps the crypto/rand failure path unique even for
+// back-to-back calls in the same process.
+var randomIDFallbackCounter atomic.Uint64
+
 func randomID(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		return strconv.Itoa(os.Getpid())
+		// crypto/rand can fail on seccomp-restricted or early-boot hosts; a
+		// bare PID is a collision source across restarts, so mix a timestamp
+		// and a monotonic counter into the tag.
+		return fmt.Sprintf("%d-%d-%d", time.Now().UnixNano(), randomIDFallbackCounter.Add(1), os.Getpid())
 	}
 	return hex.EncodeToString(b)
 }

@@ -16,26 +16,26 @@ import (
 // mode is ModeA (rootless podman) or ModeB (fallback). hostHome is the host
 // user's $HOME; runtimeHome is the in-container user's home (/home/<user> in
 // Mode A, /root in Mode B).
-func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHome, runtimeHome string) (Spec, error) {
+func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHome, runtimeHome string) (runtime.Spec, error) {
 	alloc := opts.PortAllocator
 	if alloc == nil {
 		alloc = defaultPortAllocator
 	}
 	portSpecs, portValues, err := buildPortSpecs(cfg.Ports, alloc)
 	if err != nil {
-		return Spec{}, fmt.Errorf("allocate ports: %w", err)
+		return runtime.Spec{}, fmt.Errorf("allocate ports: %w", err)
 	}
 	deviceSpecs := buildDeviceSpecs(cfg.Devices)
 
 	cfg, err = profile.ResolveTildes(cfg, mode, hostHome, runtimeHome, portValues)
 	if err != nil {
-		return Spec{}, fmt.Errorf("resolve paths: %w", err)
+		return runtime.Spec{}, fmt.Errorf("resolve paths: %w", err)
 	}
 
-	mounts := make([]MountSpec, 0, len(cfg.Mounts))
+	mounts := make([]runtime.MountSpec, 0, len(cfg.Mounts))
 	usedServices := map[string]bool{}
 	for target, m := range cfg.Mounts {
-		mounts = append(mounts, MountSpec{
+		mounts = append(mounts, runtime.MountSpec{
 			Target:   target,
 			Source:   m.Source,
 			Service:  m.Service,
@@ -49,10 +49,10 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		}
 	}
 
-	caches := make([]CacheSpec, 0)
+	caches := make([]runtime.CacheSpec, 0)
 	for name, paths := range cfg.Caches {
 		for _, target := range paths {
-			caches = append(caches, CacheSpec{
+			caches = append(caches, runtime.CacheSpec{
 				Name:    "tpd-cache-" + name,
 				Target:  target,
 				Subpath: runtime.CacheSubpath(target),
@@ -83,9 +83,9 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 				Create:   m.Create,
 			})
 		}
-		svcRepos := make(map[string]Repo, len(svc.Repos))
+		svcRepos := make(map[string]runtime.Repo, len(svc.Repos))
 		for rname, r := range svc.Repos {
-			svcRepos[rname] = Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+			svcRepos[rname] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
 		}
 		svcFiles := make([]runtime.FileSpec, 0, len(svc.Files))
 		for target, f := range svc.Files {
@@ -122,18 +122,18 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		})
 	}
 
-	repos := make(map[string]Repo, len(cfg.Repos))
+	repos := make(map[string]runtime.Repo, len(cfg.Repos))
 	for name, r := range cfg.Repos {
-		repos[name] = Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
+		repos[name] = runtime.Repo{ExtRepo: r.ExtRepo, URL: r.URL, KeyURL: r.KeyURL, Suites: r.Suites, Components: r.Components}
 	}
 
-	files := make([]FileSpec, 0, len(cfg.Files))
+	files := make([]runtime.FileSpec, 0, len(cfg.Files))
 	for target, f := range cfg.Files {
 		mode := f.Mode
 		if mode == 0 {
 			mode = 0o644
 		}
-		files = append(files, FileSpec{Target: target, Content: f.Content, Mode: mode})
+		files = append(files, runtime.FileSpec{Target: target, Content: f.Content, Mode: mode})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Target < files[j].Target })
 
@@ -157,7 +157,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	for _, name := range serviceNames {
 		envKey := runtime.ServiceHostEnvName(name)
 		if _, reserved := cfg.Env[envKey]; reserved {
-			return Spec{}, fmt.Errorf("environment variable %s is reserved by tpd services", envKey)
+			return runtime.Spec{}, fmt.Errorf("environment variable %s is reserved by tpd services", envKey)
 		}
 		env[envKey] = runtime.ServiceNetworkAlias(name)
 	}
@@ -182,15 +182,18 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 	}
 
 	// Workspace mount (CLI, not profile) per spec §4.2
-	wsTarget := opts.Workspace
-	if mode == workspace.ModeRootful {
-		wsTarget = "/workspace"
-	}
+	wsTarget := workspace.ComputeMountTarget(opts.Workspace, mode)
 
 	// Command = binary + passthrough args; user args replace the profile's
 	// default args (command[1:]), which only apply when no args are given.
+	// Command and Args are mutually exclusive: a shell snippet cannot sensibly
+	// consume positional args, so combining them is an error rather than a
+	// silent discard.
 	cmd := append([]string{}, cfg.Command...)
 	if opts.Command != "" {
+		if len(opts.Args) > 0 {
+			return runtime.Spec{}, fmt.Errorf("cannot combine Command with Args: pass arguments to the profile's command instead")
+		}
 		if isShellCommand(cmd) {
 			cmd = append(cmd, "-c", opts.Command)
 		} else {
@@ -216,7 +219,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		}
 	}
 
-	return Spec{
+	return runtime.Spec{
 		ProfileName: opts.ProfileName,
 		Image:       cfg.Image,
 		Packages:    cfg.Packages,
@@ -232,7 +235,7 @@ func buildSpec(opts LaunchOpts, cfg profile.Profile, mode workspace.Mode, hostHo
 		Services:    services,
 		Network:     cfg.Network,
 		Labels:      labels,
-		Workspace:   WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},
+		Workspace:   runtime.WorkspaceSpec{HostPath: opts.Workspace, Target: wsTarget, Mode: mode},
 		TTY:         cfg.TTY,
 		RuntimeHome: runtimeHome,
 		Resources:   resources,
@@ -247,8 +250,8 @@ func isShellCommand(cmd []string) bool {
 	return base == "sh" || base == "bash" || base == "zsh" || base == "fish"
 }
 
-func buildPortSpecs(ports map[string]profile.PortBind, alloc PortAllocator) ([]PortSpec, map[string]string, error) {
-	specs := make([]PortSpec, 0, len(ports))
+func buildPortSpecs(ports map[string]profile.PortBind, alloc PortAllocator) ([]runtime.PortSpec, map[string]string, error) {
+	specs := make([]runtime.PortSpec, 0, len(ports))
 	values := make(map[string]string, len(ports))
 	for container, bind := range ports {
 		proto := bind.Protocol
@@ -263,9 +266,13 @@ func buildPortSpecs(ports map[string]profile.PortBind, alloc PortAllocator) ([]P
 			}
 			hostPort = allocated
 		}
+		hostIP := bind.HostIP
+		if hostIP == "" {
+			hostIP = "127.0.0.1"
+		}
 		values[container] = hostPort
-		specs = append(specs, PortSpec{
-			HostIP:    bind.HostIP,
+		specs = append(specs, runtime.PortSpec{
+			HostIP:    hostIP,
 			HostPort:  hostPort,
 			Container: container,
 			Protocol:  proto,
@@ -283,8 +290,8 @@ func buildPortSpecs(ports map[string]profile.PortBind, alloc PortAllocator) ([]P
 	return specs, values, nil
 }
 
-func buildDeviceSpecs(devices map[string]profile.DeviceBind) []DeviceSpec {
-	specs := make([]DeviceSpec, 0, len(devices))
+func buildDeviceSpecs(devices map[string]profile.DeviceBind) []runtime.DeviceSpec {
+	specs := make([]runtime.DeviceSpec, 0, len(devices))
 	for container, bind := range devices {
 		source := bind.Source
 		if source == "" {
@@ -294,7 +301,7 @@ func buildDeviceSpecs(devices map[string]profile.DeviceBind) []DeviceSpec {
 		if perms == "" {
 			perms = "rwm"
 		}
-		specs = append(specs, DeviceSpec{
+		specs = append(specs, runtime.DeviceSpec{
 			Container: container,
 			Host:      source,
 			Perms:     perms,

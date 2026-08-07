@@ -2,11 +2,17 @@ function PLUGIN:BackendListVersions(ctx)
   local http = require("http")
   local json = require("json")
 
-  local resp, err = http.get({
+  -- http.get throws in mise and returns (resp, err) in vfox; pcall makes the
+  -- call non-throwing in both, and the HTTP status is checked explicitly so a
+  -- rate-limit or 404 body is never decoded as version data.
+  local ok, resp, err = pcall(http.get, {
     url = "https://api.github.com/repos/" .. ctx.tool .. "/releases?per_page=100",
   })
-  if err ~= nil then
-    error("failed to fetch releases: " .. err)
+  if not ok or not resp then
+    error("failed to fetch releases: " .. tostring(err or resp))
+  end
+  if resp.status_code ~= 200 then
+    error("failed to fetch releases: HTTP " .. resp.status_code)
   end
 
   local releases = json.decode(resp.body)

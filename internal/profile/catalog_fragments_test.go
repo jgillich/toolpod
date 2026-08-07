@@ -50,7 +50,7 @@ func TestUserProfileUserFragmentCollisionRejected(t *testing.T) {
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fragDir, "foo.yaml"), []byte("version: 1\nmounts:\n  /t:\n    host: /tmp\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(fragDir, "foo.yaml"), []byte("version: 1\nmounts:\n  /t:\n    source: /tmp\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadProfiles(dir); err == nil {
@@ -123,6 +123,38 @@ func TestFragmentWithoutVersionRejected(t *testing.T) {
 	}
 	if _, err := LoadProfiles(dir); err == nil {
 		t.Fatal("expected error for fragment without version, got nil")
+	}
+}
+
+func TestFragmentVersionEnforced(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "v2frag.yaml"), []byte("version: 2\nmounts:\n  /t:\n    source: /tmp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadProfiles(dir); err == nil {
+		t.Fatal("expected error for fragment with version 2, got nil")
+	}
+}
+
+func TestFragmentVersionOneAccepted(t *testing.T) {
+	dir := t.TempDir()
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
+	if err := os.MkdirAll(fragDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fragDir, "goodfrag.yaml"), []byte("version: 1\nmounts:\n  /t:\n    source: /tmp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatalf("LoadProfiles with a version-1 fragment: %v", err)
+	}
+	if !cat.IsFragment("goodfrag") {
+		t.Error("version-1 fragment should load into the catalog")
 	}
 }
 

@@ -1,7 +1,9 @@
 package profile
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -183,6 +185,24 @@ func (c *Catalog) AddRaw(ns, name string, rc RawProfile) {
 	rc.Name = name
 	c.entries[rc.FullName()] = rc
 	delete(c.fragments, rc.FullName())
+}
+
+// Clone returns a copy of the catalog with independent entry/fragment maps, so
+// callers can overlay generated content (AddRaw) without mutating the original.
+func (c Catalog) Clone() Catalog {
+	entries := make(map[string]RawProfile, len(c.entries))
+	for k, v := range c.entries {
+		entries[k] = v
+	}
+	fragments := make(map[string]bool, len(c.fragments))
+	for k, v := range c.fragments {
+		fragments[k] = v
+	}
+	namespaces := make(map[string]bool, len(c.namespaces))
+	for k, v := range c.namespaces {
+		namespaces[k] = v
+	}
+	return Catalog{entries: entries, namespaces: namespaces, fragments: fragments}
 }
 
 // LoadProfiles loads embedded built-ins, then user profiles from userDir (if non-empty),
@@ -487,7 +507,9 @@ func parseRaw(data []byte, path string) (RawProfile, error) {
 			Message: fmt.Sprintf("YAML parse error: %v", err),
 		}
 	}
-	if err := yaml.Unmarshal(data, &rc.Profile); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&rc.Profile); err != nil && err != io.EOF {
 		return RawProfile{}, ProfileError{
 			Path:    path,
 			Line:    lineFromError(err),
@@ -532,8 +554,9 @@ func extractLine(s string) int {
 // collectNullKeys returns the set of map keys whose value is explicitly null
 // in the top-level or nested-map fields that support null-to-delete.
 // Returns a map of field-name → null-key info. A map containing the "*"
-// sentinel means the entire field is null (delete the whole field). Otherwise
-// the listed keys are deleted within that field's nested map.
+// sentinel means the entire field is null (delete the whole field) — the form
+// the scalar/optional fields (network, image, command, tty, resources) use.
+// Otherwise the listed keys are deleted within that field's nested map.
 func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 	nulls := map[string]map[string]bool{
 		"mounts":      {},
@@ -548,6 +571,11 @@ func collectNullKeys(root *yaml.Node) map[string]map[string]bool {
 		"repos":       {},
 		"files":       {},
 		"services":    {},
+		"network":     {},
+		"image":       {},
+		"command":     {},
+		"tty":         {},
+		"resources":   {},
 	}
 	if root == nil || root.Kind != yaml.DocumentNode {
 		return nulls

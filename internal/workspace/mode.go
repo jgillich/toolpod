@@ -9,6 +9,7 @@ type Mode int
 const (
 	ModeRootless Mode = iota
 	ModeRootful
+	ModeUnknown
 )
 
 func (m Mode) String() string {
@@ -17,13 +18,19 @@ func (m Mode) String() string {
 		return "rootless"
 	case ModeRootful:
 		return "rootful"
+	case ModeUnknown:
+		return "unknown"
 	}
 	return "unknown"
 }
 
 func ComputeMountTarget(workspacePath string, mode Mode) string {
-	if mode == ModeRootless {
+	switch mode {
+	case ModeRootless:
 		return workspacePath
+	case ModeRootful:
+		return "/workspace"
+	default:
+		return ""
 	}
-	return "/workspace"
 }

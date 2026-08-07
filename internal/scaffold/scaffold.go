@@ -35,7 +35,17 @@ const newProfileOption = "New"
 // wizard never depends on the live catalog contents.
 var loadCatalog = profile.LoadProfiles
 
+// ttyInteractive reports whether the huh/bubbletea UI is safe to launch: both
+// stdin and stdout must be terminals, since huh renders to stdout as well as
+// reading stdin.
+func ttyInteractive(stdin io.Reader, stdout io.Writer) bool {
+	return ui.IsTTYReader(stdin) && ui.IsTTY(stdout)
+}
+
 func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.Writer) error {
+	if opts.Force && opts.Merge {
+		return fmt.Errorf("--force and --merge are mutually exclusive")
+	}
 	userDir := opts.ProfileDir
 	if userDir == "" {
 		userDir = profile.DefaultProfileDir()
@@ -48,10 +58,12 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 	// tests set it directly so the wizard is exercisable with strings.NewReader.
 	interactive := opts.Interactive
 
-	// tty reports whether stdin is an actual terminal. When true, we use
-	// charmbracelet/huh for interactive TUI prompts; otherwise we fall back
-	// to simple text prompts so tests with strings.NewReader still work.
-	tty := ui.IsTTYReader(stdin)
+	// tty reports whether the huh/bubbletea UI is safe to launch. When true, we
+	// use charmbracelet/huh for interactive TUI prompts; otherwise we fall back
+	// to simple text prompts so tests with strings.NewReader still work. Both
+	// stdin and stdout must be terminals: huh renders to stdout as well as
+	// reading stdin, so a redirected stdout misbehaves.
+	tty := ttyInteractive(stdin, stdout)
 
 	// wizardUsed tracks whether interactive prompts for profile/fragments were
 	// actually shown. When the user provides all args explicitly (even in a
@@ -252,15 +264,50 @@ func Run(ctx context.Context, opts Options, stdin io.Reader, stdout, stderr io.W
 		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
-		return fmt.Errorf("creating profile directory: %w", err)
-	}
-
-	if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", targetPath, err)
+	if err := writeFileAtomic(targetPath, []byte(content), 0o644); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(stdout, "created %s\n", targetPath)
+	return nil
+}
+
+// writeFileAtomic writes data to path via a same-directory temp file, fsync,
+// and rename so a crash or concurrent reader never observes a partial profile.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating profile directory: %w", err)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "tpd-*.tmp")
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	tmp := f.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	renamed = true
 	return nil
 }
 
@@ -278,10 +325,10 @@ const (
 // missing target always means replace (plain generation).
 func overwriteAction(tty bool, opts Options, wizardUsed bool, targetPath string, stdin io.Reader, stdout io.Writer, reader *bufio.Reader) (writeAction, error) {
 	if _, err := os.Stat(targetPath); err != nil {
-		return writeReplace, nil
-	}
-	if opts.Force && opts.Merge {
-		return writeAbort, fmt.Errorf("--force and --merge are mutually exclusive")
+		if os.IsNotExist(err) {
+			return writeReplace, nil
+		}
+		return writeAbort, err
 	}
 	switch {
 	case opts.Merge:
@@ -350,8 +397,8 @@ func isIncompleteProfileErr(err error) bool {
 	if !errors.As(err, &pe) {
 		return false
 	}
-	return strings.Contains(pe.Message, "missing required field: command") ||
-		strings.Contains(pe.Message, "neither set")
+	return strings.Contains(pe.Message, "missing required field: image") ||
+		strings.Contains(pe.Message, "missing required field: command")
 }
 
 func dedup(items []string) []string {
@@ -532,6 +579,9 @@ func resolveGeneratedProfile(content, profileName string, cat profile.Catalog) (
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	cat.AddRaw("", profileName, rc)
-	return profile.ResolveProfile(cat, profileName)
+	// Resolve against a copy so validating generated content never mutates the
+	// caller's catalog.
+	tmp := cat.Clone()
+	tmp.AddRaw("", profileName, rc)
+	return profile.ResolveProfile(tmp, profileName)
 }

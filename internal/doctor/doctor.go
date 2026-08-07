@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"strconv"
+	"time"
 )
 
 type Status int
@@ -85,6 +86,11 @@ type Options struct {
 	ProfileDir string
 }
 
+// doctorTimeout bounds the whole diagnostic run so a hung daemon cannot block
+// tpd doctor; individual daemon calls are additionally bounded by the runtime
+// package's daemonHTTPTimeout. A var so tests can shrink it.
+var doctorTimeout = 30 * time.Second
+
 func Run(ctx context.Context, opts Options) Result {
 	rt, err := newRuntime()
 	if err != nil {
@@ -92,5 +98,7 @@ func Run(ctx context.Context, opts Options) Result {
 			{Name: "runtime", Status: Fail, Message: "cannot connect to Docker: " + err.Error()},
 		}}
 	}
+	ctx, cancel := context.WithTimeout(ctx, doctorTimeout)
+	defer cancel()
 	return runChecks(ctx, rt, opts)
 }

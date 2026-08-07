@@ -51,8 +51,9 @@ func titleCase(s string) string {
 
 // fieldSections groups req.Items by field type and returns the sections with
 // mounts first, then the remaining fields in name order, each section's items
-// sorted by key, plus a parallel slice of the IDs to pre-select (everything,
-// so bulk approval needs no per-item toggling).
+// sorted by key, plus a parallel slice of the IDs to pre-select (previously
+// approved items only, so a newly introduced sensitive key stays unselected
+// until the user toggles it).
 func fieldSections(req PromptRequest) ([]fieldSection, [][]string) {
 	byField := map[string][]SensitiveItem{}
 	var order []string
@@ -78,7 +79,9 @@ func fieldSections(req PromptRequest) ([]fieldSection, [][]string) {
 		items := byField[field]
 		sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 		for _, it := range items {
-			preselected[i] = append(preselected[i], itemID(it))
+			if it.PriorApproved {
+				preselected[i] = append(preselected[i], itemID(it))
+			}
 		}
 		sections = append(sections, fieldSection{field: field, items: items})
 	}
@@ -87,7 +90,8 @@ func fieldSections(req PromptRequest) ([]fieldSection, [][]string) {
 
 // DefaultPrompt is the huh-based implementation. Each field type (mounts,
 // environment, ports, ...) renders as a titled MultiSelect on a single
-// screen; every item is pre-selected, so a full approval needs no toggling.
+// screen; previously approved items are pre-selected and newly introduced
+// ones are not, so a new sensitive key needs an explicit toggle to approve.
 // The final field is an Abort/Approve button pair (Abort left and the
 // default). An abort (Esc/Ctrl+C or the Abort button) is surfaced as
 // "approval declined".

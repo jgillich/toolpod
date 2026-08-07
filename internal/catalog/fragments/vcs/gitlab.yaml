@@ -1,7 +1,7 @@
 version: 1
 meta:
   description: GitLab CLI (glab)
-extends: git
+extends: core/vcs/git
 mounts:
   ~/.config/glab-cli:
     source: ~/.config/glab-cli

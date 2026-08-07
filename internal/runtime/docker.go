@@ -10,10 +10,25 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	"github.com/jgillich/tpd/internal/workspace"
 )
+
+const (
+	// defaultDaemonHost is the Unix socket used when the daemon host is empty
+	// or given as a bare "unix://".
+	defaultDaemonHost = "unix:///var/run/docker.sock"
+)
+
+// daemonHTTPTimeout bounds daemon /info queries: it is the http.Client.Timeout
+// on the raw QueryRootless client and the context bound DaemonInfo applies to
+// the SDK's Info call. http.Client.Timeout is derived from the request context,
+// so caller cancellation still wins over the bound. A var so tests can shrink
+// it instead of waiting out the real bound.
+var daemonHTTPTimeout = 10 * time.Second
 
 var _ Runtime = (*DockerRuntime)(nil)
 
@@ -52,14 +67,14 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 // "rootless" field. The Docker SDK's types.Info does not map this field, so
 // we make a raw HTTP request and parse the JSON ourselves. Spec §5.4.
 func (d *DockerRuntime) DetectMode(ctx context.Context) (workspace.Mode, error) {
-	info, err := d.cli.Info(ctx)
+	info, err := DaemonInfo(ctx, d.cli)
 	if err != nil {
 		return workspace.ModeRootful, fmt.Errorf("docker info: %w", err)
 	}
 
 	rootless, err := QueryRootless(ctx, d.cli)
 	if err != nil {
-		rootless = isLikelyRootlessSocket(d.cli.DaemonHost())
+		return workspace.ModeRootful, fmt.Errorf("query engine mode: %w", err)
 	}
 	d.podman = rootless
 
@@ -69,34 +84,27 @@ func (d *DockerRuntime) DetectMode(ctx context.Context) (workspace.Mode, error) 
 	return workspace.ModeRootful, nil
 }
 
+// DaemonInfo returns the engine's /info, bounded by daemonHTTPTimeout so a
+// reachable-but-hung daemon cannot block the caller indefinitely. Exported
+// for tpd doctor. The SDK client itself is unbounded: a client-level timeout
+// would cut off its long-running streams (image pulls, container waits).
+func DaemonInfo(ctx context.Context, cli *client.Client) (system.Info, error) {
+	ctx, cancel := context.WithTimeout(ctx, daemonHTTPTimeout)
+	defer cancel()
+	return cli.Info(ctx)
+}
+
 // QueryRootless makes a raw GET to /info and parses the "rootless" field
 // from the JSON response. Podman's Docker-compatible API includes this field;
 // Docker's does not (it's absent, so json.Unmarshal leaves it as false).
 // Exported so the doctor package can reuse it (Plan 3) without duplication.
 func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
-	host := cli.DaemonHost()
-	if host == "" {
-		host = "unix:///var/run/docker.sock"
+	httpClient, base, err := NewDaemonHTTPClient(cli.DaemonHost())
+	if err != nil {
+		return false, err
 	}
 
-	var httpClient *http.Client
-	var url string
-	if len(host) > 7 && host[:7] == "unix://" {
-		dialer := &net.Dialer{}
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "unix", host[7:])
-				},
-			},
-		}
-		url = "http://localhost/info"
-	} else {
-		httpClient = http.DefaultClient
-		url = host + "/info"
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", base+"/info", nil)
 	if err != nil {
 		return false, err
 	}
@@ -122,6 +130,49 @@ func QueryRootless(ctx context.Context, cli *client.Client) (bool, error) {
 		return false, err
 	}
 	return info.Rootless, nil
+}
+
+// NewDaemonHTTPClient returns an HTTP client and the base URL of the Docker
+// API for the daemon host string. Unix sockets (including a bare "unix://",
+// which means defaultDaemonHost) get a Unix transport; "tcp://" is rewritten
+// to "http://"; "http://"/"https://" pass through unchanged. "ssh://" and
+// "npipe://" are rejected with a clear error: ssh needs the CLI's connection
+// proxy and npipe is Windows-only. Every request is bounded by
+// daemonHTTPTimeout.
+func NewDaemonHTTPClient(host string) (*http.Client, string, error) {
+	if host == "" {
+		host = defaultDaemonHost
+	}
+
+	switch {
+	case strings.HasPrefix(host, "unix://"):
+		sock := unixSocketPath(host)
+		dialer := &net.Dialer{}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "unix", sock)
+			},
+		}
+		return &http.Client{Transport: transport, Timeout: daemonHTTPTimeout}, "http://localhost", nil
+	case strings.HasPrefix(host, "tcp://"):
+		host = "http://" + strings.TrimPrefix(host, "tcp://")
+	case strings.HasPrefix(host, "http://"), strings.HasPrefix(host, "https://"):
+	case strings.HasPrefix(host, "ssh://"), strings.HasPrefix(host, "npipe://"):
+		return nil, "", fmt.Errorf("unsupported daemon host %q (want unix://, tcp://, http://, or https://)", host)
+	default:
+		return nil, "", fmt.Errorf("unsupported daemon host %q (want unix://, tcp://, http://, or https://)", host)
+	}
+	return &http.Client{Timeout: daemonHTTPTimeout}, host, nil
+}
+
+// unixSocketPath returns the socket a "unix://" daemon host dials, defaulting
+// a bare "unix://" to the default socket path.
+func unixSocketPath(host string) string {
+	sock := strings.TrimPrefix(host, "unix://")
+	if sock == "" {
+		sock = strings.TrimPrefix(defaultDaemonHost, "unix://")
+	}
+	return sock
 }
 
 func isLikelyRootlessSocket(host string) bool {

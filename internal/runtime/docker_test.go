@@ -101,6 +101,250 @@ func TestQueryRootlessOK(t *testing.T) {
 	}
 }
 
+func TestDaemonInfo(t *testing.T) {
+	cli := newQueryRootlessClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/info") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"Name":"podman","OSType":"linux"}`)
+	}))
+	info, err := DaemonInfo(context.Background(), cli)
+	if err != nil {
+		t.Fatalf("DaemonInfo: %v", err)
+	}
+	if info.Name != "podman" {
+		t.Errorf("DaemonInfo.Name = %q, want podman", info.Name)
+	}
+}
+
+func TestDaemonInfoTimesOut(t *testing.T) {
+	old := daemonHTTPTimeout
+	daemonHTTPTimeout = 500 * time.Millisecond
+	defer func() { daemonHTTPTimeout = old }()
+
+	started := make(chan struct{})
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {} // the daemon accepted the connection but never answers
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(client.WithHost("unix://"+sock), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := DaemonInfo(context.Background(), cli)
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("DaemonInfo returned nil error against a hung daemon")
+		}
+		if !strings.Contains(err.Error(), "context deadline exceeded") {
+			t.Errorf("error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DaemonInfo did not return within the bound")
+	}
+}
+
+func TestDaemonInfoContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {} // hang until the client gives up
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(client.WithHost("unix://"+sock), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := DaemonInfo(ctx, cli)
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("DaemonInfo returned nil error after cancellation")
+		}
+		if !strings.Contains(err.Error(), "context canceled") {
+			t.Errorf("error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DaemonInfo did not return after context cancellation")
+	}
+}
+
+func TestNewDaemonHTTPClientSchemes(t *testing.T) {
+	tests := []struct {
+		host    string
+		wantURL string
+		wantErr bool
+	}{
+		{"unix:///run/user/1000/podman/podman.sock", "http://localhost", false},
+		{"unix:///var/run/docker.sock", "http://localhost", false},
+		{"unix://", "http://localhost", false},
+		{"", "http://localhost", false},
+		{"tcp://127.0.0.1:2375", "http://127.0.0.1:2375", false},
+		{"http://localhost:2375", "http://localhost:2375", false},
+		{"https://daemon.example:2376", "https://daemon.example:2376", false},
+		{"ssh://docker@example.com:22", "", true},
+		{"npipe:////./pipe/docker_engine", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			httpClient, base, err := NewDaemonHTTPClient(tt.host)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("NewDaemonHTTPClient(%q) = nil error, want unsupported-host error", tt.host)
+				}
+				if !strings.Contains(err.Error(), "unsupported") {
+					t.Errorf("error should explain the unsupported host, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewDaemonHTTPClient(%q): %v", tt.host, err)
+			}
+			if base != tt.wantURL {
+				t.Errorf("base URL = %q, want %q", base, tt.wantURL)
+			}
+			if httpClient.Timeout != daemonHTTPTimeout {
+				t.Errorf("client.Timeout = %v, want %v", httpClient.Timeout, daemonHTTPTimeout)
+			}
+		})
+	}
+}
+
+func TestNewDaemonHTTPClientUnixDial(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"rootless":true}`))
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	httpClient, base, err := NewDaemonHTTPClient("unix://" + sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := httpClient.Get(base + "/info")
+	if err != nil {
+		t.Fatalf("GET over Unix transport: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"rootless":true}` {
+		t.Errorf("body = %q, want rootless payload", body)
+	}
+}
+
+func TestUnixSocketPathDefault(t *testing.T) {
+	if got := unixSocketPath("unix://"); got != "/var/run/docker.sock" {
+		t.Errorf("bare unix:// should default to /var/run/docker.sock, got %q", got)
+	}
+	if got := unixSocketPath("unix:///tmp/foo.sock"); got != "/tmp/foo.sock" {
+		t.Errorf("unix:// path = %q, want /tmp/foo.sock", got)
+	}
+}
+
+func TestQueryRootlessOverTCP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"rootless":false}`))
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+srv.Listener.Addr().String()), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootless, err := QueryRootless(context.Background(), cli)
+	if err != nil {
+		t.Fatalf("QueryRootless over tcp://: %v", err)
+	}
+	if rootless {
+		t.Error("QueryRootless = true, want false")
+	}
+}
+
+func TestQueryRootlessUnsupportedScheme(t *testing.T) {
+	cli, err := client.NewClientWithOpts(client.WithHost("ssh://docker@example.com:22"), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QueryRootless(context.Background(), cli); err == nil {
+		t.Fatal("QueryRootless must fail for an ssh:// daemon host")
+	} else if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("error should explain the unsupported scheme, got: %v", err)
+	}
+}
+
+func TestQueryRootlessContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	sock := filepath.Join(t.TempDir(), "podman.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {} // hang until the client gives up
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	cli, err := client.NewClientWithOpts(client.WithHost("unix://"+sock), client.WithVersion("1.41"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := QueryRootless(ctx, cli)
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("QueryRootless returned nil error after cancellation")
+		}
+		if !strings.Contains(err.Error(), "context canceled") {
+			t.Errorf("error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("QueryRootless did not return after context cancellation")
+	}
+}
+
 func TestSubpathSupportedConcurrent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/version") {
@@ -1408,7 +1652,7 @@ func TestIntegrationCacheMountsReuse(t *testing.T) {
 	})
 
 	for i, b := range builds {
-		if err := buildDerivedImage(ctx, cli, refs[i], baseTag, baseID, nil, b.pkgs, NoopProgressWriter{}); err != nil {
+		if err := buildDerivedImage(ctx, cli, refs[i], baseID, nil, b.pkgs, NoopProgressWriter{}); err != nil {
 			t.Fatalf("build %s: %v", b.name, err)
 		}
 	}

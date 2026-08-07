@@ -40,7 +40,7 @@ meta:
   description: Disposable bash shell with shell completion
 extends:
   - mise
-  - shell/bash
+  - core/lang/bash
 command: ["bash", "-l"]
 files:
   /etc/profile.d/mise.sh:
@@ -1439,7 +1439,7 @@ GitLab CLI (glab)
 version: 1
 meta:
   description: GitLab CLI (glab)
-extends: git
+extends: core/vcs/git
 mounts:
   ~/.config/glab-cli:
     source: ~/.config/glab-cli

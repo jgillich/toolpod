@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"github.com/jgillich/tpd/internal/runtime"
 )
 
-func RenderSpec(w io.Writer, spec Spec) error {
+func renderSpec(w io.Writer, spec runtime.Spec) error {
 	_, err := fmt.Fprintf(w, "profile: %s\n", spec.ProfileName)
 	if err != nil {
 		return err
@@ -27,7 +29,54 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			return err
 		}
 	}
-	_, err = fmt.Fprintf(w, "workspace:\n  host: %s\n  target: %s\n  mode: %s\n", spec.Workspace.HostPath, spec.Workspace.Target, spec.Workspace.Mode)
+	if len(spec.Repos) > 0 {
+		_, err = fmt.Fprintln(w, "repos:")
+		if err != nil {
+			return err
+		}
+		repoNames := make([]string, 0, len(spec.Repos))
+		for name := range spec.Repos {
+			repoNames = append(repoNames, name)
+		}
+		sort.Strings(repoNames)
+		for _, name := range repoNames {
+			r := spec.Repos[name]
+			if r.ExtRepo != "" {
+				_, err = fmt.Fprintf(w, "  %s: extrepo %s\n", name, r.ExtRepo)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			_, err = fmt.Fprintf(w, "  %s:\n    url: %s\n    key-url: %s\n    suites: %s\n    components: %s\n", name, r.URL, r.KeyURL, r.Suites, r.Components)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if len(spec.Files) > 0 {
+		_, err = fmt.Fprintln(w, "files:")
+		if err != nil {
+			return err
+		}
+		for _, f := range spec.Files {
+			_, err = fmt.Fprintf(w, "  %s:\n    mode: %04o\n    content: %q\n", f.Target, f.Mode, f.Content)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if spec.TTY != "" {
+		_, err = fmt.Fprintf(w, "tty: %s\n", spec.TTY)
+		if err != nil {
+			return err
+		}
+	}
+	wsTarget := spec.Workspace.Target
+	if wsTarget == "" {
+		wsTarget = "<unknown>"
+	}
+	_, err = fmt.Fprintf(w, "workspace:\n  host: %s\n  target: %s\n  mode: %s\n", spec.Workspace.HostPath, wsTarget, spec.Workspace.Mode)
 	if err != nil {
 		return err
 	}
@@ -93,11 +142,7 @@ func RenderSpec(w io.Writer, spec Spec) error {
 			return err
 		}
 		for _, p := range spec.PortSpecs {
-			hostIP := p.HostIP
-			if hostIP == "" {
-				hostIP = "0.0.0.0"
-			}
-			_, err = fmt.Fprintf(w, "  %s/%s -> %s:%s\n", p.Container, p.Protocol, hostIP, p.HostPort)
+			_, err = fmt.Fprintf(w, "  %s/%s -> %s:%s\n", p.Container, p.Protocol, p.HostIP, p.HostPort)
 			if err != nil {
 				return err
 			}

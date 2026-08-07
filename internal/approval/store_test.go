@@ -160,3 +160,111 @@ func TestStateMarshalNestsDbusOnly(t *testing.T) {
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
+
+func TestStoreSaveAtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFSStore(dir)
+	st := State{Hash: "h", Approved: map[string]ApprovedField{"mounts": {Keys: []string{"~/.ssh"}}}}
+	if err := s.Save("p", st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path := filepath.Join(dir, "approvals", "p.yaml")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("state file: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("state file mode = %o, want 600", fi.Mode().Perm())
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "approvals"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("temp file %s left behind after successful Save", e.Name())
+		}
+	}
+	got, err := s.Load("p")
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if got.Hash != "h" || !containsKey(got.Approved["mounts"].Keys, "~/.ssh") {
+		t.Errorf("round-trip state = %+v", got)
+	}
+}
+
+func TestStoreSaveCleansTempOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFSStore(dir)
+	// A directory at the target path makes the atomic rename fail after the
+	// temp file was already written and fsynced.
+	if err := os.MkdirAll(filepath.Join(dir, "approvals", "p.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save("p", State{Hash: "h"}); err == nil {
+		t.Fatal("Save over a directory target should fail")
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "approvals"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("temp file %s left behind after failed Save", e.Name())
+		}
+	}
+}
+
+func TestStoreRejectsSymlinkedStateFile(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFSStore(dir)
+	approvalsDir := filepath.Join(dir, "approvals")
+	if err := os.MkdirAll(approvalsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "elsewhere.yaml")
+	if err := os.WriteFile(target, []byte("hash: hijacked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(approvalsDir, "p.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Load("p"); err == nil {
+		t.Error("Load through a symlinked state file should fail")
+	}
+	if err := s.Save("p", State{Hash: "h"}); err == nil {
+		t.Error("Save over a symlinked state file should fail")
+	}
+	// The symlink itself must not be clobbered by the rejected Save.
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("state file should still be the symlink after rejected Save, lstat=%v err=%v", fi, err)
+	}
+}
+
+func TestStoreLoadMalformedYAMLErrorNamesProfileAndRepair(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFSStore(dir)
+	path := filepath.Join(dir, "approvals", "p.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("hash: [unclosed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Load("p")
+	if err == nil {
+		t.Fatal("Load of malformed YAML should fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"p"`) {
+		t.Errorf("error should name the profile, got %q", msg)
+	}
+	if !strings.Contains(msg, "approvals") || !strings.Contains(msg, "p.yaml") {
+		t.Errorf("error should name the state file path, got %q", msg)
+	}
+	if !strings.Contains(msg, "delete") {
+		t.Errorf("error should suggest a repair command, got %q", msg)
+	}
+}

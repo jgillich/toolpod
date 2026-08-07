@@ -181,32 +181,17 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	if len(child.ExtendsList.Raw) > 0 {
 		out.ExtendsList = child.ExtendsList
 	}
-	if child.Network != "" {
-		out.Network = child.Network
-		out.Provenance.Network = child.Provenance.Network
-		if out.Provenance.Network.FullName == "" {
-			out.Provenance.Network = childContrib
-		}
-	} else {
-		out.Provenance.Network = parent.Provenance.Network
-	}
-	if child.TTY != "" {
-		out.TTY = child.TTY
-		out.Provenance.TTY = child.Provenance.TTY
-		if out.Provenance.TTY.FullName == "" {
-			out.Provenance.TTY = childContrib
-		}
-	}
+	null := child.NullKeys["network"] != nil && child.NullKeys["network"]["*"]
+	out.Network, out.Provenance.Network = mergeScalar(parent.Network, child.Network, parent.Provenance.Network, child.Provenance.Network, childContrib, null)
+	null = child.NullKeys["tty"] != nil && child.NullKeys["tty"]["*"]
+	out.TTY, out.Provenance.TTY = mergeScalar(parent.TTY, child.TTY, parent.Provenance.TTY, child.Provenance.TTY, childContrib, null)
+	null = child.NullKeys["image"] != nil && child.NullKeys["image"]["*"]
+	out.Image, out.Provenance.Image = mergeScalar(parent.Image, child.Image, parent.Provenance.Image, child.Provenance.Image, childContrib, null)
 
-	if child.Image != "" {
-		out.Image = child.Image
-		out.Provenance.Image = child.Provenance.Image
-		if out.Provenance.Image.FullName == "" {
-			out.Provenance.Image = childContrib
-		}
-	}
-
-	if child.Command != nil {
+	if child.NullKeys["command"] != nil && child.NullKeys["command"]["*"] {
+		out.Command = nil
+		out.Provenance.Command = Contributor{}
+	} else if child.Command != nil {
 		out.Command = child.Command
 		out.Provenance.Command = child.Provenance.Command
 		if out.Provenance.Command.FullName == "" {
@@ -268,7 +253,10 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.Services = mergeMap(parent.Services, child.Services, child.NullKeys["services"])
 	out.Provenance.Services = mergeProvMap(parent.Provenance.Services, child.Provenance.Services, keysOf(child.Services), child.NullKeys["services"], childContrib)
 
-	if child.Resources != nil {
+	if child.NullKeys["resources"] != nil && child.NullKeys["resources"]["*"] {
+		out.Resources = nil
+		out.Provenance.Resources = ResourcesProvenance{}
+	} else if child.Resources != nil {
 		out.Resources = &Resources{}
 		if parent.Resources != nil {
 			out.Resources.Memory = parent.Resources.Memory
@@ -293,6 +281,23 @@ func MergeProfiles(parent, child RawProfile) RawProfile {
 	out.ExtendsList = ExtendsList{}
 	out.NullKeys = nil
 	return out
+}
+
+// mergeScalar merges a string scalar: a non-empty child value wins and is
+// attributed to the child; an explicit whole-field null ("*") deletes the
+// inherited value and provenance; otherwise the parent value is inherited.
+func mergeScalar(parentVal, childVal string, parentProv, childProv, childContrib Contributor, null bool) (string, Contributor) {
+	if null {
+		return "", Contributor{}
+	}
+	if childVal != "" {
+		prov := childProv
+		if prov.FullName == "" {
+			prov = childContrib
+		}
+		return childVal, prov
+	}
+	return parentVal, parentProv
 }
 
 // mergePackageProv attributes each package to its first declarer in merge

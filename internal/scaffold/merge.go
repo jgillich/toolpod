@@ -84,22 +84,39 @@ func mappingValue(m *yaml.Node, name string) *yaml.Node {
 }
 
 // mergeExtends unions the generated extends values into the existing sequence,
-// keeping existing entries first and deduplicating by value.
+// keeping existing entries first and deduplicating by value. A scalar extends
+// (e.g. "extends: core/mise") is normalized to a single-element sequence so the
+// generated additions still apply instead of being silently dropped.
 func mergeExtends(existing, generated *yaml.Node) {
-	if existing.Kind != yaml.SequenceNode || generated.Kind != yaml.SequenceNode {
+	ex := asSequence(existing)
+	gen := asSequence(generated)
+	if ex == nil || gen == nil {
 		return
 	}
-	seen := make(map[string]bool, len(existing.Content)+len(generated.Content))
-	for _, item := range existing.Content {
+	seen := make(map[string]bool, len(ex.Content)+len(gen.Content))
+	for _, item := range ex.Content {
 		seen[item.Value] = true
 	}
-	for _, item := range generated.Content {
+	for _, item := range gen.Content {
 		if seen[item.Value] {
 			continue
 		}
 		seen[item.Value] = true
-		existing.Content = append(existing.Content, cloneNode(item))
+		ex.Content = append(ex.Content, cloneNode(item))
 	}
+}
+
+// asSequence returns n as a sequence node, converting a scalar in place.
+func asSequence(n *yaml.Node) *yaml.Node {
+	if n.Kind == yaml.SequenceNode {
+		return n
+	}
+	if n.Kind == yaml.ScalarNode {
+		item := *n
+		*n = yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{&item}}
+		return n
+	}
+	return nil
 }
 
 // detectIndent returns the indentation width used by the file, derived from the

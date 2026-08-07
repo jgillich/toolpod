@@ -527,3 +527,90 @@ func TestFilterPromptItemLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterMarksPriorApprovedOnHashChange(t *testing.T) {
+	core := profile.Contributor{FullName: "core/creds/ssh", Namespace: "core"}
+	res := profile.Resolved{
+		Profile: profile.Profile{Mounts: map[string]profile.Mount{
+			"~/.ssh": {Source: "~/.ssh"},
+			"~/aws":  {Source: "~/aws"},
+		}},
+		Prov: profile.Provenance{Mounts: map[string]profile.Contributor{
+			"~/.ssh": core,
+			"~/aws":  core,
+		}},
+		FullName: "myagent",
+	}
+	// Stored state approved only ~/.ssh under an older hash (the profile
+	// gained ~/aws since). The hash differs, so both keys re-prompt; the
+	// previously approved one must be marked PriorApproved, the new one not.
+	store := &memStore{state: map[string]State{
+		"myagent": {Hash: "deadbeef", Approved: map[string]ApprovedField{
+			"mounts": {Keys: []string{"~/.ssh"}},
+		}},
+	}}
+	_, req, err := Filter(res, store)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(req.Items) != 2 {
+		t.Fatalf("expected 2 prompt items on hash change, got %d", len(req.Items))
+	}
+	byKey := map[string]bool{}
+	for _, it := range req.Items {
+		byKey[it.Key] = it.PriorApproved
+	}
+	if !byKey["~/.ssh"] {
+		t.Error("previously approved key ~/.ssh should be marked PriorApproved")
+	}
+	if byKey["~/aws"] {
+		t.Error("newly introduced key ~/aws should not be marked PriorApproved")
+	}
+}
+
+func TestFilterMarksNetworkPriorApproved(t *testing.T) {
+	core := profile.Contributor{FullName: "core/net", Namespace: "core"}
+	res := profile.Resolved{
+		Profile:  profile.Profile{Network: "slirp4netns"},
+		Prov:     profile.Provenance{Network: core},
+		FullName: "myagent",
+	}
+	// Network approved under an older hash → re-prompt with PriorApproved.
+	store := &memStore{state: map[string]State{
+		"myagent": {Hash: "old", Approved: map[string]ApprovedField{
+			"network": {Network: boolPtr(true)},
+		}},
+	}}
+	_, req, err := Filter(res, store)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(req.Items) != 1 {
+		t.Fatalf("expected 1 network prompt item on hash change, got %d", len(req.Items))
+	}
+	if !req.Items[0].PriorApproved {
+		t.Error("previously approved network should be marked PriorApproved")
+	}
+}
+
+func TestFilterNewItemsNotPriorApprovedOnFirstRun(t *testing.T) {
+	core := profile.Contributor{FullName: "core/creds/ssh", Namespace: "core"}
+	res := profile.Resolved{
+		Profile: profile.Profile{Mounts: map[string]profile.Mount{"~/.ssh": {Source: "~/.ssh"}}},
+		Prov: profile.Provenance{Mounts: map[string]profile.Contributor{
+			"~/.ssh": core,
+		}},
+		FullName: "myagent",
+	}
+	// No stored state at all → the key is new, not prior-approved.
+	_, req, err := Filter(res, &memStore{})
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(req.Items) != 1 {
+		t.Fatalf("expected 1 prompt item, got %d", len(req.Items))
+	}
+	if req.Items[0].PriorApproved {
+		t.Error("a key with no stored decision must not be marked PriorApproved")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -299,6 +300,20 @@ func overrideProbeTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { serviceProbeTimeout = old })
 }
 
+// listenAt binds a unix socket at path so the reuse path's socket check sees a
+// real socket on disk.
+func listenAt(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+}
+
 func serviceSpec(name, hash string, exposes map[string]string) Spec {
 	return Spec{
 		Workspace: WorkspaceSpec{Mode: workspace.ModeRootless},
@@ -433,12 +448,14 @@ func TestStartServicesDoesNotMutateSpecServiceLabels(t *testing.T) {
 
 func TestStartServicesReusesRunningSameHash(t *testing.T) {
 	_, runDir := overrideServicePaths(t)
+	socket := filepath.Join(runDir, "db", "run", "db.sock")
+	listenAt(t, socket)
 	daemon := newFakeServicesDaemon()
 	daemon.containers = []types.Container{{
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -492,13 +509,15 @@ func TestStartServicesNewServiceAttachesToNetwork(t *testing.T) {
 }
 
 func TestStartServicesReuseSkipsRedundantConnect(t *testing.T) {
-	overrideServicePaths(t)
+	_, runDir := overrideServicePaths(t)
+	socket := filepath.Join(runDir, "db", "run", "db.sock")
+	listenAt(t, socket)
 	daemon := newFakeServicesDaemon()
 	daemon.containers = []types.Container{{
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.networksByID["old-svc"] = map[string]*network.EndpointSettings{
 		ServiceNetworkName: {Aliases: []string{"tpd-svc-db"}},
@@ -521,13 +540,15 @@ func TestStartServicesReuseSkipsRedundantConnect(t *testing.T) {
 }
 
 func TestStartServicesReuseRepairsMissingNetwork(t *testing.T) {
-	overrideServicePaths(t)
+	_, runDir := overrideServicePaths(t)
+	socket := filepath.Join(runDir, "db", "run", "db.sock")
+	listenAt(t, socket)
 	daemon := newFakeServicesDaemon()
 	daemon.containers = []types.Container{{
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -590,6 +611,180 @@ func TestStartServicesNetworkConnectFailureReleasesLocks(t *testing.T) {
 	}
 }
 
+func TestStartServicesForeignContainerConflict(t *testing.T) {
+	// A foreign container must never be removed or created over regardless of
+	// its state: "exited" covers the destructive stale-straggler removal branch,
+	// which must not fire for a container tpd does not own.
+	for _, state := range []string{"running", "exited"} {
+		t.Run(state, func(t *testing.T) {
+			_, runDir := overrideServicePaths(t)
+			daemon := newFakeServicesDaemon()
+			daemon.containers = []types.Container{{
+				ID:     "foreign-svc",
+				Names:  []string{"/tpd-svc-db"},
+				State:  state,
+				Labels: map[string]string{"com.example.owner": "someone-else"},
+			}}
+			daemon.sockets = map[string][]string{
+				"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
+			}
+			rt := newServicesTestRuntime(t, daemon)
+
+			spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+			_, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+			var foreign *ForeignServiceContainerError
+			if !errors.As(err, &foreign) {
+				t.Fatalf("StartServices error = %v, want *ForeignServiceContainerError", err)
+			}
+			if foreign.ContainerName != "tpd-svc-db" {
+				t.Errorf("conflict container name = %q, want tpd-svc-db", foreign.ContainerName)
+			}
+			if daemon.createCount != 0 {
+				t.Errorf("ContainerCreate called %d times over a foreign container, want 0", daemon.createCount)
+			}
+			if daemon.stopCount != 0 || len(daemon.removed) != 0 {
+				t.Errorf("foreign container must never be stopped or removed (stop=%d removed=%v)", daemon.stopCount, daemon.removed)
+			}
+		})
+	}
+}
+
+func TestStartServicesRecreatesWhenSocketUnreusable(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		writeFile bool
+	}{
+		{name: "absent"},
+		{name: "regular file", writeFile: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, runDir := overrideServicePaths(t)
+			socket := filepath.Join(runDir, "db", "run", "db.sock")
+			if tc.writeFile {
+				if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(socket, []byte("stale"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			daemon := newFakeServicesDaemon()
+			daemon.containers = []types.Container{{
+				ID:     "old-svc",
+				Names:  []string{"/tpd-svc-db"},
+				State:  "running",
+				Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
+			}}
+			daemon.sockets = map[string][]string{"tpd-svc-db": {socket}}
+			rt := newServicesTestRuntime(t, daemon)
+
+			spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+			bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+			if err != nil {
+				t.Fatalf("StartServices: %v", err)
+			}
+			defer bindings.Release()
+
+			if daemon.createCount != 1 {
+				t.Errorf("ContainerCreate calls = %d, want 1 (a hash match with an unusable socket must recreate)", daemon.createCount)
+			}
+			if !containsString(daemon.removed, "old-svc") {
+				t.Errorf("old service not removed; removed = %v", daemon.removed)
+			}
+		})
+	}
+}
+
+func TestStartServicesRecreatesIgnoringForeignConsumer(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.containers = []types.Container{{
+		ID:     "old-svc",
+		Names:  []string{"/tpd-svc-db"},
+		State:  "running",
+		Labels: map[string]string{ServiceHashLabel: "oldhash", ServiceLabel: "db", OwnershipLabel: "true"},
+	}}
+	daemon.consumers = []types.Container{{
+		ID:     "foreign-consumer",
+		Names:  []string{"/not-a-tpd-container"},
+		State:  "running",
+		Labels: map[string]string{UsesServiceLabel: "db"},
+	}}
+	daemon.sockets = map[string][]string{
+		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
+	}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	bindings, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+	if err != nil {
+		t.Fatalf("StartServices: %v", err)
+	}
+	defer bindings.Release()
+
+	if daemon.createCount != 1 {
+		t.Errorf("ContainerCreate calls = %d, want 1 (a foreign consumer must not block recreation)", daemon.createCount)
+	}
+	if !containsString(daemon.removed, "old-svc") {
+		t.Errorf("old service not removed; removed = %v", daemon.removed)
+	}
+}
+
+func TestStopServicesIgnoresForeignConsumers(t *testing.T) {
+	overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.containers = []types.Container{{
+		ID:     "svc-1",
+		Names:  []string{"/tpd-svc-db"},
+		State:  "running",
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
+	}}
+	daemon.consumers = []types.Container{{
+		ID:     "foreign-consumer",
+		Names:  []string{"/not-a-tpd-container"},
+		State:  "running",
+		Labels: map[string]string{UsesServiceLabel: "db"},
+	}}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	if err := rt.StopServices(context.Background(), spec); err != nil {
+		t.Fatalf("StopServices: %v", err)
+	}
+	if daemon.stopCount != 1 {
+		t.Errorf("a foreign consumer must not keep the service alive; stop calls = %d, want 1", daemon.stopCount)
+	}
+	if !containsString(daemon.removed, "svc-1") {
+		t.Errorf("service container not removed; removed = %v", daemon.removed)
+	}
+}
+
+func TestStopServicesForeignContainerNotRemoved(t *testing.T) {
+	overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	daemon.containers = []types.Container{{
+		ID:     "foreign-svc",
+		Names:  []string{"/tpd-svc-db"},
+		State:  "running",
+		Labels: map[string]string{"com.example.owner": "someone-else"},
+	}}
+	rt := newServicesTestRuntime(t, daemon)
+
+	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
+	err := rt.StopServices(context.Background(), spec)
+	var foreign *ForeignServiceContainerError
+	if !errors.As(err, &foreign) {
+		t.Fatalf("StopServices error = %v, want *ForeignServiceContainerError", err)
+	}
+	if foreign.ContainerName != "tpd-svc-db" {
+		t.Errorf("conflict container name = %q, want tpd-svc-db", foreign.ContainerName)
+	}
+	if daemon.stopCount != 0 || len(daemon.removed) != 0 {
+		t.Errorf("foreign container must never be stopped or removed (stop=%d removed=%v)", daemon.stopCount, daemon.removed)
+	}
+}
+
 func TestStartServicesRecreatesOnHashChangeZeroConsumers(t *testing.T) {
 	_, runDir := overrideServicePaths(t)
 	daemon := newFakeServicesDaemon()
@@ -597,7 +792,7 @@ func TestStartServicesRecreatesOnHashChangeZeroConsumers(t *testing.T) {
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "oldhash"},
+		Labels: map[string]string{ServiceHashLabel: "oldhash", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.sockets = map[string][]string{
 		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
@@ -630,13 +825,13 @@ func TestStartServicesRecreatesOnHashChangeWithConsumers(t *testing.T) {
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "oldhash"},
+		Labels: map[string]string{ServiceHashLabel: "oldhash", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.consumers = []types.Container{{
 		ID:     "consumer1",
 		Names:  []string{"/tpd-profile-abc123"},
 		State:  "running",
-		Labels: map[string]string{UsesServiceLabel: "db"},
+		Labels: map[string]string{UsesServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.sockets = map[string][]string{
 		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
@@ -713,6 +908,9 @@ func TestStartServicesBuildPassesBaseID(t *testing.T) {
 	daemon.sockets = map[string][]string{
 		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
 	}
+	oldDir := buildLockDir
+	buildLockDir = t.TempDir()
+	t.Cleanup(func() { buildLockDir = oldDir })
 	rt := newServicesTestRuntime(t, daemon)
 
 	spec := serviceSpec("db", "hash123", map[string]string{"port": "/run/db.sock"})
@@ -794,7 +992,7 @@ func TestStopServicesRemovesWhenNoConsumers(t *testing.T) {
 		ID:     "svc-1",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -817,13 +1015,13 @@ func TestStopServicesKeepsWhenConsumersRemain(t *testing.T) {
 		ID:     "svc-1",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.consumers = []types.Container{{
 		ID:     "main-1",
 		Names:  []string{"/tpd-profile-def456"},
 		State:  "running",
-		Labels: map[string]string{UsesServiceLabel: "db"},
+		Labels: map[string]string{UsesServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -843,8 +1041,8 @@ func TestStopServicesContinuesAfterOneFails(t *testing.T) {
 	overrideServicePaths(t)
 	daemon := newFakeServicesDaemon()
 	daemon.containers = []types.Container{
-		{ID: "svc-a", Names: []string{"/tpd-svc-a"}, State: "running", Labels: map[string]string{ServiceHashLabel: "ha"}},
-		{ID: "svc-b", Names: []string{"/tpd-svc-b"}, State: "running", Labels: map[string]string{ServiceHashLabel: "hb"}},
+		{ID: "svc-a", Names: []string{"/tpd-svc-a"}, State: "running", Labels: map[string]string{ServiceHashLabel: "ha", ServiceLabel: "a", OwnershipLabel: "true"}},
+		{ID: "svc-b", Names: []string{"/tpd-svc-b"}, State: "running", Labels: map[string]string{ServiceHashLabel: "hb", ServiceLabel: "b", OwnershipLabel: "true"}},
 	}
 	daemon.failStop = map[string]bool{"svc-a": true}
 	rt := newServicesTestRuntime(t, daemon)
@@ -915,7 +1113,7 @@ func TestStartServicesStaleContainerRemovedBeforeCreate(t *testing.T) {
 		ID:     "old-svc",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "exited",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.sockets = map[string][]string{
 		"tpd-svc-db": {filepath.Join(runDir, "db", "run", "db.sock")},
@@ -975,13 +1173,13 @@ func TestStopServicesCountsCreatedStateConsumers(t *testing.T) {
 		ID:     "svc-1",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.consumers = []types.Container{{
 		ID:     "main-1",
 		Names:  []string{"/tpd-profile-ghi789"},
 		State:  "created",
-		Labels: map[string]string{UsesServiceLabel: "db"},
+		Labels: map[string]string{UsesServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -1004,13 +1202,13 @@ func TestStartStopRaceDoesNotKillLiveService(t *testing.T) {
 		ID:     "svc-live",
 		Names:  []string{"/tpd-svc-db"},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	daemon.consumers = []types.Container{{
 		ID:     "b-main",
 		Names:  []string{"/tpd-b-abc123"},
 		State:  "created",
-		Labels: map[string]string{UsesServiceLabel: "db"},
+		Labels: map[string]string{UsesServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -1095,7 +1293,7 @@ func TestStopServicesRootful(t *testing.T) {
 		ID:     "svc-1",
 		Names:  []string{"/" + svcName},
 		State:  "running",
-		Labels: map[string]string{ServiceHashLabel: "hash123"},
+		Labels: map[string]string{ServiceHashLabel: "hash123", ServiceLabel: "db", OwnershipLabel: "true"},
 	}}
 	rt := newServicesTestRuntime(t, daemon)
 
@@ -1191,6 +1389,43 @@ func TestEnsureServiceRunDir(t *testing.T) {
 	}
 	if err := ensureServiceRunDir(link); err == nil {
 		t.Error("a symlink must be rejected (Lstat, not Stat)")
+	}
+}
+
+func TestValidateServiceExposePath(t *testing.T) {
+	for _, path := range []string{"/run/app/db.sock", "/run/registry/registry.sock", "/var/lib/postgres/run.sock"} {
+		if err := validateServiceExposePath(path); err != nil {
+			t.Errorf("validateServiceExposePath(%q) = %v, want nil", path, err)
+		}
+	}
+	for _, path := range []string{"/db.sock", "/", "/run/../x.sock", "/run/app/../db.sock", "run/app/db.sock"} {
+		if err := validateServiceExposePath(path); err == nil {
+			t.Errorf("validateServiceExposePath(%q) = nil, want error", path)
+		}
+	}
+}
+
+func TestStartServicesRejectsDangerousExposePaths(t *testing.T) {
+	_, runDir := overrideServicePaths(t)
+	daemon := newFakeServicesDaemon()
+	rt := newServicesTestRuntime(t, daemon)
+
+	for _, exposePath := range []string{"/db.sock", "/", "/run/../x.sock", "/run/app/../db.sock"} {
+		spec := serviceSpec("db", "hash123", map[string]string{"port": exposePath})
+		_, err := rt.StartServices(context.Background(), spec, NoopProgressWriter{}, false)
+		if err == nil {
+			t.Errorf("StartServices with expose %q must fail", exposePath)
+			continue
+		}
+		if !strings.Contains(err.Error(), "db") || !strings.Contains(err.Error(), exposePath) {
+			t.Errorf("error for expose %q = %q, want it to name the service and path", exposePath, err)
+		}
+	}
+	if daemon.createCount != 0 {
+		t.Errorf("ContainerCreate called %d times for rejected exposes, want 0", daemon.createCount)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "db")); !os.IsNotExist(err) {
+		t.Errorf("host run-dir must not be created for rejected exposes")
 	}
 }
 

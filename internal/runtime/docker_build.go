@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types"
@@ -126,23 +129,29 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 }
 
 // buildDerivedImage builds and tags a derived image (base + repos + packages)
-// as derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef> (the
-// base image is already pulled), a COPY per resolved repo (the deb822 .sources
-// and signing key resolved from the extrepo catalog at build time), then
-// mounted RUNs that apt-get install the sorted, shell-quoted packages (and,
-// when repos are present, bootstrap ca-certificates) into cache-mount-backed
-// /var/cache/apt and /var/lib/apt. Build output is streamed through w.
+// as derivedRef. The Dockerfile is synthesised in-memory: FROM <base> (the
+// resolved base image ID — pinned, so a mutable tag changing between pull and
+// build cannot select a different base), a COPY per resolved repo (the deb822
+// .sources and signing key resolved from the extrepo catalog at build time),
+// then mounted RUNs that apt-get install the sorted, shell-quoted packages
+// (and, when repos are present, bootstrap ca-certificates) into
+// cache-mount-backed /var/cache/apt and /var/lib/apt. Repos-only profiles get
+// the bootstrap and COPYs but no install RUN. Build output is streamed through
+// w.
+//
+// Callers hold the per-tag build lock (ensureDerivedImage) so concurrent
+// launches cannot race the same tag; this is the unlocked inner step.
 //
 // The request pins version=2 so the Docker daemon dispatches to its embedded
 // buildkit, the only builder that parses the cache-mount RUNs; podman's compat
 // endpoint ignores the param and buildah parses cache mounts natively.
-func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
-	resolved, err := resolveExtrepoRepos(ctx, cli, baseRef, repos)
+func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+	resolved, err := resolveExtrepoRepos(ctx, cli, baseID, repos)
 	if err != nil {
 		return fmt.Errorf("resolve repos: %w", err)
 	}
 	aptID, listsID := cacheMountIDs(baseID, repos)
-	dockerfile := []byte(synthesizeDockerfile(baseRef, resolved, packages, aptID, listsID))
+	dockerfile := []byte(synthesizeDockerfile(baseID, resolved, packages, aptID, listsID))
 	buildContext, err := tarBuildContext(dockerfile, repoFiles(resolved))
 	if err != nil {
 		return fmt.Errorf("build context: %w", err)
@@ -166,6 +175,77 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 		return err
 	}
 	return nil
+}
+
+// ensureDerivedImage returns nil once the derived image exists, building it
+// if absent. The existence check runs before and after acquiring the per-tag
+// build lock: a cache hit takes no lock and does no network work, while on a
+// miss the lock serializes concurrent launches of the same derived tag so
+// exactly one build publishes it and the others re-check and skip.
+func ensureDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+	exists, err := imageExists(ctx, cli, derivedRef)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	unlock, err := lockDerivedTag(derivedRef)
+	if err != nil {
+		return fmt.Errorf("lock derived image %s: %w", derivedRef, err)
+	}
+	defer unlock()
+	exists, err = imageExists(ctx, cli, derivedRef)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return buildDerivedImage(ctx, cli, derivedRef, baseID, repos, packages, w)
+}
+
+// buildLockDir is where per-tag build lockfiles live. A package variable so
+// tests can redirect it off the user's home.
+var buildLockDir = defaultBuildLockDir()
+
+func defaultBuildLockDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "tpd", "locks")
+}
+
+// lockDerivedTag serializes the cache-miss build path for a derived tag
+// across both processes (concurrent `tpd run` launches) and goroutines
+// (services in one launch): flock locks are per-open-file-description, so two
+// fds of the same lockfile block each other even inside one process. The
+// lockfile is never removed — unlinking a locked file races a locker that has
+// already opened it, letting two processes hold what they think is the same
+// lock.
+func lockDerivedTag(tag string) (func(), error) {
+	if err := os.MkdirAll(buildLockDir, 0o700); err != nil {
+		return nil, err
+	}
+	name := filepath.Join(buildLockDir, buildLockKey(tag)+".lock")
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+func buildLockKey(tag string) string {
+	sum := sha256.Sum256([]byte(tag))
+	return hex.EncodeToString(sum[:8])
 }
 
 // drainBuildStream reads the JSON-message stream emitted by ImageBuild,
@@ -262,7 +342,9 @@ func sortedCopy(s []string) []string {
 // When repos are present, a bootstrap RUN installs ca-certificates first: the
 // base image is bare (no certs), and apt-get update needs them to verify the
 // https repos the COPYs add. The Debian archive itself is http, so the
-// bootstrap works without certificates.
+// bootstrap works without certificates. A repos-only profile stops after the
+// bootstrap and COPYs — there is no install RUN, and emitting one with zero
+// operands would produce a malformed `apt-get install` step.
 func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []string, aptCacheID, listsCacheID string) string {
 	sorted := sortedCopy(packages)
 	quoted := make([]string, len(sorted))
@@ -283,6 +365,9 @@ func synthesizeDockerfile(baseRef string, repos []resolvedRepo, packages []strin
 	for _, r := range sortedResolvedRepos(repos) {
 		fmt.Fprintf(&b, "COPY extrepo/%s.sources /etc/apt/sources.list.d/extrepo_%s.sources\n", r.name, r.name)
 		fmt.Fprintf(&b, "COPY extrepo/%s.asc /etc/apt/keyrings/%s.asc\n", r.name, r.name)
+	}
+	if len(sorted) == 0 {
+		return b.String()
 	}
 	b.WriteString(cacheMountLines(aptCacheID, listsCacheID))
 	if len(repos) == 0 {

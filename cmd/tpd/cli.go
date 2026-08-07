@@ -39,7 +39,7 @@ type launchFlags struct {
 // same contract kong's passthrough:partial provided.
 func addLaunchFlags(cmd *cobra.Command, o *launchFlags) {
 	cmd.Flags().SetInterspersed(false)
-	cmd.Flags().StringVarP(&o.Command, "command", "c", "", "Command to run in the profile (shell only).")
+	cmd.Flags().StringVarP(&o.Command, "command", "c", "", "Command to run in the profile (shell only); cannot be combined with positional arguments.")
 	cmd.Flags().StringVar(&o.Workspace, "workspace", "", "Workspace directory to mount (default: $PWD).")
 	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Print the spec without launching.")
 	cmd.Flags().BoolVar(&o.Verbose, "verbose", false, "Print the spec before launching.")
@@ -51,12 +51,15 @@ func addLaunchFlags(cmd *cobra.Command, o *launchFlags) {
 
 // runLaunch launches profileName with passthrough args. It returns an
 // exitError carrying the container's exit code so main() can map it to the
-// process exit status.
+// process exit status. Usage problems (--command combined with positional
+// args, an unusable workspace) are rejected here, before any launch work.
 func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
-	workspace := o.Workspace
-	if workspace == "" {
-		wd, _ := os.Getwd()
-		workspace = wd
+	if o.Command != "" && len(passthrough) > 0 {
+		return usageError{msg: "cannot combine --command with profile arguments"}
+	}
+	workspace, err := resolveWorkspace(o.Workspace)
+	if err != nil {
+		return usageError{msg: err.Error()}
 	}
 	result := tpd.Launch(context.Background(), tpd.LaunchOpts{
 		ProfileName: profileName,
@@ -78,6 +81,27 @@ func runLaunch(o *launchFlags, profileName string, passthrough []string) error {
 	return nil
 }
 
+// resolveWorkspace returns the directory to mount as the workspace: the
+// --workspace flag when given (it must exist and be a directory), else the
+// current directory.
+func resolveWorkspace(flag string) (string, error) {
+	if flag != "" {
+		fi, err := os.Stat(flag)
+		if err != nil {
+			return "", fmt.Errorf("workspace %q: %w", flag, err)
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("workspace %q is not a directory", flag)
+		}
+		return flag, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("determining working directory: %w", err)
+	}
+	return wd, nil
+}
+
 func newRunCommand(o *launchFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "run <profile> [args...]",
@@ -86,7 +110,10 @@ func newRunCommand(o *launchFlags) *cobra.Command {
 		ValidArgsFunction: completeProfileNames,
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return c.Help()
+				// Help still prints so the launch form stays discoverable, but
+				// running without a profile is a usage error, not a no-op.
+				_ = c.Help()
+				return usageError{msg: "profile name is required"}
 			}
 			return runLaunch(o, args[0], args[1:])
 		},
@@ -127,6 +154,14 @@ func (e *exitError) Error() string {
 }
 
 func (e *exitError) Unwrap() error { return e.err }
+
+// usageError marks invalid CLI input (no profile name, an unusable
+// --workspace, --command combined with profile arguments). exitCodeFor maps it
+// to 2, the same exit code profile-layer errors use.
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return e.msg }
+func (e usageError) ExitCode() int { return 2 }
 
 func newShowCommand() *cobra.Command {
 	var resolved, provenance bool
@@ -255,8 +290,9 @@ func runEdit(name string) error {
 		return openEditor(targetPath)
 	}
 	// No user file yet: seed the target with a shadow that extends the
-	// built-in and shows the resolved profile as a reference comment, then
-	// remove the seed unless the user actually saved.
+	// built-in, then remove the seed on return unless the editor wrote
+	// changes. An editor that errors or quits without saving must not leave
+	// an untouched shadow behind.
 	fsys, root := catalog.Profiles, "profiles"
 	kind := "profile"
 	if cat.IsFragment(key) {
@@ -277,21 +313,22 @@ func runEdit(name string) error {
 	if err != nil {
 		return err
 	}
-	if err := openEditor(targetPath); err != nil {
-		return err
-	}
-	after, err := os.Stat(targetPath)
-	if err != nil {
-		return err
-	}
-	content, err := os.ReadFile(targetPath)
-	if err != nil {
-		return err
-	}
-	if !savedEdit(before, after, data, content) {
-		os.Remove(targetPath)
-	}
-	return nil
+	// Registered right after the write so every path — including an editor
+	// error — removes an unchanged seed; any change to the bytes preserves it.
+	defer func() {
+		after, err := os.Stat(targetPath)
+		if err != nil {
+			return
+		}
+		content, err := os.ReadFile(targetPath)
+		if err != nil {
+			return
+		}
+		if !savedEdit(before, after, data, content) {
+			os.Remove(targetPath)
+		}
+	}()
+	return openEditor(targetPath)
 }
 
 // builtinEditSeed renders the file seeded when editing a built-in that has no
@@ -405,7 +442,7 @@ func newInitCommand() *cobra.Command {
 				Force:       force,
 				Merge:       merge,
 				DryRun:      dryRun,
-				Interactive: ui.IsTTYReader(os.Stdin),
+				Interactive: ui.IsTTYReader(os.Stdin) && ui.IsTTY(os.Stdout),
 			}
 			if err := scaffold.Run(context.Background(), opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
 				return &exitError{code: 2, err: err}
@@ -482,9 +519,6 @@ func newPruneCommand() *cobra.Command {
 				Force:    force || yes,
 			}
 			result, err := prune.Run(context.Background(), opts)
-			if err != nil {
-				return &exitError{code: 3, err: err}
-			}
 			if len(result.VolumesRemoved) > 0 {
 				fmt.Printf("Removed %d volume(s):\n", len(result.VolumesRemoved))
 				for _, v := range result.VolumesRemoved {
@@ -496,6 +530,9 @@ func newPruneCommand() *cobra.Command {
 				for _, r := range result.ImagesRemoved {
 					fmt.Printf("  %s\n", r)
 				}
+			}
+			if err != nil {
+				return &exitError{code: 3, err: err}
 			}
 			if len(result.NetworksRemoved) > 0 {
 				fmt.Printf("Removed %d network(s):\n", len(result.NetworksRemoved))
@@ -518,6 +555,11 @@ func newPruneCommand() *cobra.Command {
 	return cmd
 }
 
+// newRootCommand wires the dispatch surface. Profiles are positional args of
+// the root command, not registered subcommands, so a profile whose name equals
+// a subcommand (run, show, edit, list, ...) is shadowed by the subcommand in
+// the bare form; the profile stays reachable as `tpd run <name>`. Names are
+// not reserved for these, so existing run/show/edit/list profiles keep loading.
 func newRootCommand() *cobra.Command {
 	o := &launchFlags{}
 	root := &cobra.Command{
@@ -530,8 +572,10 @@ func newRootCommand() *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				// Bare tpd shows the full command list; otherwise the only
-				// way to see it is the help flag.
-				return c.Help()
+				// way to see it is the help flag. Running with no profile is
+				// a usage error, not a no-op.
+				_ = c.Help()
+				return usageError{msg: "profile name is required"}
 			}
 			return runLaunch(o, args[0], args[1:])
 		},

@@ -1,6 +1,7 @@
 package tpd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func TestProxyFilterArgsSkipsNilNames(t *testing.T) {
 func TestStartBusProxyNoConfigDisables(t *testing.T) {
 	// No dbus config -> no proxy, empty address (bus disabled).
 	cfg := profile.Profile{}
-	cleanup, addr, err := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg, os.Stderr)
 	if err != nil {
 		t.Fatalf("no dbus config should not error, got %v", err)
 	}
@@ -77,7 +78,7 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr, err := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg, os.Stderr)
 	if err != nil {
 		t.Fatalf("startBusProxy: %v", err)
 	}
@@ -108,6 +109,39 @@ func TestStartBusProxySpawnsAndFilters(t *testing.T) {
 	}
 }
 
+func TestStartBusProxyRoutesOutputToDiagnosticsWriter(t *testing.T) {
+	// Fake xdg-dbus-proxy writes to its stdout/stderr before creating the
+	// socket, so the readiness poll observes a live proxy.
+	dir := t.TempDir()
+	record := filepath.Join(dir, "args")
+	proxy := filepath.Join(dir, "xdg-dbus-proxy")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\necho proxy-stdout\necho proxy-stderr >&2\n: > \"$2\"\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(proxy, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+
+	cfg := profile.Profile{Dbus: &profile.DbusConfig{
+		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
+	}}
+	var diag bytes.Buffer
+	cleanup, _, err := startBusProxy(cfg, &diag)
+	if err != nil {
+		t.Fatalf("startBusProxy: %v", err)
+	}
+	if cleanup == nil {
+		t.Fatal("expected a running proxy")
+	}
+	// Wait() drains the proxy's stdout/stderr pipes, so after cleanup the
+	// captured writer is complete.
+	cleanup()
+	if !strings.Contains(diag.String(), "proxy-stdout") || !strings.Contains(diag.String(), "proxy-stderr") {
+		t.Errorf("proxy stdout/stderr should route to the diagnostics writer, got %q", diag.String())
+	}
+}
+
 func TestStartBusProxyMissingBinaryFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir) // no xdg-dbus-proxy here
@@ -116,7 +150,7 @@ func TestStartBusProxyMissingBinaryFailsClosed(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr, err := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg, os.Stderr)
 	if err == nil {
 		t.Fatal("expected an error when xdg-dbus-proxy binary is missing")
 	}
@@ -138,7 +172,7 @@ func TestStartBusProxyNoHostBusFailsClosed(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr, err := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg, os.Stderr)
 	if err == nil {
 		t.Fatal("expected an error when no host session bus is available")
 	}
@@ -168,7 +202,7 @@ func TestStartBusProxyFallsBackToRuntimeDirBus(t *testing.T) {
 	cfg := profile.Profile{Dbus: &profile.DbusConfig{
 		Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": &struct{}{}},
 	}}
-	cleanup, addr, err := startBusProxy(cfg)
+	cleanup, addr, err := startBusProxy(cfg, os.Stderr)
 	if err != nil {
 		t.Fatalf("startBusProxy: %v", err)
 	}

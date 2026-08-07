@@ -3,6 +3,7 @@ package profile
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -632,5 +633,213 @@ func TestMergeProfilesNullDeletesProvenance(t *testing.T) {
 	merged := MergeProfiles(parent, child)
 	if _, ok := merged.Provenance.Mounts["~/.ssh"]; ok {
 		t.Errorf("null-deleted key should not be in provenance")
+	}
+}
+
+func TestMergeNetworkNullDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		child RawProfile
+		want  string
+	}{
+		{name: "child overrides", child: RawProfile{Profile: Profile{Network: "host"}}, want: "host"},
+		{name: "absent inherits", child: RawProfile{}, want: "bridge"},
+		{name: "null deletes", child: RawProfile{NullKeys: map[string]map[string]bool{"network": {"*": true}}}, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := MergeProfiles(RawProfile{Profile: Profile{Network: "bridge"}}, tc.child)
+			if merged.Network != tc.want {
+				t.Errorf("Network = %q, want %q", merged.Network, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeImageNullDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		child RawProfile
+		want  string
+	}{
+		{name: "child overrides", child: RawProfile{Profile: Profile{Image: "child:1"}}, want: "child:1"},
+		{name: "absent inherits", child: RawProfile{}, want: "base:1"},
+		{name: "null deletes", child: RawProfile{NullKeys: map[string]map[string]bool{"image": {"*": true}}}, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := MergeProfiles(RawProfile{Profile: Profile{Image: "base:1"}}, tc.child)
+			if merged.Image != tc.want {
+				t.Errorf("Image = %q, want %q", merged.Image, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeCommandNullDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		child RawProfile
+		want  []string
+	}{
+		{name: "child replaces", child: RawProfile{Profile: Profile{Command: []string{"y"}}}, want: []string{"y"}},
+		{name: "absent inherits", child: RawProfile{}, want: []string{"x"}},
+		{name: "null deletes", child: RawProfile{NullKeys: map[string]map[string]bool{"command": {"*": true}}}, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := MergeProfiles(RawProfile{Profile: Profile{Command: []string{"x"}}}, tc.child)
+			if !reflect.DeepEqual(merged.Command, tc.want) {
+				t.Errorf("Command = %v, want %v", merged.Command, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeTTYNullDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		child RawProfile
+		want  string
+	}{
+		{name: "child overrides", child: RawProfile{Profile: Profile{TTY: "false"}}, want: "false"},
+		{name: "absent inherits", child: RawProfile{}, want: "true"},
+		{name: "null deletes", child: RawProfile{NullKeys: map[string]map[string]bool{"tty": {"*": true}}}, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := MergeProfiles(RawProfile{Profile: Profile{TTY: "true"}}, tc.child)
+			if merged.TTY != tc.want {
+				t.Errorf("TTY = %q, want %q", merged.TTY, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeResourcesNullDelete(t *testing.T) {
+	cases := []struct {
+		name  string
+		child RawProfile
+		want  *Resources
+	}{
+		{name: "child overrides", child: RawProfile{Profile: Profile{Resources: &Resources{Memory: "2g"}}}, want: &Resources{Memory: "2g"}},
+		{name: "absent inherits", child: RawProfile{}, want: &Resources{Memory: "1g"}},
+		{name: "null deletes", child: RawProfile{NullKeys: map[string]map[string]bool{"resources": {"*": true}}}, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := MergeProfiles(RawProfile{Profile: Profile{Resources: &Resources{Memory: "1g"}}}, tc.child)
+			if !reflect.DeepEqual(merged.Resources, tc.want) {
+				t.Errorf("Resources = %+v, want %+v", merged.Resources, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeScalarNullDeleteClearsProvenance(t *testing.T) {
+	parent := RawProfile{
+		Profile: Profile{
+			Image: "base:1", Command: []string{"x"}, Network: "bridge", TTY: "true",
+			Resources: &Resources{Memory: "1g"},
+		},
+		Namespace: "core", Name: "base",
+	}
+	parent = initProvenanceWrapper(parent)
+	child := RawProfile{
+		Profile:   Profile{},
+		Namespace: "", Name: "mid",
+		NullKeys: map[string]map[string]bool{
+			"image": {"*": true}, "command": {"*": true}, "network": {"*": true},
+			"tty": {"*": true}, "resources": {"*": true},
+		},
+	}
+	merged := MergeProfiles(parent, child)
+	if merged.Image != "" || merged.Command != nil || merged.Network != "" || merged.TTY != "" || merged.Resources != nil {
+		t.Errorf("null-delete left stale values: %+v", merged.Profile)
+	}
+	if merged.Provenance.Image != (Contributor{}) || merged.Provenance.Command != (Contributor{}) ||
+		merged.Provenance.Network != (Contributor{}) || merged.Provenance.TTY != (Contributor{}) ||
+		merged.Provenance.Resources != (ResourcesProvenance{}) {
+		t.Errorf("null-delete left stale provenance: %+v", merged.Provenance)
+	}
+}
+
+func TestMergeScalarNullDeleteReaddCreditsReDeclarer(t *testing.T) {
+	parent := RawProfile{
+		Profile: Profile{
+			Image: "base:1", Command: []string{"x"}, Network: "bridge", TTY: "true",
+			Resources: &Resources{Memory: "1g"},
+		},
+		Namespace: "core", Name: "base",
+	}
+	parent = initProvenanceWrapper(parent)
+	mid := RawProfile{
+		Profile:   Profile{},
+		Namespace: "", Name: "mid",
+		NullKeys: map[string]map[string]bool{
+			"image": {"*": true}, "command": {"*": true}, "network": {"*": true},
+			"tty": {"*": true}, "resources": {"*": true},
+		},
+	}
+	merged := MergeProfiles(parent, mid)
+	leaf := RawProfile{
+		Profile: Profile{
+			Image: "leaf:1", Command: []string{"y"}, Network: "none", TTY: "false",
+			Resources: &Resources{CPUs: "2"},
+		},
+		Namespace: "", Name: "leaf",
+	}
+	merged = MergeProfiles(merged, leaf)
+	want := Contributor{FullName: "leaf", Namespace: ""}
+	if merged.Image != "leaf:1" || merged.Provenance.Image != want {
+		t.Errorf("image = %q prov %+v, want leaf:1 / %+v", merged.Image, merged.Provenance.Image, want)
+	}
+	if !reflect.DeepEqual(merged.Command, []string{"y"}) || merged.Provenance.Command != want {
+		t.Errorf("command = %v prov %+v, want [y] / %+v", merged.Command, merged.Provenance.Command, want)
+	}
+	if merged.Network != "none" || merged.Provenance.Network != want {
+		t.Errorf("network = %q prov %+v, want none / %+v", merged.Network, merged.Provenance.Network, want)
+	}
+	if merged.TTY != "false" || merged.Provenance.TTY != want {
+		t.Errorf("tty = %q prov %+v, want false / %+v", merged.TTY, merged.Provenance.TTY, want)
+	}
+	if merged.Resources == nil || merged.Resources.CPUs != "2" || merged.Resources.Memory != "" {
+		t.Errorf("resources = %+v, want {CPUs: \"2\"} only (deleted memory stays gone)", merged.Resources)
+	}
+	if merged.Provenance.Resources.CPUs != want {
+		t.Errorf("resources provenance = %+v, want %+v", merged.Provenance.Resources, want)
+	}
+}
+
+func TestResolveScalarNullDeleteAcrossChain(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteProfile(t, dir, "base.yaml", "version: 1\nimage: base:1\ncommand: [\"x\"]\nnetwork: bridge\ntty: \"true\"\nresources:\n  memory: 1g\n")
+	mustWriteProfile(t, dir, "mid.yaml", "version: 1\nextends: base\ncommand: null\nnetwork: null\ntty: null\nresources: null\n")
+	mustWriteProfile(t, dir, "leaf.yaml", "version: 1\nextends: mid\ncommand: [\"y\"]\n")
+	cat, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ResolveProfileWithProv(cat, "leaf")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Image != "base:1" {
+		t.Errorf("Image = %q, want base:1 (inherited, never deleted)", cfg.Image)
+	}
+	if !reflect.DeepEqual(cfg.Command, []string{"y"}) {
+		t.Errorf("Command = %v, want [y] (re-added after mid deleted it)", cfg.Command)
+	}
+	if cfg.Network != "" || cfg.TTY != "" || cfg.Resources != nil {
+		t.Errorf("deleted fields leaked: network=%q tty=%q resources=%+v", cfg.Network, cfg.TTY, cfg.Resources)
+	}
+	if cfg.Prov.Command != (Contributor{FullName: "leaf", Namespace: ""}) {
+		t.Errorf("command provenance = %+v, want leaf (re-declarer gets credit)", cfg.Prov.Command)
+	}
+	if cfg.Prov.Image != (Contributor{FullName: "base", Namespace: ""}) {
+		t.Errorf("image provenance = %+v, want base", cfg.Prov.Image)
+	}
+	if cfg.Prov.Network != (Contributor{}) {
+		t.Errorf("network provenance = %+v, want zero (deleted)", cfg.Prov.Network)
 	}
 }
