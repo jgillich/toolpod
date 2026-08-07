@@ -1,7 +1,8 @@
 version: 1
 meta:
-  description: Java toolchain with Maven cache
+  description: Java toolchain with Maven and Gradle caches
 tools:
   java: latest
 caches:
+  gradle: ~/.gradle
   maven: ~/.m2

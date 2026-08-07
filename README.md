@@ -59,11 +59,11 @@ See [Runtime modes](#runtime-modes) for the differences between rootless and roo
 
 ## Basic usage
 
-tpd-owned flags come **before** the profile name; everything after is passed verbatim to the profile's command. Use `tpd --help` for the complete CLI reference.
+Run a profile with `tpd run <profile>`. For most profiles, you can drop the `run` and just type `tpd <profile>`:
 
 ```sh
-$ tpd opencode     # run the opencode agent, then remove the container
-$ tpd bash         # a disposable bash shell with the right tools on PATH
+$ tpd run opencode      # run the opencode agent
+$ tpd bash              # shorthand: run a bash shell
 ```
 
 The first launch pulls the base image, builds the profile's derived image when system packages are declared, and installs tools (slow). Subsequent launches reuse these resources when possible.

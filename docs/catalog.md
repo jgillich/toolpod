@@ -1046,17 +1046,18 @@ tools:
 
 ### `lang/java`
 
-Java toolchain with Maven cache
+Java toolchain with Maven and Gradle caches
 
 <details><summary>Source</summary>
 
 ```yaml
 version: 1
 meta:
-  description: Java toolchain with Maven cache
+  description: Java toolchain with Maven and Gradle caches
 tools:
   java: latest
 caches:
+  gradle: ~/.gradle
   maven: ~/.m2
 ```
 
@@ -1115,6 +1116,7 @@ Kotlin toolchain (gradle) with gradle cache
 version: 1
 meta:
   description: Kotlin toolchain (gradle) with gradle cache
+extends: lang/java
 tools:
   kotlin: latest
   gradle: latest

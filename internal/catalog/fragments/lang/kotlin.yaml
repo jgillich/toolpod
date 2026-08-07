@@ -1,6 +1,7 @@
 version: 1
 meta:
   description: Kotlin toolchain (gradle) with gradle cache
+extends: lang/java
 tools:
   kotlin: latest
   gradle: latest
