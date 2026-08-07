@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jgillich/tpd/internal/profile"
@@ -612,5 +613,255 @@ func TestFilterNewItemsNotPriorApprovedOnFirstRun(t *testing.T) {
 	}
 	if req.Items[0].PriorApproved {
 		t.Error("a key with no stored decision must not be marked PriorApproved")
+	}
+}
+
+func TestFilterPromptItemMetadata(t *testing.T) {
+	core := profile.Contributor{FullName: "core/gui", Namespace: "core"}
+	res := profile.Resolved{
+		Profile: profile.Profile{
+			Mounts: map[string]profile.Mount{
+				"~/.gitconfig":     {Source: "~/.gitconfig", ReadOnly: true},
+				"~/.gitignore":     {Source: "~/.gitignore", ReadOnly: true},
+				"~/.bashrc":        {Source: "~/.bashrc", ReadOnly: false},
+				"~/.profile":       {Source: "~/.profile", ReadOnly: true},
+				"~/code":           {Source: "~/code", ReadOnly: false},
+				"~/.ssh":           {Source: "~/.ssh", ReadOnly: false},
+				"/run/podman.sock": {Service: "podman", Socket: "podman"},
+			},
+			Devices: map[string]profile.DeviceBind{
+				"/dev/kvm": {Source: "/dev/kvm"},
+			},
+			Env: map[string]string{
+				"AWS_ACCESS_KEY_ID": "AKIA...",
+				"DISPLAY":           ":0",
+			},
+			Ports: map[string]profile.PortBind{
+				"8080": {Host: "8080", HostIP: "127.0.0.1"},
+				"53":   {Host: "0", HostIP: "0.0.0.0", Protocol: "udp"},
+			},
+			Network: "host",
+			Dbus: &profile.DbusConfig{
+				Talk: map[string]*struct{}{"org.freedesktop.portal.Desktop": {}},
+				Own:  map[string]*struct{}{"org.freedesktop.secrets": {}},
+			},
+		},
+		Prov: profile.Provenance{
+			Mounts: map[string]profile.Contributor{
+				"~/.gitconfig":     core,
+				"~/.gitignore":     core,
+				"~/.bashrc":        core,
+				"~/.profile":       core,
+				"~/code":           core,
+				"~/.ssh":           core,
+				"/run/podman.sock": core,
+			},
+			Devices: map[string]profile.Contributor{"/dev/kvm": core},
+			Env: map[string]profile.Contributor{
+				"AWS_ACCESS_KEY_ID": core,
+				"DISPLAY":           core,
+			},
+			Ports:   map[string]profile.Contributor{"8080": core, "53": core},
+			Network: core,
+			Dbus: profile.DbusProvenance{
+				Talk: map[string]profile.Contributor{"org.freedesktop.portal.Desktop": core},
+				Own:  map[string]profile.Contributor{"org.freedesktop.secrets": core},
+			},
+		},
+		FullName: "myagent",
+	}
+	_, req, err := Filter(res, &memStore{})
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	byID := map[string]SensitiveItem{}
+	for _, it := range req.Items {
+		byID[it.Field+"\x00"+it.Key] = it
+	}
+	want := map[string]struct {
+		detail string
+		benign bool
+	}{
+		"mounts\x00~/.gitconfig":                      {"read-only", true},
+		"mounts\x00~/.gitignore":                      {"read-only", true},
+		"mounts\x00~/.bashrc":                         {"read/write", false},
+		"mounts\x00~/.profile":                        {"read-only", false},
+		"mounts\x00~/code":                            {"read/write", false},
+		"mounts\x00~/.ssh":                            {"read/write", false},
+		"mounts\x00/run/podman.sock":                  {"socket", false},
+		"devices\x00/dev/kvm":                         {"rwm", false},
+		"env\x00AWS_ACCESS_KEY_ID":                    {"host value", false},
+		"env\x00DISPLAY":                              {"host value", true},
+		"ports\x008080":                               {"127.0.0.1:8080 → container 8080", true},
+		"ports\x0053":                                 {"0.0.0.0:* → container 53/udp", false},
+		"network\x00":                                 {"host", false},
+		"dbus.talk\x00org.freedesktop.portal.Desktop": {"talk", true},
+		"dbus.own\x00org.freedesktop.secrets":         {"own", false},
+	}
+	for id, wantVal := range want {
+		it, ok := byID[id]
+		if !ok {
+			t.Errorf("no prompt item for %q", id)
+			continue
+		}
+		if it.Detail != wantVal.detail {
+			t.Errorf("item %q Detail = %q, want %q", id, it.Detail, wantVal.detail)
+		}
+		if it.Benign != wantVal.benign {
+			t.Errorf("item %q Benign = %v, want %v", id, it.Benign, wantVal.benign)
+		}
+	}
+}
+
+func TestFilterServiceItemMetadata(t *testing.T) {
+	core := profile.Contributor{FullName: "core/services/podman", Namespace: "core"}
+	mk := func(svc profile.Service) profile.Resolved {
+		return profile.Resolved{
+			Profile:  profile.Profile{Services: map[string]profile.Service{"podman": svc}},
+			Prov:     profile.Provenance{Services: map[string]profile.Contributor{"podman": core}},
+			FullName: "myagent",
+		}
+	}
+
+	// A service is a whole companion container: never benign, always warning,
+	// however plain.
+	for name, svc := range map[string]profile.Service{
+		"privileged": {Image: "img", Command: []string{"run"}, Privileged: true,
+			Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+			Env:     map[string]string{"A": "1"}},
+		"sidecar": {Image: "img", Command: []string{"run"}},
+	} {
+		_, req, err := Filter(mk(svc), &memStore{})
+		if err != nil {
+			t.Fatalf("Filter: %v", err)
+		}
+		if req.Items[0].Benign {
+			t.Errorf("%s service should never be benign", name)
+		}
+		if !req.Items[0].Warning {
+			t.Errorf("%s service should be marked warning", name)
+		}
+	}
+
+	// The one-line summary is still rendered.
+	res := mk(profile.Service{
+		Image: "img", Command: []string{"run"}, Privileged: true,
+		Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+		Env:     map[string]string{"A": "1"},
+	})
+	_, req, err := Filter(res, &memStore{})
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if want := "privileged; 1 socket(s); 1 env var(s)"; req.Items[0].Detail != want {
+		t.Errorf("service Detail = %q, want %q", req.Items[0].Detail, want)
+	}
+	if req.Items[0].Body == "" {
+		t.Error("service item should carry a multi-line Body for the pane")
+	}
+}
+
+func TestBenignMount(t *testing.T) {
+	for _, p := range []string{
+		"~/.gitconfig", "~/.gitignore", "~/.inputrc", "~/.cache/opencode",
+		"~/.cache", "/root/.gitconfig",
+	} {
+		if !isBenignMount(p) {
+			t.Errorf("%q should be in the benign mount list", p)
+		}
+	}
+	for _, p := range []string{
+		"~/code", "~/.ssh", "~/.kube", "~/.aws", "/etc/mise",
+		"/var/run/docker.sock", "~/.config/gh",
+		// shell profiles can export credentials — never benign.
+		"~/.bashrc", "~/.profile", "~/.bash_profile", "~/.zshrc",
+		// path-boundary lookalikes — not the benign file.
+		"~/.cachex", "~/.gitconfig-backup", "~/.gitignore-evil",
+	} {
+		if isBenignMount(p) {
+			t.Errorf("%q should not be in the benign mount list", p)
+		}
+	}
+}
+
+func TestBenignEnvName(t *testing.T) {
+	for _, n := range []string{
+		"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DOCKER_HOST",
+		"HOME", "PATH", "TERM",
+	} {
+		if !isBenignEnvName(n) {
+			t.Errorf("%q should be in the benign env list", n)
+		}
+	}
+	for _, n := range []string{
+		"AWS_ACCESS_KEY_ID", "GITHUB_TOKEN", "API_KEY", "DB_PASSWORD",
+		"GITLAB_PAT", "X_MY_REMOTE_VAR",
+	} {
+		if isBenignEnvName(n) {
+			t.Errorf("%q should not be in the benign env list", n)
+		}
+	}
+}
+
+func TestFilterServiceItemBody(t *testing.T) {
+	core := profile.Contributor{FullName: "core/services/podman", Namespace: "core"}
+	res := profile.Resolved{
+		Profile: profile.Profile{Services: map[string]profile.Service{
+			"podman": {
+				Image: "img", Command: []string{"run"}, Privileged: true,
+				Exposes: map[string]string{"podman": "/run/podman/podman.sock"},
+			},
+		}},
+		Prov:     profile.Provenance{Services: map[string]profile.Contributor{"podman": core}},
+		FullName: "myagent",
+	}
+	_, req, err := Filter(res, &memStore{})
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	it := req.Items[0]
+	// The Body is the multi-line pane form; empty sections (mounts, env) are
+	// omitted rather than rendered as "none".
+	want := "privileged: true\nexposes:\n  podman → /run/podman/podman.sock"
+	if it.Body != want {
+		t.Errorf("service Body = %q, want %q", it.Body, want)
+	}
+	if strings.Contains(it.Body, "none") {
+		t.Error("service Body should omit empty sections, not render \"none\"")
+	}
+}
+
+func TestFilterMountItemBody(t *testing.T) {
+	core := profile.Contributor{FullName: "core/creds/ssh", Namespace: "core"}
+	res := profile.Resolved{
+		Profile: profile.Profile{Mounts: map[string]profile.Mount{
+			"~/.cache/opencode": {Source: "~/.cache/opencode", ReadOnly: false},
+			"/run/podman.sock":  {Service: "podman", Socket: "podman"},
+			"~/.ssh":            {Source: "~/.ssh", ReadOnly: true, Optional: true, Create: true},
+		}},
+		Prov: profile.Provenance{Mounts: map[string]profile.Contributor{
+			"~/.cache/opencode": core,
+			"/run/podman.sock":  core,
+			"~/.ssh":            core,
+		}},
+		FullName: "myagent",
+	}
+	_, req, err := Filter(res, &memStore{})
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	byKey := map[string]string{}
+	for _, it := range req.Items {
+		byKey[it.Key] = it.Body
+	}
+	want := map[string]string{
+		"~/.cache/opencode": "target: ~/.cache/opencode\nsource: ~/.cache/opencode\naccess: read/write",
+		"/run/podman.sock":  "target: /run/podman.sock\nsource: via service podman\naccess: socket",
+		"~/.ssh":            "target: ~/.ssh\nsource: ~/.ssh\naccess: read-only\noptional: true\ncreate: true",
+	}
+	for k, w := range want {
+		if byKey[k] != w {
+			t.Errorf("mount %q Body = %q, want %q", k, byKey[k], w)
+		}
 	}
 }

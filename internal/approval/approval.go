@@ -2,6 +2,7 @@ package approval
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jgillich/tpd/internal/profile"
 )
@@ -16,6 +17,25 @@ type SensitiveItem struct {
 	// key. The UI pre-selects such items and leaves newly introduced ones
 	// unselected, so a profile change cannot silently re-approve old grants.
 	PriorApproved bool
+	// Detail is a concise one-line descriptor for the list view ("read/write",
+	// "host value", "talk", a host→container port binding, ...). Value is the
+	// full pre-expansion label, shown for the highlighted item in the detail
+	// pane.
+	Detail string
+	// Body is an optional multi-line rendering of the item's full value for
+	// the detail pane (services format their definition across lines). When
+	// empty, the pane shows Value wrapped.
+	Body string
+	// Benign marks permissions that are almost always harmless — common
+	// dotfiles, cache dirs, display/runtime env vars, loopback ports,
+	// D-Bus talk. Benign items are de-emphasized (grey, listed at the
+	// bottom); everything else — including anything new from a remote import
+	// — stays prominent, so the emphasis is fail-safe.
+	Benign bool
+	// Warning marks grants that deserve a highlighted color and the very top
+	// of the list. Services are the biggest grant — a whole companion
+	// container — so they carry it.
+	Warning bool
 }
 
 // PromptRequest is what the dialog renders. Empty Items = no prompt.
@@ -174,28 +194,29 @@ func cascadeDependentMounts(mounts map[string]profile.Mount, services map[string
 	return mounts
 }
 
-// decide is the shared keep/drop/prompt decision for one non-user key.
-// Returns keep=true if the key should remain in the filtered profile, and
-// appends a SensitiveItem to req.Items when the user must still decide.
+// decide is the shared keep/drop/prompt decision for one non-user key. The
+// item carries its Field/Key/Value and display metadata; decide only fills in
+// the state-derived PriorApproved flag. Returns keep=true if the key should
+// remain in the filtered profile, and appends the item to req.Items when the
+// user must still decide.
 //
-// NOTE: a missing provenance entry (c is the zero value, Trusted()) is
-// treated as user-trusted and skips the gate. This is deliberate fail-open
-// — a provenance bug must not brick launches — but it means a provenance
+// NOTE: a missing provenance entry (the zero Contributor is Trusted()) is
+// treated as user-trusted and skips the gate. This is deliberate fail-open —
+// a provenance bug must not brick launches — but it means a provenance
 // regression in the merge would silently bypass the approval gate. The
 // provenance unit tests in internal/profile guard against that.
-func decide(field, key, value string, c profile.Contributor, st State, req PromptRequest) (bool, PromptRequest) {
-	if c.Trusted() {
+func decide(it SensitiveItem, st State, req PromptRequest) (bool, PromptRequest) {
+	if it.Source.Trusted() {
 		return true, req
 	}
 	// Hash mismatch or no stored state for this field → prompt.
-	af, hasField := st.Approved[field]
+	af, hasField := st.Approved[it.Field]
 	if st.Hash != req.Hash || !hasField {
-		it := item(field, key, value, c)
-		it.PriorApproved = hasField && containsKey(af.Keys, key)
+		it.PriorApproved = hasField && containsKey(af.Keys, it.Key)
 		req.Items = append(req.Items, it)
 		return true, req
 	}
-	if containsKey(af.Keys, key) {
+	if containsKey(af.Keys, it.Key) {
 		return true, req
 	}
 	return false, req
@@ -205,7 +226,10 @@ func applyMountField(mounts map[string]profile.Mount, prov map[string]profile.Co
 	out := make(map[string]profile.Mount, len(mounts))
 	for k, v := range mounts {
 		c := prov[k]
-		keep, r := decide(field, k, renderMount(k, v), c, st, req)
+		detail, benign := mountDetail(k, v)
+		it := item(field, k, renderMount(k, v), c, detail, benign)
+		it.Body = renderMountBody(k, v)
+		keep, r := decide(it, st, req)
 		req = r
 		if keep {
 			out[k] = v
@@ -218,7 +242,8 @@ func applyDeviceField(devices map[string]profile.DeviceBind, prov map[string]pro
 	out := make(map[string]profile.DeviceBind, len(devices))
 	for k, v := range devices {
 		c := prov[k]
-		keep, r := decide(field, k, renderDevice(k, v), c, st, req)
+		it := item(field, k, renderDevice(k, v), c, deviceDetail(v), false)
+		keep, r := decide(it, st, req)
 		req = r
 		if keep {
 			out[k] = v
@@ -231,7 +256,8 @@ func applyEnvField(env map[string]string, prov map[string]profile.Contributor, f
 	out := make(map[string]string, len(env))
 	for k, v := range env {
 		c := prov[k]
-		keep, r := decide(field, k, renderEnv(k, v), c, st, req)
+		it := item(field, k, renderEnv(k, v), c, "host value", isBenignEnvName(k))
+		keep, r := decide(it, st, req)
 		req = r
 		if keep {
 			out[k] = v
@@ -244,7 +270,9 @@ func applyPortField(ports map[string]profile.PortBind, prov map[string]profile.C
 	out := make(map[string]profile.PortBind, len(ports))
 	for k, v := range ports {
 		c := prov[k]
-		keep, r := decide(field, k, renderPort(k, v), c, st, req)
+		detail, benign := portDetail(k, v)
+		it := item(field, k, renderPort(k, v), c, detail, benign)
+		keep, r := decide(it, st, req)
 		req = r
 		if keep {
 			out[k] = v
@@ -262,7 +290,8 @@ func applyDbusField(d *profile.DbusConfig, prov profile.DbusProvenance, st State
 		out.Talk = make(map[string]*struct{}, len(d.Talk))
 		for k, v := range d.Talk {
 			c := prov.Talk[k]
-			keep, r := decide("dbus.talk", k, k, c, st, req)
+			it := item("dbus.talk", k, k, c, "talk", true)
+			keep, r := decide(it, st, req)
 			req = r
 			if keep {
 				out.Talk[k] = v
@@ -273,7 +302,8 @@ func applyDbusField(d *profile.DbusConfig, prov profile.DbusProvenance, st State
 		out.Own = make(map[string]*struct{}, len(d.Own))
 		for k, v := range d.Own {
 			c := prov.Own[k]
-			keep, r := decide("dbus.own", k, k, c, st, req)
+			it := item("dbus.own", k, k, c, "own", false)
+			keep, r := decide(it, st, req)
 			req = r
 			if keep {
 				out.Own[k] = v
@@ -300,7 +330,7 @@ func applyNetworkField(v string, c profile.Contributor, field string, st State, 
 		}
 		return "", req
 	}
-	it := item(field, "", v, c)
+	it := item(field, "", v, c, v, v != "host")
 	if hasField && af.Network != nil {
 		it.PriorApproved = *af.Network
 	}
@@ -319,7 +349,10 @@ func applyServicesField(services map[string]profile.Service, prov map[string]pro
 	out := make(map[string]profile.Service, len(services))
 	for name, svc := range services {
 		c := prov[name]
-		keep, r := decide("services", name, name+": "+renderServiceDefinition(svc), c, st, req)
+		it := item("services", name, name+": "+renderServiceDefinition(svc), c, serviceDetail(svc), false)
+		it.Body = renderServiceDisplay(svc)
+		it.Warning = true
+		keep, r := decide(it, st, req)
 		req = r
 		if keep {
 			out[name] = svc
@@ -328,8 +361,8 @@ func applyServicesField(services map[string]profile.Service, prov map[string]pro
 	return out, req
 }
 
-func item(field, key, value string, source profile.Contributor) SensitiveItem {
-	return SensitiveItem{Field: field, Key: key, Value: value, Source: source}
+func item(field, key, value string, source profile.Contributor, detail string, benign bool) SensitiveItem {
+	return SensitiveItem{Field: field, Key: key, Value: value, Source: source, Detail: detail, Benign: benign}
 }
 
 // renderMount renders the dialog label for one mount. The permission the user
@@ -380,6 +413,195 @@ func renderPort(k string, p profile.PortBind) string {
 		label += "/" + p.Protocol
 	}
 	return label
+}
+
+// mountDetail is the concise list detail for one mount, plus whether the
+// grant is benign (safe to de-emphasize and default-checked). Only a
+// read-only mount of a common dotfile or cache dir is benign: a writable
+// mount lets the container modify the host file, and anything else —
+// credential stores, system state, service sockets — stays prominent even
+// read-only.
+func mountDetail(k string, m profile.Mount) (string, bool) {
+	if m.Service != "" {
+		// Socket mounts expose the service socket; the service itself is a
+		// separate grant, so keep the mount prominent.
+		return "socket", false
+	}
+	perm := "read-only"
+	benign := true
+	if !m.ReadOnly {
+		perm = "read/write"
+		benign = false
+	}
+	source := m.Source
+	if source == "" {
+		source = k
+	}
+	return perm, benign && isBenignMount(source)
+}
+
+// renderMountBody is the multi-line details form of one mount for the details
+// popup: target and source spelled out separately (they often look the same),
+// plus the access permission and options.
+func renderMountBody(k string, m profile.Mount) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "target: %s\n", k)
+	if m.Service != "" {
+		fmt.Fprintf(&b, "source: via service %s\n", m.Service)
+		fmt.Fprintf(&b, "access: socket\n")
+	} else {
+		source := m.Source
+		if source == "" {
+			source = k
+		}
+		fmt.Fprintf(&b, "source: %s\n", source)
+		access := "read-only"
+		if !m.ReadOnly {
+			access = "read/write"
+		}
+		fmt.Fprintf(&b, "access: %s\n", access)
+		if m.Optional {
+			fmt.Fprintf(&b, "optional: true\n")
+		}
+		if m.Create {
+			fmt.Fprintf(&b, "create: true\n")
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// benignMountPaths are host mount sources that are almost always harmless:
+// version-control dotfiles, readline config, and cache dirs. Shell profiles
+// (.bashrc, .profile, ...) are deliberately excluded — they can export
+// credentials. Anything not listed is non-benign and stays prominent, which
+// stays safe as the catalog grows remote imports.
+var benignMountPaths = []string{
+	"/.gitconfig", "/.gitignore", "/.gitattributes",
+	"/.inputrc",
+	"/.cache",
+}
+
+// isBenignMount reports whether a host mount source is in the safe list: the
+// source equals a benign path or ends in it as a full path component, or is a
+// subdirectory of the benign cache dir. A path-boundary match — never a bare
+// substring — keeps lookalikes like ~/.cachex out of the benign set.
+func isBenignMount(source string) bool {
+	for _, s := range benignMountPaths {
+		if strings.HasSuffix(source, s) {
+			return true
+		}
+	}
+	// Cache subdirectories (~/.cache/claude-code, ...) are as harmless as the
+	// cache root; benignMountPaths holds no other directory-style entries.
+	return strings.Contains(source, "/.cache/")
+}
+
+// benignEnvNames are host env vars that carry no credentials; anything else
+// (AWS_ACCESS_KEY_ID, GITHUB_TOKEN, unknown remote vars, ...) stays
+// prominent.
+var benignEnvNames = []string{
+	"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
+	"XDG_DATA_HOME", "DOCKER_HOST", "HOME", "PATH", "TERM", "LANG",
+	"LC_ALL", "USER", "SHELL", "EDITOR", "PAGER",
+}
+
+// isBenignEnvName reports whether an env var name is in the safe list.
+func isBenignEnvName(name string) bool {
+	for _, s := range benignEnvNames {
+		if name == s {
+			return true
+		}
+	}
+	return false
+}
+
+// deviceDetail is the device permission string (rwm default) — the level of
+// host device access the grant carries.
+func deviceDetail(d profile.DeviceBind) string {
+	if d.Permissions == "" {
+		return "rwm"
+	}
+	return d.Permissions
+}
+
+// portDetail is the concise list detail for one port — host binding →
+// container — plus whether the binding is benign: a loopback binding is
+// benign, a wildcard (all host interfaces) binding is not.
+func portDetail(k string, p profile.PortBind) (string, bool) {
+	host := p.Host
+	auto := host == "" || host == "0"
+	wildcard := p.HostIP == "" || p.HostIP == "0.0.0.0" || p.HostIP == "::"
+	label := "container " + k
+	if p.Protocol != "" && p.Protocol != "tcp" {
+		label += "/" + p.Protocol
+	}
+	ip := p.HostIP
+	if wildcard {
+		ip = "0.0.0.0"
+	}
+	hostPart := host
+	switch {
+	case auto && wildcard:
+		hostPart = "*"
+	case auto:
+		hostPart = "auto"
+	}
+	return fmt.Sprintf("%s:%s → %s", ip, hostPart, label), !wildcard
+}
+
+// serviceDetail summarizes a service's sensitive definition in one line. A
+// service is a whole companion container, so it is never benign — it stays
+// prominent.
+func serviceDetail(svc profile.Service) string {
+	var parts []string
+	if svc.Privileged {
+		parts = append(parts, "privileged")
+	}
+	if n := len(svc.Exposes); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d socket(s)", n))
+	}
+	if n := len(svc.Mounts); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d mount(s)", n))
+	}
+	if n := len(svc.Env); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d env var(s)", n))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "sidecar")
+	}
+	return strings.Join(parts, "; ")
+}
+
+// renderServiceDisplay is the multi-line, human-friendly form of a service's
+// sensitive definition for the detail pane — one section per line instead of
+// the canonical single-line renderServiceDefinition.
+func renderServiceDisplay(svc profile.Service) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "privileged: %v\n", svc.Privileged)
+	if len(svc.Exposes) > 0 {
+		fmt.Fprintf(&b, "exposes:\n")
+		for _, k := range sortedKeys(svc.Exposes) {
+			fmt.Fprintf(&b, "  %s → %s\n", k, svc.Exposes[k])
+		}
+	}
+	if len(svc.Mounts) > 0 {
+		fmt.Fprintf(&b, "mounts:\n")
+		for _, k := range sortedKeys(svc.Mounts) {
+			m := svc.Mounts[k]
+			perm := "rw"
+			if m.ReadOnly {
+				perm = "ro"
+			}
+			fmt.Fprintf(&b, "  %s → %s (%s)\n", k, m.Source, perm)
+		}
+	}
+	if len(svc.Env) > 0 {
+		fmt.Fprintf(&b, "env:\n")
+		for _, k := range sortedKeys(svc.Env) {
+			fmt.Fprintf(&b, "  %s=%s\n", k, svc.Env[k])
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func containsKey(keys []string, k string) bool {
