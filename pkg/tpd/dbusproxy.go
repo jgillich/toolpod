@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/jgillich/tpd/internal/profile"
@@ -89,6 +90,9 @@ func startBusProxy(cfg profile.Profile, diag io.Writer) (func(), string, error) 
 		args = append(args, "--log")
 	}
 	cmd := exec.Command(args[0], args[1:]...)
+	// os/exec copies the proxy's stdout and stderr from separate goroutines,
+	// so serializing writes keeps any caller-supplied writer safe.
+	diag = &lockedWriter{w: diag}
 	cmd.Stdout = diag
 	cmd.Stderr = diag
 	if err := cmd.Start(); err != nil {
@@ -106,7 +110,9 @@ func startBusProxy(cfg profile.Profile, diag io.Writer) (func(), string, error) 
 			if err := cmd.Process.Kill(); err != nil {
 				fmt.Fprintf(diag, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
 			}
-			if _, err := cmd.Process.Wait(); err != nil {
+			// cmd.Wait (not Process.Wait) joins the stdout/stderr copy
+			// goroutines, so no writes reach diag after this returns.
+			if err := cmd.Wait(); err != nil {
 				fmt.Fprintf(diag, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
 			}
 			if err := os.Remove(sockPath); err != nil {
@@ -120,7 +126,9 @@ func startBusProxy(cfg profile.Profile, diag io.Writer) (func(), string, error) 
 		if err := cmd.Process.Kill(); err != nil {
 			fmt.Fprintf(diag, "tpd: warning: kill xdg-dbus-proxy: %v\n", err)
 		}
-		if _, err := cmd.Process.Wait(); err != nil {
+		// cmd.Wait (not Process.Wait) joins the stdout/stderr copy goroutines,
+		// so a caller reading diag afterwards is race-free.
+		if err := cmd.Wait(); err != nil {
 			fmt.Fprintf(diag, "tpd: warning: wait xdg-dbus-proxy: %v\n", err)
 		}
 		if err := os.Remove(sockPath); err != nil {
@@ -128,4 +136,17 @@ func startBusProxy(cfg profile.Profile, diag io.Writer) (func(), string, error) 
 		}
 	}
 	return cleanup, "unix:path=" + sockPath, nil
+}
+
+// lockedWriter serializes writes to an underlying writer, for use when a
+// single writer is shared across goroutines (os/exec pipes).
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

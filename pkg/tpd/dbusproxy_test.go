@@ -61,16 +61,19 @@ func TestStartBusProxyNoConfigDisables(t *testing.T) {
 }
 
 func TestStartBusProxySpawnsAndFilters(t *testing.T) {
-	// Fake xdg-dbus-proxy records its args to a file, then sleeps. It creates
+	// Fake xdg-dbus-proxy records its args to a file, then idles. It creates
 	// the socket file at its second positional arg (the socket path) so
 	// startBusProxy's readiness poll can observe it.
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
 	proxy := filepath.Join(dir, "xdg-dbus-proxy")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n: > \"$2\"\nwhile :; do sleep 1; done\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n: > \"$2\"\nwhile :; do :; done\n"
 	if err := os.WriteFile(proxy, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Keep the proxy alive with a shell builtin only: the test isolates PATH,
+	// so an external command (sleep) would not resolve, and a forked child
+	// would hold the stdout/stderr pipes open after the proxy is killed.
 	t.Setenv("PATH", dir)
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
@@ -115,7 +118,7 @@ func TestStartBusProxyRoutesOutputToDiagnosticsWriter(t *testing.T) {
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
 	proxy := filepath.Join(dir, "xdg-dbus-proxy")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\necho proxy-stdout\necho proxy-stderr >&2\n: > \"$2\"\nwhile :; do sleep 1; done\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\necho proxy-stdout\necho proxy-stderr >&2\n: > \"$2\"\nwhile :; do :; done\n"
 	if err := os.WriteFile(proxy, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -187,12 +190,12 @@ func TestStartBusProxyNoHostBusFailsClosed(t *testing.T) {
 func TestStartBusProxyFallsBackToRuntimeDirBus(t *testing.T) {
 	// With DBUS_SESSION_BUS_ADDRESS unset, the host bus address falls back to
 	// unix:path=$XDG_RUNTIME_DIR/bus.
-	// Fake xdg-dbus-proxy records its args, then sleeps. It creates the socket
+	// Fake xdg-dbus-proxy records its args, then idles. It creates the socket
 	// file at its second positional arg so the readiness poll can observe it.
 	dir := t.TempDir()
 	record := filepath.Join(dir, "args")
 	proxy := filepath.Join(dir, "xdg-dbus-proxy")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n: > \"$2\"\nwhile :; do sleep 1; done\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\n: > \"$2\"\nwhile :; do :; done\n"
 	if err := os.WriteFile(proxy, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
