@@ -1652,7 +1652,7 @@ func TestIntegrationCacheMountsReuse(t *testing.T) {
 	})
 
 	for i, b := range builds {
-		if err := buildDerivedImage(ctx, cli, refs[i], baseID, nil, b.pkgs, NoopProgressWriter{}); err != nil {
+		if err := buildDerivedImage(ctx, cli, refs[i], baseTag, baseID, nil, b.pkgs, NoopProgressWriter{}); err != nil {
 			t.Fatalf("build %s: %v", b.name, err)
 		}
 	}

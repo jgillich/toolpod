@@ -69,7 +69,7 @@ func (d *DockerRuntime) Prepare(ctx context.Context, spec Spec, w ProgressWriter
 			return "", err
 		}
 		derivedRef := DerivedTag(baseID, spec.Packages, spec.Repos)
-		if err := ensureDerivedImage(ctx, d.cli, derivedRef, baseID, spec.Repos, spec.Packages, w); err != nil {
+		if err := ensureDerivedImage(ctx, d.cli, derivedRef, baseRef, baseID, spec.Repos, spec.Packages, w); err != nil {
 			return "", fmt.Errorf("derived image: %w", err)
 		}
 		imageRef = derivedRef

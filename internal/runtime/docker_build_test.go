@@ -275,7 +275,7 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "sha256:abc123", nil, []string{"git"}, &recordingWriter{}); err != nil {
+	if err := buildDerivedImage(context.Background(), cli, "tpd/packages:abc123", "debian:13-slim", "sha256:abc123", nil, []string{"git"}, &recordingWriter{}); err != nil {
 		t.Fatalf("buildDerivedImage: %v", err)
 	}
 	want := OwnershipLabels()
@@ -289,6 +289,9 @@ func TestBuildDerivedImageLabelsImage(t *testing.T) {
 	}
 	if gotVersion != "2" {
 		t.Errorf("build request version = %q, want %q (daemon must use buildkit)", gotVersion, "2")
+	}
+	if !strings.Contains(gotDockerfile, "FROM debian:13-slim\n") {
+		t.Errorf("build Dockerfile must use the configured base reference:\n%s", gotDockerfile)
 	}
 	for _, want := range []string{
 		"--mount=type=cache,id=tpd-abc123-apt,target=/var/cache/apt,sharing=locked",
@@ -596,7 +599,7 @@ func TestEnsureDerivedImageSerializesConcurrentBuilds(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = ensureDerivedImage(context.Background(), cli, tag, "sha256:baseid", nil, []string{"git"}, NoopProgressWriter{})
+			errs[i] = ensureDerivedImage(context.Background(), cli, tag, "debian:13-slim", "sha256:baseid", nil, []string{"git"}, NoopProgressWriter{})
 		}(i)
 	}
 	wg.Wait()

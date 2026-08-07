@@ -247,7 +247,7 @@ func (d *DockerRuntime) createService(ctx context.Context, spec Spec, svc Servic
 			return err
 		}
 		derivedRef := DerivedTag(baseID, svc.Packages, svc.Repos)
-		if err := ensureDerivedImage(ctx, d.cli, derivedRef, baseID, svc.Repos, svc.Packages, w); err != nil {
+		if err := ensureDerivedImage(ctx, d.cli, derivedRef, svc.Image, baseID, svc.Repos, svc.Packages, w); err != nil {
 			return fmt.Errorf("service derived image: %w", err)
 		}
 		imageRef = derivedRef

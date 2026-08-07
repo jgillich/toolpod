@@ -129,9 +129,8 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 }
 
 // buildDerivedImage builds and tags a derived image (base + repos + packages)
-// as derivedRef. The Dockerfile is synthesised in-memory: FROM <base> (the
-// resolved base image ID — pinned, so a mutable tag changing between pull and
-// build cannot select a different base), a COPY per resolved repo (the deb822
+// as derivedRef. The Dockerfile is synthesised in-memory: FROM <baseRef>, a
+// COPY per resolved repo (the deb822
 // .sources and signing key resolved from the extrepo catalog at build time),
 // then mounted RUNs that apt-get install the sorted, shell-quoted packages
 // (and, when repos are present, bootstrap ca-certificates) into
@@ -145,13 +144,13 @@ func ResolveImageID(ctx context.Context, cli *client.Client, ref string) (string
 // The request pins version=2 so the Docker daemon dispatches to its embedded
 // buildkit, the only builder that parses the cache-mount RUNs; podman's compat
 // endpoint ignores the param and buildah parses cache mounts natively.
-func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
 	resolved, err := resolveExtrepoRepos(ctx, cli, baseID, repos)
 	if err != nil {
 		return fmt.Errorf("resolve repos: %w", err)
 	}
 	aptID, listsID := cacheMountIDs(baseID, repos)
-	dockerfile := []byte(synthesizeDockerfile(baseID, resolved, packages, aptID, listsID))
+	dockerfile := []byte(synthesizeDockerfile(baseRef, resolved, packages, aptID, listsID))
 	buildContext, err := tarBuildContext(dockerfile, repoFiles(resolved))
 	if err != nil {
 		return fmt.Errorf("build context: %w", err)
@@ -182,7 +181,7 @@ func buildDerivedImage(ctx context.Context, cli *client.Client, derivedRef, base
 // build lock: a cache hit takes no lock and does no network work, while on a
 // miss the lock serializes concurrent launches of the same derived tag so
 // exactly one build publishes it and the others re-check and skip.
-func ensureDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
+func ensureDerivedImage(ctx context.Context, cli *client.Client, derivedRef, baseRef, baseID string, repos map[string]Repo, packages []string, w ProgressWriter) error {
 	exists, err := imageExists(ctx, cli, derivedRef)
 	if err != nil {
 		return err
@@ -202,7 +201,7 @@ func ensureDerivedImage(ctx context.Context, cli *client.Client, derivedRef, bas
 	if exists {
 		return nil
 	}
-	return buildDerivedImage(ctx, cli, derivedRef, baseID, repos, packages, w)
+	return buildDerivedImage(ctx, cli, derivedRef, baseRef, baseID, repos, packages, w)
 }
 
 // buildLockDir is where per-tag build lockfiles live. A package variable so
