@@ -1292,10 +1292,21 @@ func TestLaunchConcurrentApprovalRunsSerialized(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	// The approval lock is non-blocking: one launch wins and commits its
+	// approval; a loser fails fast with the contention error instead of
+	// silently hanging behind the other's prompt.
+	ok := 0
 	for i, r := range results {
-		if r.Err != nil || r.ExitCode != 0 {
+		if r.Err == nil && r.ExitCode == 0 {
+			ok++
+			continue
+		}
+		if r.Err == nil || r.ExitCode != 2 || !strings.Contains(r.Err.Error(), "another tpd process is awaiting approval") {
 			t.Errorf("concurrent launch %d failed: %+v", i, r)
 		}
+	}
+	if ok == 0 {
+		t.Fatal("at least one concurrent launch should win the approval lock")
 	}
 	// The shared state file must end up complete and loadable (no torn
 	// writes or lost approvals).

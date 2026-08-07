@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,8 +52,14 @@ func WithLock(store Store, fullName string, fn func() error) error {
 	}
 	defer f.Close()
 	// flock locks attach to the open file description, so two separate
-	// opens of the same lock file contend even within one process.
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	// opens of the same lock file contend even within one process. The
+	// acquisition is non-blocking: a competing process can hold the lock
+	// while its interactive approval prompt is open, and silently waiting on
+	// it here would hang the second launch with no explanation.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("another tpd process is awaiting approval for %q, try again once it finishes", fullName)
+		}
 		return fmt.Errorf("locking approval state for %q: %w", fullName, err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

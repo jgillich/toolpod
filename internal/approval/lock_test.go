@@ -48,14 +48,62 @@ func TestStateLockExcludesConcurrentHolder(t *testing.T) {
 	}
 }
 
+// TestWithLockReportsContention asserts that WithLock fails fast instead of
+// blocking when another process holds the approval lock — the interactive
+// prompt can hold it for a long time, so a second launch must not hang.
+func TestWithLockReportsContention(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFSStore(dir)
+	path, err := s.pathFor("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	ran := false
+	err = WithLock(s, "p", func() error {
+		ran = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("WithLock should fail when another process holds the lock, not block")
+	}
+	if ran {
+		t.Error("WithLock must not run fn while the lock is held elsewhere")
+	}
+	if !strings.Contains(err.Error(), "p") {
+		t.Errorf("error should name the profile, got %v", err)
+	}
+}
+
 // TestWithLockSerializesTransactions models the launch transaction (Load →
-// merge → Save) running concurrently for one profile with different
-// decisions; without the advisory lock one decision would be lost.
+// merge → Save) running concurrently for one profile. The lock is now
+// non-blocking, so a concurrent transaction either wins the lock and commits
+// its decision, or fails fast with the contention error — it never runs
+// unlocked. Either way no decision is lost: a failed transaction writes
+// nothing, so the final state holds exactly the decisions of the transactions
+// that succeeded.
 func TestWithLockSerializesTransactions(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFSStore(dir)
 	const fullName = "p"
 	var wg sync.WaitGroup
+	type result struct {
+		key string
+		err error
+	}
+	results := make(chan result, 2)
 	for _, key := range []string{"~/.ssh", "~/aws"} {
 		wg.Add(1)
 		go func(key string) {
@@ -75,19 +123,36 @@ func TestWithLockSerializesTransactions(t *testing.T) {
 				st.Hash = "h"
 				return s.Save(fullName, st)
 			})
-			if err != nil {
-				t.Errorf("transaction for %q: %v", key, err)
-			}
+			results <- result{key: key, err: err}
 		}(key)
 	}
 	wg.Wait()
+	close(results)
+	committed := map[string]bool{}
+	ok := 0
+	for r := range results {
+		if r.err == nil {
+			ok++
+			committed[r.key] = true
+			continue
+		}
+		if !strings.Contains(r.err.Error(), "another tpd process is awaiting approval") {
+			t.Errorf("transaction for %q failed with an unexpected error: %v", r.key, r.err)
+		}
+	}
+	if ok == 0 {
+		t.Fatal("at least one transaction should acquire the lock")
+	}
 	st, err := s.Load(fullName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"~/.ssh", "~/aws"} {
-		if !containsKey(st.Approved["mounts"].Keys, want) {
-			t.Errorf("approval for %q lost by a concurrent transaction", want)
+	for _, key := range []string{"~/.ssh", "~/aws"} {
+		if committed[key] && !containsKey(st.Approved["mounts"].Keys, key) {
+			t.Errorf("approval for %q lost by a concurrent transaction", key)
+		}
+		if !committed[key] && containsKey(st.Approved["mounts"].Keys, key) {
+			t.Errorf("approval for %q committed by a failed transaction", key)
 		}
 	}
 }
