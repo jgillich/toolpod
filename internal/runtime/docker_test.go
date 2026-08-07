@@ -1016,13 +1016,27 @@ func TestIntegrationRunPublishesPort(t *testing.T) {
 	// (e.g. rootless Podman), that proxy binds on the outer host's loopback,
 	// which is unreachable from here — but the container's own IP on the
 	// shared bridge is. Fall back to dialing the container directly.
+	//
+	// When the engine is a tpd service (nested podman), the proxy binds on
+	// the service container instead; reach it through the TPD_SERVICE_*_HOST
+	// aliases tpd injects into this container.
+	addrs := []string{"127.0.0.1:" + hostPort}
+	for _, kv := range os.Environ() {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(key, "TPD_SERVICE_") && strings.HasSuffix(key, "_HOST") {
+			addrs = append(addrs, net.JoinHostPort(val, hostPort))
+		}
+	}
 	var conn net.Conn
 	deadline := time.Now().Add(20 * time.Second)
 	for conn == nil {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out dialing published port")
 		}
-		for _, addr := range []string{"127.0.0.1:" + hostPort} {
+		for _, addr := range addrs {
 			conn, err = net.DialTimeout("tcp", addr, time.Second)
 			if err == nil {
 				break
