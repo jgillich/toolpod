@@ -1056,6 +1056,7 @@ meta:
   description: Java toolchain with Maven and Gradle caches
 tools:
   java: latest
+  gradle: latest
 caches:
   gradle: ~/.gradle
   maven: ~/.m2
