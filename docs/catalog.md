@@ -42,12 +42,6 @@ extends:
   - mise
   - core/lang/bash
 command: ["bash", "-l"]
-files:
-  /etc/profile.d/mise.sh:
-    content: |
-      if command -v mise >/dev/null 2>&1; then
-        eval "$(mise hook-env)"
-      fi
 ```
 
 </details>
@@ -332,6 +326,12 @@ tools:
   ripgrep: latest
   task: latest
   yq: latest
+files:
+  /etc/profile.d/mise.sh:
+    content: |
+      if command -v mise >/dev/null 2>&1; then
+        eval "$(mise hook-env)"
+      fi
 ```
 
 </details>
