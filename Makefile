@@ -7,4 +7,4 @@ docs:
 	go run ./cmd/gen-catalog
 
 patch:
-	git tag $$(mise exec -- svu patch) && git push origin --tags
+	version=$$(mise exec -- svu patch) && git tag "$$version" && git push origin --tags
