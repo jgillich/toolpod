@@ -1044,6 +1044,49 @@ packages:
 
 </details>
 
+### `toolchain/c`
+
+C toolchain (gcc, clang, make, cmake, ninja) with ccache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: C toolchain (gcc, clang, make, cmake, ninja) with ccache
+packages:
+  - clang
+  - cmake
+  - gcc
+  - gdb
+  - make
+  - ninja-build
+  - pkgconf
+tools:
+  ccache: latest
+caches:
+  ccache: ~/.cache/ccache
+```
+
+</details>
+
+### `toolchain/cpp`
+
+C++ toolchain (g++, clang++) on top of C
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: C++ toolchain (g++, clang++) on top of C
+extends: toolchain/c
+packages:
+  - g++
+```
+
+</details>
+
 ### `toolchain/dotnet`
 
 .NET toolchain with NuGet cache

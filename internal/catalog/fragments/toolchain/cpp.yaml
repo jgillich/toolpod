@@ -1,0 +1,6 @@
+version: 1
+meta:
+  description: C++ toolchain (g++, clang++) on top of C
+extends: toolchain/c
+packages:
+  - g++

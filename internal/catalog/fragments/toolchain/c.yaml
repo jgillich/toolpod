@@ -1,0 +1,15 @@
+version: 1
+meta:
+  description: C toolchain (gcc, clang, make, cmake, ninja) with ccache
+packages:
+  - clang
+  - cmake
+  - gcc
+  - gdb
+  - make
+  - ninja-build
+  - pkgconf
+tools:
+  ccache: latest
+caches:
+  ccache: ~/.cache/ccache
