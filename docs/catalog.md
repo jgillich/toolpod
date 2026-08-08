@@ -760,31 +760,6 @@ environment:
 
 ### infra
 
-### `infra/docker`
-
-Host docker socket
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Host docker socket
-tools:
-  docker-cli: latest
-  docker-compose: latest
-  hadolint: latest
-mounts:
-  /var/run/docker.sock:
-    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") "/var/run/docker.sock" }}'
-    read_only: false
-    optional: true
-environment:
-  DOCKER_HOST: unix:///var/run/docker.sock
-```
-
-</details>
-
 ### `infra/helm`
 
 Helm with chart cache
@@ -834,32 +809,6 @@ mounts:
     create: true
     read_only: false
     optional: true
-```
-
-</details>
-
-### `infra/podman`
-
-Host container engine socket (podman/docker)
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Host container engine socket (podman/docker)
-tools:
-  docker-cli: latest
-  podman: latest
-  docker-compose: latest
-  hadolint: latest
-mounts:
-  /var/run/docker.sock:
-    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}'
-    read_only: false
-    optional: true
-environment:
-  DOCKER_HOST: unix:///var/run/docker.sock
 ```
 
 </details>
@@ -985,6 +934,96 @@ mounts:
   /var/run/docker.sock:
     service: podman
     socket: podman
+environment:
+  DOCKER_HOST: unix:///var/run/docker.sock
+```
+
+</details>
+
+### sysutils
+
+### `sysutils/docker`
+
+Host docker socket
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Host docker socket
+tools:
+  docker-cli: latest
+  docker-compose: latest
+  hadolint: latest
+mounts:
+  /var/run/docker.sock:
+    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") "/var/run/docker.sock" }}'
+    read_only: false
+    optional: true
+environment:
+  DOCKER_HOST: unix:///var/run/docker.sock
+```
+
+</details>
+
+### `sysutils/nix`
+
+Nix package manager with persistent store cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Nix package manager with persistent store cache
+packages:
+  - nix-bin
+caches:
+  nix:
+    - /nix
+    - ~/.local/state/nix
+mounts:
+  ~/.config/nix:
+    source: ~/.config/nix
+    create: true
+    read_only: false
+    optional: true
+files:
+  /etc/profile.d/nix.sh:
+    content: |
+      export PATH="$HOME/.nix-profile/bin:$HOME/.local/state/nix/profiles/profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+  /etc/nix/nix.conf:
+    content: |
+      extra-experimental-features = nix-command flakes
+environment:
+  # Prevents nix's chroot-store fallback (which requires NIX_STATE_DIR unset)
+  # when the empty /nix cache volume has no state dir on first run.
+  NIX_STATE_DIR: /nix/var/nix
+```
+
+</details>
+
+### `sysutils/podman`
+
+Host container engine socket (podman/docker)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Host container engine socket (podman/docker)
+tools:
+  docker-cli: latest
+  podman: latest
+  docker-compose: latest
+  hadolint: latest
+mounts:
+  /var/run/docker.sock:
+    source: '{{ or (trimPrefix (index .Env "DOCKER_HOST") "unix://") (printf "/run/user/%s/podman/podman.sock" (uid)) }}'
+    read_only: false
+    optional: true
 environment:
   DOCKER_HOST: unix:///var/run/docker.sock
 ```
@@ -1244,43 +1283,6 @@ tools:
   gradle: latest
 caches:
   gradle: ~/.gradle
-```
-
-</details>
-
-### `toolchain/nix`
-
-Nix package manager with persistent store cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Nix package manager with persistent store cache
-packages:
-  - nix-bin
-caches:
-  nix:
-    - /nix
-    - ~/.local/state/nix
-mounts:
-  ~/.config/nix:
-    source: ~/.config/nix
-    create: true
-    read_only: false
-    optional: true
-files:
-  /etc/profile.d/nix.sh:
-    content: |
-      export PATH="$HOME/.nix-profile/bin:$HOME/.local/state/nix/profiles/profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
-  /etc/nix/nix.conf:
-    content: |
-      extra-experimental-features = nix-command flakes
-environment:
-  # Prevents nix's chroot-store fallback (which requires NIX_STATE_DIR unset)
-  # when the empty /nix cache volume has no state dir on first run.
-  NIX_STATE_DIR: /nix/var/nix
 ```
 
 </details>
