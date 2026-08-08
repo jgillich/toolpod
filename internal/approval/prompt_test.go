@@ -12,7 +12,7 @@ import (
 )
 
 func TestDefaultPromptNonTTYReturnsError(t *testing.T) {
-	req := PromptRequest{ProfileName: "test", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "test", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib()},
 	}}
 	_, err := DefaultPrompt(req, &bytes.Buffer{}, &bytes.Buffer{})
@@ -29,7 +29,7 @@ func testContrib() (c profile.Contributor) {
 }
 
 func TestFieldSectionsGroupByFieldType(t *testing.T) {
-	req := PromptRequest{ProfileName: "test", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "test", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib()},
 		{Field: "env", Key: "A", Value: "A=1", Source: testContrib()},
 		{Field: "mounts", Key: "~/x", Value: "~/x", Source: testContrib()},
@@ -103,7 +103,7 @@ func pump(t *testing.T, m approvalModel, msg tea.Msg) approvalModel {
 // mount, a secret-named env var, plus benign items (display env, loopback
 // port, dbus talk).
 func approvalTestReq() PromptRequest {
-	return PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	return PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh (rw)", Source: testContrib(), PriorApproved: true, Detail: "read/write"},
 		{Field: "mounts", Key: "~/.config/glab-cli", Value: "~/.config/glab-cli (rw)", Source: testContrib(), Detail: "read/write"},
 		{Field: "env", Key: "AWS_ACCESS_KEY_ID", Value: "AWS_ACCESS_KEY_ID=AKIA...", Source: testContrib(), Detail: "host value"},
@@ -143,7 +143,7 @@ func TestApprovalModelBenignRowsSortToBottom(t *testing.T) {
 }
 
 func TestApprovalModelServicesSortFirst(t *testing.T) {
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "env", Key: "AWS_ACCESS_KEY_ID", Value: "v", Source: testContrib(), Detail: "host value"},
 		{Field: "services", Key: "podman", Value: "podman: privileged", Source: testContrib(), Detail: "privileged", Warning: true},
 		{Field: "env", Key: "DISPLAY", Value: "DISPLAY=:0", Source: testContrib(), Detail: "host value", Benign: true},
@@ -262,7 +262,7 @@ func TestApprovalModelEscAndCtrlCCancel(t *testing.T) {
 }
 
 func TestApprovalModelViewRendersRows(t *testing.T) {
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh (rw)", Source: testContrib(), PriorApproved: true, Detail: "read/write"},
 		{Field: "services", Key: "podman", Value: "podman: privileged=true; exposes={podman=/run/podman/podman.sock}; env={A=1}", Source: testContrib(), Detail: "privileged; 1 socket(s); 1 env var(s)"},
 	}}
@@ -294,7 +294,7 @@ func TestApprovalModelViewRendersRows(t *testing.T) {
 }
 
 func TestApprovalModelDetailsOpensAndCloses(t *testing.T) {
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh (rw)", Source: testContrib(), Detail: "read/write"},
 		{Field: "services", Key: "podman", Value: "podman: privileged=true", Source: testContrib(), Detail: "privileged", Body: "privileged: true\nexposes:\n  podman → /run/podman/podman.sock"},
 	}}
@@ -328,7 +328,7 @@ func TestApprovalModelDetailsOpensAndCloses(t *testing.T) {
 }
 
 func TestApprovalModelDetailsShowsValueForPlainItems(t *testing.T) {
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "env", Key: "AWS_ACCESS_KEY_ID", Value: "AWS_ACCESS_KEY_ID=AKIA...", Source: testContrib(), Detail: "host value"},
 	}}
 	m := newApprovalModel(req)
@@ -341,7 +341,7 @@ func TestApprovalModelDetailsShowsValueForPlainItems(t *testing.T) {
 }
 
 func TestApprovalModelDetailsCtrlCCancels(t *testing.T) {
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh", Source: testContrib(), Detail: "read-only"},
 	}}
 	m := newApprovalModel(req)
@@ -354,7 +354,7 @@ func TestApprovalModelDetailsCtrlCCancels(t *testing.T) {
 }
 
 func TestApprovalModelLongKeyShortDetailNotTruncated(t *testing.T) {
-	req := PromptRequest{ProfileName: "x", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "x", Items: []GatedItem{
 		{Field: "dbus.own", Key: "org.freedesktop.secrets", Value: "org.freedesktop.secrets", Source: testContrib(), Detail: "own"},
 	}}
 	m := newApprovalModel(req)
@@ -369,9 +369,9 @@ func TestApprovalModelLongKeyShortDetailNotTruncated(t *testing.T) {
 }
 
 func TestApprovalModelScrollBar(t *testing.T) {
-	var items []SensitiveItem
+	var items []GatedItem
 	for i := 0; i < 30; i++ {
-		items = append(items, SensitiveItem{Field: "env", Key: fmt.Sprintf("K%02d", i), Value: "v", Source: testContrib(), Detail: "host value"})
+		items = append(items, GatedItem{Field: "env", Key: fmt.Sprintf("K%02d", i), Value: "v", Source: testContrib(), Detail: "host value"})
 	}
 	thumbRow := func(v string) int {
 		for i, line := range strings.Split(v, "\n") {

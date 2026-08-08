@@ -41,7 +41,7 @@ func TestHashChangesOnContributorSwap(t *testing.T) {
 func TestHashExcludesUserContributions(t *testing.T) {
 	res := makeResolvedWithMounts(map[string]profile.Mount{"~/x": {Source: "~/x"}}, profile.Contributor{FullName: "myagent", Namespace: ""})
 	h := ComputeApprovalHash(res)
-	// No non-user sensitive fields → empty hash input → deterministic.
+	// No non-user gated fields → empty hash input → deterministic.
 	want := ComputeApprovalHash(profile.Resolved{})
 	if h != want {
 		t.Errorf("user-only contributions should not affect hash; got %q, want %q", h, want)

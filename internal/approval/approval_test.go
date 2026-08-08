@@ -7,7 +7,7 @@ import (
 	"github.com/jgillich/tpd/internal/profile"
 )
 
-func TestFilterNoSensitiveFieldsNoPrompt(t *testing.T) {
+func TestFilterNoGatedFieldsNoPrompt(t *testing.T) {
 	res := profile.Resolved{Profile: profile.Profile{Image: "img", Command: []string{"run"}}}
 	store := &memStore{}
 	got, req, err := Filter(res, store)
@@ -15,14 +15,14 @@ func TestFilterNoSensitiveFieldsNoPrompt(t *testing.T) {
 		t.Fatalf("Filter: %v", err)
 	}
 	if len(req.Items) != 0 {
-		t.Errorf("no sensitive fields → no prompt items, got %d", len(req.Items))
+		t.Errorf("no gated fields → no prompt items, got %d", len(req.Items))
 	}
 	if got.Image != "img" {
 		t.Errorf("filtered profile should be unchanged, got %+v", got)
 	}
 }
 
-func TestFilterAllUserSensitiveNoPrompt(t *testing.T) {
+func TestFilterAllUserGatedNoPrompt(t *testing.T) {
 	res := profile.Resolved{
 		Profile: profile.Profile{Mounts: map[string]profile.Mount{"~/x": {Source: "~/x"}}},
 		Prov: profile.Provenance{Mounts: map[string]profile.Contributor{
@@ -36,11 +36,11 @@ func TestFilterAllUserSensitiveNoPrompt(t *testing.T) {
 		t.Fatalf("Filter: %v", err)
 	}
 	if len(req.Items) != 0 {
-		t.Errorf("all-user sensitive fields → no prompt items, got %d", len(req.Items))
+		t.Errorf("all-user gated fields → no prompt items, got %d", len(req.Items))
 	}
 }
 
-func TestFilterCoreSensitiveProducesPrompt(t *testing.T) {
+func TestFilterCoreGatedProducesPrompt(t *testing.T) {
 	res := profile.Resolved{
 		Profile: profile.Profile{Mounts: map[string]profile.Mount{"~/.ssh": {Source: "~/.ssh"}}},
 		Prov: profile.Provenance{Mounts: map[string]profile.Contributor{
@@ -674,7 +674,7 @@ func TestFilterPromptItemMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Filter: %v", err)
 	}
-	byID := map[string]SensitiveItem{}
+	byID := map[string]GatedItem{}
 	for _, it := range req.Items {
 		byID[it.Field+"\x00"+it.Key] = it
 	}

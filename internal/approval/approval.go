@@ -7,8 +7,8 @@ import (
 	"github.com/jgillich/tpd/internal/profile"
 )
 
-// SensitiveItem is one gated key the user must decide on.
-type SensitiveItem struct {
+// GatedItem is one gated key the user must decide on.
+type GatedItem struct {
 	Field  string
 	Key    string
 	Value  string
@@ -43,11 +43,11 @@ type PromptRequest struct {
 	ProfileName string
 	FullName    string
 	Hash        string
-	Items       []SensitiveItem
+	Items       []GatedItem
 }
 
 // Filter returns the profile with denied/dropped fields removed and a
-// PromptRequest describing any still-unapproved sensitive fields.
+// PromptRequest describing any still-unapproved gated fields.
 func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, error) {
 	hash := ComputeApprovalHash(res)
 	st, err := store.Load(res.FullName)
@@ -71,7 +71,7 @@ func Filter(res profile.Resolved, store Store) (profile.Profile, PromptRequest, 
 		Items:       nil,
 	}
 
-	// Walk sensitive fields; drop denied, collect unapproved into Items.
+	// Walk gated fields; drop denied, collect unapproved into Items.
 	filtered.Mounts, req = applyMountField(filtered.Mounts, res.Prov.Mounts, "mounts", reconciled, req)
 	filtered.Devices, req = applyDeviceField(filtered.Devices, res.Prov.Devices, "devices", reconciled, req)
 	filtered.Env, req = applyEnvField(filtered.Env, res.Prov.Env, "env", reconciled, req)
@@ -205,7 +205,7 @@ func cascadeDependentMounts(mounts map[string]profile.Mount, services map[string
 // a provenance bug must not brick launches — but it means a provenance
 // regression in the merge would silently bypass the approval gate. The
 // provenance unit tests in internal/profile guard against that.
-func decide(it SensitiveItem, st State, req PromptRequest) (bool, PromptRequest) {
+func decide(it GatedItem, st State, req PromptRequest) (bool, PromptRequest) {
 	if it.Source.Trusted() {
 		return true, req
 	}
@@ -361,8 +361,8 @@ func applyServicesField(services map[string]profile.Service, prov map[string]pro
 	return out, req
 }
 
-func item(field, key, value string, source profile.Contributor, detail string, benign bool) SensitiveItem {
-	return SensitiveItem{Field: field, Key: key, Value: value, Source: source, Detail: detail, Benign: benign}
+func item(field, key, value string, source profile.Contributor, detail string, benign bool) GatedItem {
+	return GatedItem{Field: field, Key: key, Value: value, Source: source, Detail: detail, Benign: benign}
 }
 
 // renderMount renders the dialog label for one mount. The permission the user
@@ -549,7 +549,7 @@ func portDetail(k string, p profile.PortBind) (string, bool) {
 	return fmt.Sprintf("%s:%s → %s", ip, hostPart, label), !wildcard
 }
 
-// serviceDetail summarizes a service's sensitive definition in one line. A
+// serviceDetail summarizes a service's gated definition in one line. A
 // service is a whole companion container, so it is never benign — it stays
 // prominent.
 func serviceDetail(svc profile.Service) string {
@@ -573,7 +573,7 @@ func serviceDetail(svc profile.Service) string {
 }
 
 // renderServiceDisplay is the multi-line, human-friendly form of a service's
-// sensitive definition for the detail pane — one section per line instead of
+// gated definition for the detail pane — one section per line instead of
 // the canonical single-line renderServiceDefinition.
 func renderServiceDisplay(svc profile.Service) string {
 	var b strings.Builder

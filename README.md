@@ -251,7 +251,7 @@ Project-local `mise.toml` and `.tool-versions` files are discovered after tpd ch
 
 Profiles are user-owned configuration, but they can grant substantial host access. Review mounts, forwarded environment variables, credential files, devices, published ports, GUI/D-Bus access, and container sockets before launching a profile. `files:` writes only into the ephemeral container; bind mounts and named caches can persist or expose host data.
 
-Because built-in profiles can carry sensitive fields, tpd gates the ones they contribute — mounts, devices, environment variables, ports, D-Bus access, `network`, and `services`. The first launch of a profile with any such field prompts you to approve or deny each item; choices are stored per profile and re-prompted only when the profile changes. Fields your own user profile declares are never gated.
+Because built-in profiles can carry fields that tpd gates — mounts, devices, environment variables, ports, D-Bus access, `network`, and `services` — the first launch of a profile with any such field prompts you to approve or deny each item; choices are stored per profile and re-prompted only when the profile changes. Fields your own user profile declares are never gated.
 
 GUI support is split into three capability fragments under `gui/`: `display` mounts the display, `/dev/dri`, and the specific Wayland socket; `portal` wires the filtered D-Bus to the desktop portal (and ships the `xdg-open` wrapper); `session` additionally mounts the entire `$XDG_RUNTIME_DIR` (needed by buzz/t3code). Prefer `display` (+ `portal` when the app opens URLs) unless the app needs the runtime dir.
 

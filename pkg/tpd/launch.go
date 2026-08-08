@@ -143,7 +143,7 @@ func LaunchWithWriter(ctx context.Context, opts LaunchOpts, w io.Writer) Result 
 				cfg, _, err = approval.Filter(resolved, effectiveStore)
 				return err
 			} else if opts.DryRun || !isTTY(in) {
-				return fmt.Errorf("unapproved sensitive fields require --yes or --no: %s", summarizeItems(promptReq.Items))
+				return fmt.Errorf("unapproved gated fields require --yes or --no: %s", summarizeItems(promptReq.Items))
 			} else {
 				prompt := opts.ApprovalPrompt
 				if prompt == nil {
@@ -446,7 +446,7 @@ func incomplete(req approval.PromptRequest, choices map[string]map[string]bool) 
 	return false
 }
 
-func summarizeItems(items []approval.SensitiveItem) string {
+func summarizeItems(items []approval.GatedItem) string {
 	var parts []string
 	for _, it := range items {
 		parts = append(parts, it.Field+"."+it.Key)

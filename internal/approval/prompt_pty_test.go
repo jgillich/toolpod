@@ -54,7 +54,7 @@ func TestDefaultPromptInteractiveToggleAndSubmit(t *testing.T) {
 		t.Skipf("cannot set pty size: %v", err)
 	}
 
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh (rw)", Source: testContrib()},
 		{Field: "mounts", Key: "~/aws", Value: "~/aws (rw)", Source: testContrib(), PriorApproved: true},
 	}}
@@ -102,7 +102,7 @@ func TestDefaultPromptInteractiveEscCancels(t *testing.T) {
 		t.Skipf("cannot set pty size: %v", err)
 	}
 
-	req := PromptRequest{ProfileName: "bash", Items: []SensitiveItem{
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "env", Key: "A", Value: "A=1", Source: testContrib()},
 	}}
 

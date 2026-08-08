@@ -44,8 +44,8 @@ func addLaunchFlags(cmd *cobra.Command, o *launchFlags) {
 	cmd.Flags().BoolVar(&o.DryRun, "dry-run", false, "Print the spec without launching.")
 	cmd.Flags().BoolVar(&o.Verbose, "verbose", false, "Print the spec before launching.")
 	cmd.Flags().BoolVar(&o.Pull, "pull", false, "Pull the base image even if already present (refresh mutable tags).")
-	cmd.Flags().BoolVar(&o.AssumeYes, "yes", false, "Auto-approve all unapproved sensitive fields and persist the choice.")
-	cmd.Flags().BoolVar(&o.AssumeNo, "no", false, "Auto-deny all unapproved sensitive fields and persist the choice.")
+	cmd.Flags().BoolVar(&o.AssumeYes, "yes", false, "Auto-approve all unapproved gated fields and persist the choice.")
+	cmd.Flags().BoolVar(&o.AssumeNo, "no", false, "Auto-deny all unapproved gated fields and persist the choice.")
 	cmd.MarkFlagsMutuallyExclusive("yes", "no")
 }
 

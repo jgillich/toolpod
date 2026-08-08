@@ -24,7 +24,7 @@ type Prompt func(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[stri
 // Every section renders as a titled MultiSelect on the single approval screen.
 type fieldSection struct {
 	field string
-	items []SensitiveItem
+	items []GatedItem
 }
 
 // fieldTitle is the human title shown above a field type's section.
@@ -57,7 +57,7 @@ func titleCase(s string) string {
 // sorted by key. Checked state is decided later in newApprovalModel from
 // PriorApproved/Benign, not here.
 func fieldSections(req PromptRequest) []fieldSection {
-	byField := map[string][]SensitiveItem{}
+	byField := map[string][]GatedItem{}
 	var order []string
 	for _, it := range req.Items {
 		if _, ok := byField[it.Field]; !ok {
@@ -171,7 +171,7 @@ func fieldTag(field string) string {
 // approvalItem is one row of the approval list. id keys it to the underlying
 // row so toggling resolves correctly.
 type approvalItem struct {
-	item    SensitiveItem
+	item    GatedItem
 	id      string
 	checked bool
 }
@@ -268,7 +268,7 @@ type approvalModel struct {
 
 // rowTier ranks a row's prominence for the list order: warnings first,
 // then normal grants, then benign rows.
-func rowTier(it SensitiveItem) int {
+func rowTier(it GatedItem) int {
 	switch {
 	case it.Warning:
 		return 0
@@ -724,7 +724,7 @@ func padLeft(s string, w int) string {
 }
 
 // DefaultPrompt is the bubbletea implementation: a scrollable flat list of
-// every sensitive item, with previously approved items pre-checked and newly
+// every gated item, with previously approved items pre-checked and newly
 // introduced ones unchecked. Enter submits the visible state as the choices
 // map; esc/Ctrl+C aborts and surfaces as "approval declined".
 func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[string]map[string]bool, error) {
@@ -746,6 +746,6 @@ func DefaultPrompt(req PromptRequest, stdin io.Reader, stdout io.Writer) (map[st
 	return am.result, nil
 }
 
-func itemID(it SensitiveItem) string {
+func itemID(it GatedItem) string {
 	return it.Field + "\x00" + it.Key
 }

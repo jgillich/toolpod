@@ -11,7 +11,7 @@ import (
 )
 
 // ComputeApprovalHash returns a 12-hex-char hash of the non-user
-// sensitive fields of res, pre-template-expansion. Contributor identity
+// gated fields of res, pre-template-expansion. Contributor identity
 // (FullName + Namespace) is included so approvals don't silently
 // transfer across contributors with identical field values.
 func ComputeApprovalHash(res profile.Resolved) string {
@@ -64,7 +64,7 @@ func ComputeApprovalHash(res profile.Resolved) string {
 }
 
 // renderServiceDefinition builds a deterministic, sorted canonical string of
-// the service's schema-valid sensitive sub-fields (privileged, exposes,
+// the service's schema-valid gated sub-fields (privileged, exposes,
 // the service's own mounts, env) — the shape the user is asked to approve
 // under "use podman". A change to any of these (privileged flip, new expose
 // socket, service-mount read_only flip, new service mount/env key) changes
