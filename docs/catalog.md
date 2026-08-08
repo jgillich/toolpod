@@ -932,6 +932,23 @@ tools:
 
 ### lang
 
+### `lang/android`
+
+Android SDK command-line tools (Java, Gradle, Kotlin)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Android SDK command-line tools (Java, Gradle, Kotlin)
+extends: lang/kotlin
+tools:
+  android-sdk: latest
+```
+
+</details>
+
 ### `lang/bash`
 
 Bash shell config mounts and shellcheck
