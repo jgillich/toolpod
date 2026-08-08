@@ -3,5 +3,5 @@ meta:
   description: Disposable bash shell with shell completion
 extends:
   - mise
-  - core/toolchain/bash
+  - toolchain/bash
 command: ["bash", "-l"]

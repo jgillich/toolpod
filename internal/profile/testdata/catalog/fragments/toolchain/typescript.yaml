@@ -1,4 +1,4 @@
 version: 1
-extends: core/toolchain/javascript
+extends: toolchain/javascript
 tools:
   typescript: latest

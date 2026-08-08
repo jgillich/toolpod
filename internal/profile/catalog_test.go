@@ -53,6 +53,25 @@ func TestBuiltinCatalogResolves(t *testing.T) {
 	}
 }
 
+// TestBuiltinExtendsOmitCoreNamespace asserts that built-in profiles and
+// fragments reference other built-ins by unqualified name (toolchain/go, not
+// core/toolchain/go), so user shadowing of a base fragment flows through to
+// derived built-ins.
+func TestBuiltinExtendsOmitCoreNamespace(t *testing.T) {
+	cat, err := LoadCatalog(catalog.Profiles, catalog.Fragments, "")
+	if err != nil {
+		t.Fatalf("LoadCatalog(embedded): %v", err)
+	}
+	for _, name := range cat.Names() {
+		rc, _ := cat.Get(name)
+		for _, ref := range rc.ExtendsList.Resolved {
+			if ref.Namespace == "core" {
+				t.Errorf("%s extends %q: built-ins must reference other built-ins without the core/ prefix", name, ref.FullName())
+			}
+		}
+	}
+}
+
 func TestRawProfileFullName(t *testing.T) {
 	if got := (RawProfile{Namespace: "core", Name: "mise"}).FullName(); got != "core/mise" {
 		t.Errorf("core/mise FullName = %q", got)
@@ -501,15 +520,16 @@ func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
 	if !ok {
 		t.Fatal("core/toolchain/typescript missing")
 	}
-	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "toolchain/javascript"}) {
-		t.Errorf("core/toolchain/typescript extends = %+v, want [core/toolchain/javascript]", rc.ExtendsList.Resolved)
+	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "", Name: "toolchain/javascript"}) {
+		t.Errorf("core/toolchain/typescript extends = %+v, want [toolchain/javascript]", rc.ExtendsList.Resolved)
 	}
 }
 
-func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
-	// A user *fragment* named toolchain/javascript wins unqualified fallback, but
-	// core/toolchain/typescript extends core/toolchain/javascript (qualified), so the
-	// built-in fragment still provides its tools despite the display-name shadow.
+func TestTypescriptExtendsUserFragmentNamedJavascript(t *testing.T) {
+	// Built-ins reference other built-ins by unqualified name, so a user
+	// *fragment* named toolchain/javascript wins the fallback: core/toolchain/typescript
+	// inherits its tools. Built-ins don't pin core/ because the shadowing model
+	// is the point — overriding a base fragment should flow into derived ones.
 	dir := t.TempDir()
 	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "toolchain")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
@@ -526,11 +546,8 @@ func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveFragment: %v", err)
 	}
-	if merged.Tools["node"].Version != "latest" {
-		t.Error("core/toolchain/typescript should inherit node from the built-in core/toolchain/javascript fragment, not the user fragment")
-	}
-	if _, ok := merged.Tools["userjs"]; ok {
-		t.Error("core/toolchain/typescript must not inherit tools from the user toolchain/javascript fragment")
+	if _, ok := merged.Tools["userjs"]; !ok {
+		t.Error("core/toolchain/typescript should inherit tools from the user toolchain/javascript fragment")
 	}
 }
 

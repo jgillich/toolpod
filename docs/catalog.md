@@ -108,7 +108,7 @@ meta:
   description: Disposable bash shell with shell completion
 extends:
   - mise
-  - core/toolchain/bash
+  - toolchain/bash
 command: ["bash", "-l"]
 ```
 
@@ -1525,7 +1525,7 @@ TypeScript toolchain (ts-node, tsx, typescript)
 version: 1
 meta:
   description: TypeScript toolchain (ts-node, tsx, typescript)
-extends: core/toolchain/javascript
+extends: toolchain/javascript
 tools:
   biome: latest
   npm:ts-node: latest
@@ -1607,7 +1607,7 @@ GitLab CLI (glab)
 version: 1
 meta:
   description: GitLab CLI (glab)
-extends: core/vcs/git
+extends: vcs/git
 mounts:
   ~/.config/glab-cli:
     source: ~/.config/glab-cli
