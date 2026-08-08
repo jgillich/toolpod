@@ -293,6 +293,23 @@ func TestApprovalModelViewRendersRows(t *testing.T) {
 	}
 }
 
+func TestApprovalModelMountRowShowsSourcePath(t *testing.T) {
+	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
+		{Field: "mounts", Key: "/etc/mise", Value: "~/.config/mise", Source: testContrib(), Detail: "read-only"},
+		{Field: "mounts", Key: "~/.config/amp", Value: "~/.config/amp (rw)", Source: testContrib(), Detail: "read/write"},
+	}}
+	m := newApprovalModel(req)
+	m = pump(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	v := stripANSI(m.View())
+	// The permission granted is exposing the host source path, so the row
+	// must show it, not the container target.
+	for _, want := range []string{"~/.config/mise", "~/.config/amp (rw)", "read-only", "read/write"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("mount row missing %q\n%s", want, v)
+		}
+	}
+}
+
 func TestApprovalModelDetailsOpensAndCloses(t *testing.T) {
 	req := PromptRequest{ProfileName: "bash", Items: []GatedItem{
 		{Field: "mounts", Key: "~/.ssh", Value: "~/.ssh (rw)", Source: testContrib(), Detail: "read/write"},

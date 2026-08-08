@@ -182,6 +182,16 @@ func (i approvalItem) FilterValue() string {
 	return strings.Join([]string{i.item.Field, i.item.Key, i.item.Detail}, " ")
 }
 
+// rowLabel is a row's primary text. Mounts grant access to the host source
+// path, so the row shows the source (Value) rather than the container target
+// (Key), which the user has no reference for.
+func rowLabel(it GatedItem) string {
+	if it.Field == "mounts" {
+		return it.Value
+	}
+	return it.Key
+}
+
 // approvalDelegate renders rows like huh: tight single lines with a fuchsia
 // cursor on the highlighted row, an [x]/[ ] checkbox, and the risk-relevant
 // detail right-aligned in the risk color for riskier grants.
@@ -217,7 +227,7 @@ func renderRow(w io.Writer, it approvalItem, selected bool, contentW int) {
 	if keyW < 1 {
 		keyW = 1
 	}
-	keyStr := ansi.Truncate(it.item.Key, keyW, "…")
+	keyStr := ansi.Truncate(rowLabel(it.item), keyW, "…")
 	detailW := contentW - fixed - 1 - lipgloss.Width(keyStr)
 	if detailW < 0 {
 		detailW = 0
@@ -289,7 +299,7 @@ const rowFixed = 2 + 3 + 1 + approvalCatW + 1 + 1
 func (m approvalModel) naturalBoxW() int {
 	w := 0
 	for _, r := range m.rows {
-		n := rowFixed + lipgloss.Width(r.item.Key) + lipgloss.Width(r.item.Detail)
+		n := rowFixed + lipgloss.Width(rowLabel(r.item)) + lipgloss.Width(r.item.Detail)
 		if n > w {
 			w = n
 		}
