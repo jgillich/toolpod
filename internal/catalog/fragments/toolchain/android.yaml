@@ -1,6 +1,6 @@
 version: 1
 meta:
   description: Android SDK command-line tools (Java, Gradle, Kotlin)
-extends: lang/kotlin
+extends: toolchain/kotlin
 tools:
   android-sdk: latest
