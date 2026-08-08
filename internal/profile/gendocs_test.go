@@ -56,6 +56,15 @@ func TestCatalogDocStructure(t *testing.T) {
 	if !strings.Contains(doc, "## Profiles") || !strings.Contains(doc, "## Fragments") {
 		t.Errorf("doc must have Profiles and Fragments sections:\n%s", doc)
 	}
+	if !strings.Contains(doc, "## Contents") {
+		t.Errorf("doc must have a Contents section")
+	}
+	if !strings.Contains(doc, "- [Profiles](#profiles)\n  - [") {
+		t.Errorf("doc Contents must list every profile")
+	}
+	if !strings.Contains(doc, "- [Fragments](#fragments)\n  - [") {
+		t.Errorf("doc Contents must list fragment groups and every fragment")
+	}
 	if !strings.Contains(doc, "### `mise`") {
 		t.Errorf("doc must list the mise profile")
 	}

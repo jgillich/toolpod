@@ -37,7 +37,8 @@ func ProfilesTable() (string, error) {
 
 // CatalogDoc renders docs/catalog.md: every built-in profile and fragment as
 // a heading with its meta description and its full source in a <details>
-// spoiler, fragments grouped by their top-level folder.
+// spoiler, fragments grouped by their top-level folder. A contents list
+// anchors the group and fragment headings for navigation.
 func CatalogDoc() (string, error) {
 	cat, err := builtinCatalog()
 	if err != nil {
@@ -46,21 +47,26 @@ func CatalogDoc() (string, error) {
 	var b strings.Builder
 	b.WriteString("# Catalog\n\n")
 	b.WriteString("The built-in profiles and fragments shipped in the tpd binary. Run `make docs` to regenerate this file and the README profiles table.\n\n")
-	b.WriteString("## Profiles\n\n")
+	b.WriteString("## Contents\n\n")
+	b.WriteString("- [Profiles](#profiles)\n")
+	for _, dn := range cat.ProfileDisplayNames() {
+		fmt.Fprintf(&b, "  - [%s](#%s)\n", dn, githubAnchor(dn))
+	}
+	b.WriteString("- [Fragments](#fragments)\n")
+	groups := fragmentGroups(cat)
+	for _, group := range sortedKeys(groups) {
+		fmt.Fprintf(&b, "  - [%s](#%s)\n", group, githubAnchor(group))
+		for _, dn := range groups[group] {
+			fmt.Fprintf(&b, "    - [%s](#%s)\n", dn, githubAnchor(dn))
+		}
+	}
+	b.WriteString("\n## Profiles\n\n")
 	for _, dn := range cat.ProfileDisplayNames() {
 		if err := writeEntry(&b, catalog.Profiles, "profiles/"+dn+".yaml", dn, cat.Description(dn)); err != nil {
 			return "", err
 		}
 	}
 	b.WriteString("## Fragments\n\n")
-	groups := map[string][]string{}
-	for _, dn := range cat.FragmentDisplayNames() {
-		group := "Other"
-		if i := strings.Index(dn, "/"); i >= 0 {
-			group = dn[:i]
-		}
-		groups[group] = append(groups[group], dn)
-	}
 	for _, group := range sortedKeys(groups) {
 		fmt.Fprintf(&b, "### %s\n\n", group)
 		for _, dn := range groups[group] {
@@ -70,6 +76,46 @@ func CatalogDoc() (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// fragmentGroups buckets fragment display names by their top-level folder,
+// matching the grouping the doc renders.
+func fragmentGroups(cat Catalog) map[string][]string {
+	groups := map[string][]string{}
+	for _, dn := range cat.FragmentDisplayNames() {
+		group := "Other"
+		if i := strings.Index(dn, "/"); i >= 0 {
+			group = dn[:i]
+		}
+		groups[group] = append(groups[group], dn)
+	}
+	return groups
+}
+
+// githubAnchor reproduces GitHub's heading anchor: lowercase, drop
+// punctuation (backticks, slashes, dots), collapse whitespace to hyphens.
+func githubAnchor(s string) string {
+	var b strings.Builder
+	space := true
+	for _, r := range s {
+		switch {
+		case r == ' ':
+			if !space {
+				b.WriteByte('-')
+				space = true
+			}
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			space = false
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 'a' - 'A')
+			space = false
+		case r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+			space = false
+		}
+	}
+	return b.String()
 }
 
 func writeEntry(b *strings.Builder, fsys fs.ReadFileFS, srcPath, name, desc string) error {
