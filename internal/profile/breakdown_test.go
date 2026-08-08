@@ -15,19 +15,19 @@ func TestProvenanceYAMLShadowing(t *testing.T) {
 				Command:     []string{"t3code"},
 			}, Namespace: "core", Name: "t3code", Path: "built-in:profiles/t3code.yaml"},
 			"claude": {Profile: Profile{
-				ExtendsList: ExtendsList{Raw: []string{"core/claude", "core/infra/kubernetes"}},
+				ExtendsList: ExtendsList{Raw: []string{"core/claude", "core/cloud/kubernetes"}},
 			}, Namespace: "", Name: "claude", Path: "/home/u/.config/tpd/profiles/claude.yaml"},
 			"core/claude": {Profile: Profile{
 				Tools: map[string]Tool{"claude": {Version: "latest"}},
 			}, Namespace: "core", Name: "claude", Path: "built-in:profiles/claude.yaml"},
-			"core/infra/kubernetes": {Profile: Profile{
+			"core/cloud/kubernetes": {Profile: Profile{
 				Tools: map[string]Tool{"kubectl": {Version: "latest"}},
-			}, Namespace: "core", Name: "infra/kubernetes", Path: "built-in-fragment:fragments/infra/kubernetes.yaml"},
+			}, Namespace: "core", Name: "cloud/kubernetes", Path: "built-in-fragment:fragments/cloud/kubernetes.yaml"},
 		},
 		namespaces: map[string]bool{"": true, "core": true},
-		fragments:  map[string]bool{"core/infra/kubernetes": true},
+		fragments:  map[string]bool{"core/cloud/kubernetes": true},
 	}
-	for _, k := range []string{"core/t3code", "claude", "core/claude", "core/infra/kubernetes"} {
+	for _, k := range []string{"core/t3code", "claude", "core/claude", "core/cloud/kubernetes"} {
 		e := cat.entries[k]
 		if err := e.ExtendsList.Resolve(map[string]bool{"": true, "core": true}); err != nil {
 			t.Fatal(err)
@@ -48,7 +48,7 @@ func TestProvenanceYAMLShadowing(t *testing.T) {
 	if !strings.Contains(out, "# claude  (/home/u/.config/tpd/profiles/claude.yaml)") {
 		t.Errorf("missing user shadow header (root cause):\n%s", out)
 	}
-	if !strings.Contains(out, "# core/infra/kubernetes  (built-in-fragment:fragments/infra/kubernetes.yaml)") {
+	if !strings.Contains(out, "# core/cloud/kubernetes  (built-in-fragment:fragments/cloud/kubernetes.yaml)") {
 		t.Errorf("missing fragment header:\n%s", out)
 	}
 	if !strings.Contains(out, "kubectl: latest") {

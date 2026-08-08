@@ -609,6 +609,81 @@ mounts:
 
 </details>
 
+### `cloud/helm`
+
+Helm with chart cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Helm with chart cache
+tools:
+  helm: latest
+caches:
+  helm: ~/.cache/helm
+mounts:
+  ~/.config/helm:
+    source: ~/.config/helm
+    create: true
+    read_only: false
+    optional: true
+```
+
+</details>
+
+### `cloud/kubernetes`
+
+kubectl, k9s, kustomize and kubectx
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: kubectl, k9s, kustomize and kubectx
+tools:
+  kubectl: latest
+  k9s: latest
+  kustomize: latest
+  kubectx: latest
+  kubens: latest
+mounts:
+  ~/.kube:
+    source: ~/.kube
+    optional: true
+  ~/.config/k9s:
+    source: ~/.config/k9s
+    create: true
+    read_only: false
+    optional: true
+```
+
+</details>
+
+### `cloud/terraform`
+
+Terraform with plugin cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Terraform with plugin cache
+tools:
+  terraform: latest
+caches:
+  terraform: ~/.terraform.d/plugin-cache
+mounts:
+  ~/.terraformrc:
+    source: ~/.terraformrc
+    optional: true
+```
+
+</details>
+
 ### gui
 
 ### `gui/display`
@@ -754,127 +829,6 @@ mounts:
     optional: true
 environment:
   XDG_RUNTIME_DIR: '{{ .Env.XDG_RUNTIME_DIR }}'
-```
-
-</details>
-
-### infra
-
-### `infra/helm`
-
-Helm with chart cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Helm with chart cache
-tools:
-  helm: latest
-caches:
-  helm: ~/.cache/helm
-mounts:
-  ~/.config/helm:
-    source: ~/.config/helm
-    create: true
-    read_only: false
-    optional: true
-```
-
-</details>
-
-### `infra/kubernetes`
-
-kubectl, k9s, kustomize and kubectx
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: kubectl, k9s, kustomize and kubectx
-tools:
-  kubectl: latest
-  k9s: latest
-  kustomize: latest
-  kubectx: latest
-  kubens: latest
-mounts:
-  ~/.kube:
-    source: ~/.kube
-    optional: true
-  ~/.config/k9s:
-    source: ~/.config/k9s
-    create: true
-    read_only: false
-    optional: true
-```
-
-</details>
-
-### `infra/ssh`
-
-SSH keys and client
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: SSH keys and client
-mounts:
-  ~/.ssh:
-    source: ~/.ssh
-    optional: true
-  ~/.ssh/known_hosts:
-    source: ~/.ssh/known_hosts
-    read_only: false
-    optional: true
-packages:
-  - openssh-client
-```
-
-</details>
-
-### `infra/terraform`
-
-Terraform with plugin cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Terraform with plugin cache
-tools:
-  terraform: latest
-caches:
-  terraform: ~/.terraform.d/plugin-cache
-mounts:
-  ~/.terraformrc:
-    source: ~/.terraformrc
-    optional: true
-```
-
-</details>
-
-### `infra/vault`
-
-HashiCorp Vault CLI and token
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: HashiCorp Vault CLI and token
-mounts:
-  ~/.vault-token:
-    source: ~/.vault-token
-    optional: true
-tools:
-  vault: latest
 ```
 
 </details>
@@ -1026,6 +980,50 @@ mounts:
     optional: true
 environment:
   DOCKER_HOST: unix:///var/run/docker.sock
+```
+
+</details>
+
+### `sysutils/ssh`
+
+SSH keys and client
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: SSH keys and client
+mounts:
+  ~/.ssh:
+    source: ~/.ssh
+    optional: true
+  ~/.ssh/known_hosts:
+    source: ~/.ssh/known_hosts
+    read_only: false
+    optional: true
+packages:
+  - openssh-client
+```
+
+</details>
+
+### `sysutils/vault`
+
+HashiCorp Vault CLI and token
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: HashiCorp Vault CLI and token
+mounts:
+  ~/.vault-token:
+    source: ~/.vault-token
+    optional: true
+tools:
+  vault: latest
 ```
 
 </details>
