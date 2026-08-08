@@ -1065,7 +1065,7 @@ func randomID(n int) string {
 }
 
 // containerNameFor builds the Docker container-name prefix from a profile
-// name. Profile names may be hierarchical (lang/go); '/' is not valid in a
+// name. Profile names may be hierarchical (toolchain/go); '/' is not valid in a
 // container name, so it becomes '-'.
 func containerNameFor(profileName string) string {
 	return "tpd-" + strings.ReplaceAll(profileName, "/", "-") + "-"

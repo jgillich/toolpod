@@ -59,7 +59,7 @@ func TestCatalogDocStructure(t *testing.T) {
 	if !strings.Contains(doc, "### `mise`") {
 		t.Errorf("doc must list the mise profile")
 	}
-	for _, group := range []string{"cloud", "gui", "infra", "lang", "service", "vcs"} {
+	for _, group := range []string{"cloud", "gui", "infra", "toolchain", "service", "vcs"} {
 		if !strings.Contains(doc, "### "+group) {
 			t.Errorf("doc must group fragments under %s", group)
 		}
@@ -67,8 +67,8 @@ func TestCatalogDocStructure(t *testing.T) {
 	if !strings.Contains(doc, "<details><summary>Source</summary>") {
 		t.Errorf("doc must embed each entry's source in a spoiler")
 	}
-	if !strings.Contains(doc, "### `lang/go`") || !strings.Contains(doc, "Go toolchain with GOPATH cache") {
-		t.Errorf("doc must list lang/go with its description")
+	if !strings.Contains(doc, "### `toolchain/go`") || !strings.Contains(doc, "Go toolchain with GOPATH cache") {
+		t.Errorf("doc must list toolchain/go with its description")
 	}
 }
 

@@ -15,8 +15,8 @@ func (c Catalog) ParseRefForCatalog(s string) (Ref, error) {
 // Ref. A string with no "/" is unqualified (Ref{Namespace: "", Name: s}). A
 // string with "/" is matched against the longest registered namespace prefix
 // at a segment boundary (ns + "/"); the remainder is the local name and may
-// itself be multi-segment (lang/go). A slash string matching no registered
-// prefix is an unqualified hierarchical name (user namespaces like lang/go
+// itself be multi-segment (toolchain/go). A slash string matching no registered
+// prefix is an unqualified hierarchical name (user namespaces like toolchain/go
 // parse this way), not an error. An empty local name ("core/") is rejected.
 func ParseRef(s string, namespaces map[string]bool) (Ref, error) {
 	if s == "" {
@@ -40,13 +40,13 @@ func ParseRef(s string, namespaces map[string]bool) (Ref, error) {
 			if local == "" {
 				return Ref{}, fmt.Errorf("empty local name in extends: %s", s)
 			}
-			// The local name may be multi-segment (lang/go, lang/js/node);
+			// The local name may be multi-segment (toolchain/go, toolchain/js/node);
 			// the namespace is a registered prefix, everything after it is name.
 			return Ref{Namespace: ns, Name: local}, nil
 		}
 	}
 	// No registered prefix matches, so the whole string is an unqualified
-	// hierarchical name. This is how user namespaces (lang/go,
+	// hierarchical name. This is how user namespaces (toolchain/go,
 	// services/podman) parse: their directory is not a registered prefix.
 	return Ref{Namespace: "", Name: s}, nil
 }

@@ -372,8 +372,8 @@ func TestProfileDisplayNamesExcludesFragments(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := cat.ProfileDisplayNames()
-	if contains(names, "lang/javascript") {
-		t.Errorf("ProfileDisplayNames should exclude fragment lang/javascript; got %v", names)
+	if contains(names, "toolchain/javascript") {
+		t.Errorf("ProfileDisplayNames should exclude fragment toolchain/javascript; got %v", names)
 	}
 	if !contains(names, "mise") {
 		t.Errorf("ProfileDisplayNames missing profile mise; got %v", names)
@@ -386,8 +386,8 @@ func TestFragmentDisplayNamesExcludesProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := cat.FragmentDisplayNames()
-	if !contains(names, "lang/javascript") {
-		t.Errorf("FragmentDisplayNames missing fragment lang/javascript; got %v", names)
+	if !contains(names, "toolchain/javascript") {
+		t.Errorf("FragmentDisplayNames missing fragment toolchain/javascript; got %v", names)
 	}
 	if !contains(names, "creds/ssh") {
 		t.Errorf("FragmentDisplayNames missing fragment creds/ssh; got %v", names)
@@ -395,18 +395,18 @@ func TestFragmentDisplayNamesExcludesProfiles(t *testing.T) {
 	if contains(names, "mise") {
 		t.Errorf("FragmentDisplayNames should exclude profile mise; got %v", names)
 	}
-	if contains(names, "core/lang/javascript") {
-		t.Errorf("FragmentDisplayNames should not contain qualified core/lang/javascript; got %v", names)
+	if contains(names, "core/toolchain/javascript") {
+		t.Errorf("FragmentDisplayNames should not contain qualified core/toolchain/javascript; got %v", names)
 	}
 }
 
 func TestFragmentDisplayNamesUserShadowDedup(t *testing.T) {
 	dir := t.TempDir()
 	fragDir := filepath.Join(filepath.Dir(dir), "fragments")
-	if err := os.MkdirAll(filepath.Join(fragDir, "lang"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(fragDir, "toolchain"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fragDir, "lang", "go.yaml"), []byte("version: 1\ntools:\n  go: latest\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(fragDir, "toolchain", "go.yaml"), []byte("version: 1\ntools:\n  go: latest\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := fixtureCatalog(t, dir)
@@ -416,12 +416,12 @@ func TestFragmentDisplayNamesUserShadowDedup(t *testing.T) {
 	names := cat.FragmentDisplayNames()
 	count := 0
 	for _, n := range names {
-		if n == "lang/go" {
+		if n == "toolchain/go" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("lang/go appears %d times in FragmentDisplayNames, want 1; got %v", count, names)
+		t.Errorf("toolchain/go appears %d times in FragmentDisplayNames, want 1; got %v", count, names)
 	}
 }
 
@@ -458,7 +458,7 @@ func TestSourceUserOnly(t *testing.T) {
 
 func TestFragmentByDisplayNameUserWins(t *testing.T) {
 	dir := t.TempDir()
-	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "toolchain")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -469,12 +469,12 @@ func TestFragmentByDisplayNameUserWins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := cat.FragmentByDisplayName("lang/javascript")
+	got, ok := cat.FragmentByDisplayName("toolchain/javascript")
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if got != "lang/javascript" {
-		t.Errorf("FragmentByDisplayName(lang/javascript) = %q, want \"lang/javascript\" (user wins)", got)
+	if got != "toolchain/javascript" {
+		t.Errorf("FragmentByDisplayName(toolchain/javascript) = %q, want \"toolchain/javascript\" (user wins)", got)
 	}
 }
 
@@ -483,12 +483,12 @@ func TestFragmentByDisplayNameCoreOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := cat.FragmentByDisplayName("lang/javascript")
+	got, ok := cat.FragmentByDisplayName("toolchain/javascript")
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if got != "core/lang/javascript" {
-		t.Errorf("FragmentByDisplayName(lang/javascript) = %q, want \"core/lang/javascript\"", got)
+	if got != "core/toolchain/javascript" {
+		t.Errorf("FragmentByDisplayName(toolchain/javascript) = %q, want \"core/toolchain/javascript\"", got)
 	}
 }
 
@@ -497,21 +497,21 @@ func TestBuiltinTypescriptExtendsCoreJavascript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, ok := cat.Get("core/lang/typescript")
+	rc, ok := cat.Get("core/toolchain/typescript")
 	if !ok {
-		t.Fatal("core/lang/typescript missing")
+		t.Fatal("core/toolchain/typescript missing")
 	}
-	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "lang/javascript"}) {
-		t.Errorf("core/lang/typescript extends = %+v, want [core/lang/javascript]", rc.ExtendsList.Resolved)
+	if len(rc.ExtendsList.Resolved) != 1 || rc.ExtendsList.Resolved[0] != (Ref{Namespace: "core", Name: "toolchain/javascript"}) {
+		t.Errorf("core/toolchain/typescript extends = %+v, want [core/toolchain/javascript]", rc.ExtendsList.Resolved)
 	}
 }
 
 func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
-	// A user *fragment* named lang/javascript wins unqualified fallback, but
-	// core/lang/typescript extends core/lang/javascript (qualified), so the
+	// A user *fragment* named toolchain/javascript wins unqualified fallback, but
+	// core/toolchain/typescript extends core/toolchain/javascript (qualified), so the
 	// built-in fragment still provides its tools despite the display-name shadow.
 	dir := t.TempDir()
-	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "toolchain")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -522,15 +522,15 @@ func TestTypescriptUnaffectedByUserFragmentNamedJavascript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged, err := ResolveFragment(cat, "lang/typescript")
+	merged, err := ResolveFragment(cat, "toolchain/typescript")
 	if err != nil {
 		t.Fatalf("ResolveFragment: %v", err)
 	}
 	if merged.Tools["node"].Version != "latest" {
-		t.Error("core/lang/typescript should inherit node from the built-in core/lang/javascript fragment, not the user fragment")
+		t.Error("core/toolchain/typescript should inherit node from the built-in core/toolchain/javascript fragment, not the user fragment")
 	}
 	if _, ok := merged.Tools["userjs"]; ok {
-		t.Error("core/lang/typescript must not inherit tools from the user lang/javascript fragment")
+		t.Error("core/toolchain/typescript must not inherit tools from the user toolchain/javascript fragment")
 	}
 }
 
@@ -634,9 +634,9 @@ func TestFragmentByDisplayNameHierarchicalCoreOnly(t *testing.T) {
 }
 
 func TestLoadProfilesUserShadowsCoreHierarchical(t *testing.T) {
-	// User fragments/lang/go.yaml shadows the built-in core/lang/go fragment.
+	// User fragments/toolchain/go.yaml shadows the built-in core/toolchain/go fragment.
 	dir := t.TempDir()
-	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "lang")
+	fragDir := filepath.Join(filepath.Dir(dir), "fragments", "toolchain")
 	if err := os.MkdirAll(fragDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -647,11 +647,11 @@ func TestLoadProfilesUserShadowsCoreHierarchical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := cat.ResolveRef(Ref{Name: "lang/go"}); got != "lang/go" {
-		t.Errorf("ResolveRef(lang/go) = %q, want user lang/go", got)
+	if got, _ := cat.ResolveRef(Ref{Name: "toolchain/go"}); got != "toolchain/go" {
+		t.Errorf("ResolveRef(toolchain/go) = %q, want user toolchain/go", got)
 	}
-	if got := cat.Source("lang/go"); got != "user shadow" {
-		t.Errorf("Source(lang/go) = %q, want \"user shadow\"", got)
+	if got := cat.Source("toolchain/go"); got != "user shadow" {
+		t.Errorf("Source(toolchain/go) = %q, want \"user shadow\"", got)
 	}
 }
 

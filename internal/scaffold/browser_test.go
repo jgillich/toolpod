@@ -9,18 +9,18 @@ import (
 )
 
 func TestBuildFragmentNav(t *testing.T) {
-	names := []string{"cloud/aws", "cloud/azure", "gui/display", "lang/go", "lang/javascript", "top"}
-	descs := map[string]string{"lang/go": "Go toolchain with GOPATH cache", "top": "top-level"}
+	names := []string{"cloud/aws", "cloud/azure", "gui/display", "toolchain/go", "toolchain/javascript", "top"}
+	descs := map[string]string{"toolchain/go": "Go toolchain with GOPATH cache", "top": "top-level"}
 	nav := buildFragmentNav(names, descs)
-	if !reflect.DeepEqual(nav.folders, []string{"cloud", "gui", "lang"}) {
-		t.Errorf("folders = %v, want [cloud gui lang]", nav.folders)
+	if !reflect.DeepEqual(nav.folders, []string{"cloud", "gui", "toolchain"}) {
+		t.Errorf("folders = %v, want [cloud gui toolchain]", nav.folders)
 	}
 	cloud := nav.byFolder["cloud"]
 	if len(cloud) != 2 || cloud[0].display != "cloud/aws" || cloud[1].display != "cloud/azure" {
 		t.Errorf("cloud items = %v", cloud)
 	}
-	if got := nav.byFolder["lang"][0]; got.label != "go — Go toolchain with GOPATH cache" || got.kind != itemFragment {
-		t.Errorf("lang/go row = %+v", got)
+	if got := nav.byFolder["toolchain"][0]; got.label != "go — Go toolchain with GOPATH cache" || got.kind != itemFragment {
+		t.Errorf("toolchain/go row = %+v", got)
 	}
 	if len(nav.topFrags) != 1 || nav.topFrags[0].display != "top" || nav.topFrags[0].label != "top — top-level" {
 		t.Errorf("top frags = %+v", nav.topFrags)
@@ -28,13 +28,13 @@ func TestBuildFragmentNav(t *testing.T) {
 }
 
 func TestBuildFragmentNavFlattensDeep(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/js/node", "lang/js/tsc"}, nil)
-	if !reflect.DeepEqual(nav.folders, []string{"lang"}) {
+	nav := buildFragmentNav([]string{"toolchain/js/node", "toolchain/js/tsc"}, nil)
+	if !reflect.DeepEqual(nav.folders, []string{"toolchain"}) {
 		t.Errorf("folders = %v, want [lang]", nav.folders)
 	}
-	lang := nav.byFolder["lang"]
-	if len(lang) != 2 || lang[0].display != "lang/js/node" || lang[0].label != "js/node" {
-		t.Errorf("deep fragments flatten to their remainder: %+v", lang)
+	items := nav.byFolder["toolchain"]
+	if len(items) != 2 || items[0].display != "toolchain/js/node" || items[0].label != "js/node" {
+		t.Errorf("deep fragments flatten to their remainder: %+v", items)
 	}
 }
 
@@ -46,8 +46,8 @@ func TestBuildFragmentNavEmpty(t *testing.T) {
 }
 
 func TestFragmentNavItemLabels(t *testing.T) {
-	descs := map[string]string{"lang/go": "Go toolchain"}
-	if got := fragmentRow("lang/go", "go", descs).label; got != "go — Go toolchain" {
+	descs := map[string]string{"toolchain/go": "Go toolchain"}
+	if got := fragmentRow("toolchain/go", "go", descs).label; got != "go — Go toolchain" {
 		t.Errorf("described label = %q", got)
 	}
 	if got := fragmentRow("vcs/git", "git", descs).label; got != "git" {
@@ -56,14 +56,14 @@ func TestFragmentNavItemLabels(t *testing.T) {
 }
 
 func TestFolderNavEnterExpandsFolder(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go", "lang/javascript", "vcs/git"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go", "toolchain/javascript", "vcs/git"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	if len(m.list.VisibleItems()) != 2 {
 		t.Fatalf("initial rows = %d, want 2", len(m.list.VisibleItems()))
 	}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(folderNavModel)
-	if !m.expanded["lang"] {
+	if !m.expanded["toolchain"] {
 		t.Error("enter should expand the highlighted folder")
 	}
 	if len(m.list.VisibleItems()) != 4 {
@@ -72,19 +72,19 @@ func TestFolderNavEnterExpandsFolder(t *testing.T) {
 	if cmd != nil {
 		t.Error("expanding must not quit the program")
 	}
-	if it := m.list.SelectedItem().(folderNavItem); it.display != "lang" {
+	if it := m.list.SelectedItem().(folderNavItem); it.display != "toolchain" {
 		t.Errorf("cursor moved off the folder to %q", it.display)
 	}
 }
 
 func TestFolderNavEnterCollapsesFolder(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go", "lang/javascript"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go", "toolchain/javascript"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
-	if m.expanded["lang"] {
+	if m.expanded["toolchain"] {
 		t.Error("second enter should collapse the folder")
 	}
 	if len(m.list.VisibleItems()) != 1 {
@@ -93,7 +93,7 @@ func TestFolderNavEnterCollapsesFolder(t *testing.T) {
 }
 
 func TestFolderNavSpaceTogglesFragment(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go", "lang/javascript"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go", "toolchain/javascript"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
@@ -101,22 +101,22 @@ func TestFolderNavSpaceTogglesFragment(t *testing.T) {
 	m = u.(folderNavModel)
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = u.(folderNavModel)
-	if !m.picked["lang/go"] {
+	if !m.picked["toolchain/go"] {
 		t.Error("space should pick the highlighted fragment")
 	}
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = u.(folderNavModel)
-	if m.picked["lang/go"] {
+	if m.picked["toolchain/go"] {
 		t.Error("space should unpick a picked fragment")
 	}
 }
 
 func TestFolderNavSpaceExpandsFolder(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = updated.(folderNavModel)
-	if !m.expanded["lang"] {
+	if !m.expanded["toolchain"] {
 		t.Error("space should expand the highlighted folder")
 	}
 	if len(m.list.VisibleItems()) != 2 {
@@ -128,7 +128,7 @@ func TestFolderNavSpaceExpandsFolder(t *testing.T) {
 }
 
 func TestFolderNavEnterTogglesFragment(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
@@ -136,7 +136,7 @@ func TestFolderNavEnterTogglesFragment(t *testing.T) {
 	m = u.(folderNavModel)
 	u, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
-	if !m.picked["lang/go"] {
+	if !m.picked["toolchain/go"] {
 		t.Error("enter should pick the highlighted fragment")
 	}
 	if cmd != nil {
@@ -144,13 +144,13 @@ func TestFolderNavEnterTogglesFragment(t *testing.T) {
 	}
 	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = u.(folderNavModel)
-	if m.picked["lang/go"] {
+	if m.picked["toolchain/go"] {
 		t.Error("enter should unpick a picked fragment")
 	}
 }
 
 func TestFolderNavTabFocusesDone(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(folderNavModel)
@@ -164,7 +164,7 @@ func TestFolderNavTabFocusesDone(t *testing.T) {
 }
 
 func TestFolderNavTabTogglesBackToList(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(folderNavModel)
@@ -175,7 +175,7 @@ func TestFolderNavTabTogglesBackToList(t *testing.T) {
 }
 
 func TestFolderNavEscCancels(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if res := updated.(folderNavModel).result; res != browserCancel {
@@ -184,7 +184,7 @@ func TestFolderNavEscCancels(t *testing.T) {
 }
 
 func TestFolderNavCtrlCCancels(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go"}, nil)
 	m := newFolderNavModel("Folder", nav)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if res := updated.(folderNavModel).result; res != browserCancel {
@@ -193,21 +193,21 @@ func TestFolderNavCtrlCCancels(t *testing.T) {
 }
 
 func TestFolderNavDelegateMarkers(t *testing.T) {
-	nav := buildFragmentNav([]string{"lang/go", "lang/javascript", "vcs/git"}, nil)
+	nav := buildFragmentNav([]string{"toolchain/go", "toolchain/javascript", "vcs/git"}, nil)
 	m := newFolderNavModel("Folder", nav)
-	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // expand lang
+	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // expand toolchain
 	m = u.(folderNavModel)
-	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown}) // highlight lang/go
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown}) // highlight toolchain/go
 	m = u.(folderNavModel)
-	u, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // pick lang/go
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace}) // pick toolchain/go
 	m = u.(folderNavModel)
 	v := m.View()
-	for _, want := range []string{"▾ lang", "✓ go", "• javascript"} {
+	for _, want := range []string{"▾ toolchain", "✓ go", "• javascript"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("missing %q in view:\n%s", want, v)
 		}
 	}
-	if strings.Contains(v, "▸ lang") {
+	if strings.Contains(v, "▸ toolchain") {
 		t.Errorf("expanded folder must show ▾, got:\n%s", v)
 	}
 }

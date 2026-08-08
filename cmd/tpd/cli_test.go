@@ -152,7 +152,7 @@ func TestInitMergeFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := []string{"XDG_CONFIG_HOME=" + cfg}
-	out, err := runTpdEnv(t, env, "init", "--merge", "--extends", "lang/javascript", "opencode")
+	out, err := runTpdEnv(t, env, "init", "--merge", "--extends", "toolchain/javascript", "opencode")
 	if err != nil {
 		t.Fatalf("init --merge: %v\n%s", err, out)
 	}
@@ -164,7 +164,7 @@ func TestInitMergeFlag(t *testing.T) {
 	if !strings.Contains(content, "# my shell") || !strings.Contains(content, "zsh") {
 		t.Errorf("merge wiped existing content:\n%s", content)
 	}
-	if !strings.Contains(content, "- core/lang/javascript") {
+	if !strings.Contains(content, "- core/toolchain/javascript") {
 		t.Errorf("merge did not add the fragment:\n%s", content)
 	}
 }

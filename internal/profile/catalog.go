@@ -750,7 +750,7 @@ func ParseRaw(data []byte, path string) (RawProfile, error) {
 var profileNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // nameFromPath derives the hierarchical name for a YAML file from its path
-// relative to the catalog root: root/lang/go.yaml -> "lang/go".
+// relative to the catalog root: root/toolchain/go.yaml -> "toolchain/go".
 func nameFromPath(root, path string) string {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {

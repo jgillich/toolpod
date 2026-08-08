@@ -11,14 +11,14 @@ func TestLoadProfilesIncludesFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "lang/javascript" is a built-in fixture fragment, not a profile.
-	// It should be resolvable via Get under its core/lang/ FullName.
-	rc, ok := cat.Get("core/lang/javascript")
+	// "toolchain/javascript" is a built-in fixture fragment, not a profile.
+	// It should be resolvable via Get under its core/toolchain/ FullName.
+	rc, ok := cat.Get("core/toolchain/javascript")
 	if !ok {
-		t.Fatal("fragment 'lang/javascript' not found in catalog")
+		t.Fatal("fragment 'toolchain/javascript' not found in catalog")
 	}
-	if !cat.IsFragment("core/lang/javascript") {
-		t.Fatal("lang/javascript should be registered as a fragment")
+	if !cat.IsFragment("core/toolchain/javascript") {
+		t.Fatal("toolchain/javascript should be registered as a fragment")
 	}
 	if rc.Path == "" {
 		t.Error("fragment should have a path")

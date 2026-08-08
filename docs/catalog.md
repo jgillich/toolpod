@@ -40,7 +40,7 @@ meta:
   description: Disposable bash shell with shell completion
 extends:
   - mise
-  - core/lang/bash
+  - core/toolchain/bash
 command: ["bash", "-l"]
 ```
 
@@ -930,420 +930,6 @@ tools:
 
 </details>
 
-### lang
-
-### `lang/android`
-
-Android SDK command-line tools (Java, Gradle, Kotlin)
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Android SDK command-line tools (Java, Gradle, Kotlin)
-extends: lang/kotlin
-tools:
-  android-sdk: latest
-```
-
-</details>
-
-### `lang/bash`
-
-Bash shell config mounts and shellcheck
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Bash shell config mounts and shellcheck
-tools:
-  shellcheck: latest
-mounts:
-  ~/.bashrc:
-    source: ~/.bashrc
-    optional: true
-  ~/.bash_profile:
-    source: ~/.bash_profile
-    optional: true
-  ~/.bash_aliases:
-    source: ~/.bash_aliases
-    optional: true
-  ~/.profile:
-    source: ~/.profile
-    optional: true
-  ~/.inputrc:
-    source: ~/.inputrc
-    optional: true
-packages:
-  - bash
-```
-
-</details>
-
-### `lang/dotnet`
-
-.NET toolchain with NuGet cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: .NET toolchain with NuGet cache
-tools:
-  dotnet: latest
-caches:
-  nuget: ~/.nuget
-```
-
-</details>
-
-### `lang/elixir`
-
-Elixir and Erlang toolchain with hex and mix caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Elixir and Erlang toolchain with hex and mix caches
-tools:
-  elixir: latest
-  erlang: latest
-caches:
-  hex: ~/.hex
-  mix: ~/.mix
-```
-
-</details>
-
-### `lang/go`
-
-Go toolchain with GOPATH cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Go toolchain with GOPATH cache
-caches:
-  go: ~/go
-tools:
-  go: latest
-```
-
-</details>
-
-### `lang/haskell`
-
-Haskell toolchain (cabal, ghcup, stack)
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Haskell toolchain (cabal, ghcup, stack)
-caches:
-  cabal: ~/.cabal
-  ghcup: ~/.ghcup
-  stack: ~/.stack
-tools:
-  cabal: latest
-  ghcup: latest
-  stack: latest
-```
-
-</details>
-
-### `lang/java`
-
-Java toolchain with Maven and Gradle caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Java toolchain with Maven and Gradle caches
-tools:
-  java: latest
-  gradle: latest
-caches:
-  gradle: ~/.gradle
-  maven: ~/.m2
-```
-
-</details>
-
-### `lang/javascript`
-
-JavaScript toolchain (node, bun, deno) with npm caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: JavaScript toolchain (node, bun, deno) with npm caches
-caches:
-  bun: ~/.bun/install/global
-  deno: ~/.cache/deno
-  npm: ~/.npm
-tools:
-  bun: latest
-  deno: latest
-  node: latest
-  npm:eslint: latest
-  npm:prettier: latest
-  pnpm: latest
-```
-
-</details>
-
-### `lang/julia`
-
-Julia toolchain
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Julia toolchain
-caches:
-  julia: ~/.julia
-tools:
-  julia: latest
-```
-
-</details>
-
-### `lang/kotlin`
-
-Kotlin toolchain (gradle) with gradle cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Kotlin toolchain (gradle) with gradle cache
-extends: lang/java
-tools:
-  kotlin: latest
-  gradle: latest
-caches:
-  gradle: ~/.gradle
-```
-
-</details>
-
-### `lang/ocaml`
-
-OCaml toolchain (opam)
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: OCaml toolchain (opam)
-caches:
-  opam: ~/.opam
-tools:
-  opam: latest
-```
-
-</details>
-
-### `lang/perl`
-
-Perl toolchain with cpan caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Perl toolchain with cpan caches
-caches:
-  cpan: ~/.cpan
-  cpanm: ~/.cpanm
-tools:
-  perl: latest
-```
-
-</details>
-
-### `lang/php`
-
-PHP toolchain with composer cache and build deps
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: PHP toolchain with composer cache and build deps
-packages:
-  - libxml2-dev
-  - libicu-dev
-  - libonig-dev
-  - libpq-dev
-  - libxslt1-dev
-  - libzip-dev
-  - libmariadb-dev
-  - libgd-dev
-  - libpng-dev
-  - libjpeg-dev
-  - bison
-  - re2c
-tools:
-  php: latest
-caches:
-  composer: ~/.cache/composer
-```
-
-</details>
-
-### `lang/python`
-
-Python toolchain (uv, pipx, pdm, poetry) with pip caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Python toolchain (uv, pipx, pdm, poetry) with pip caches
-caches:
-  pip: ~/.cache/pip
-  pdm: ~/.cache/pdm
-  poetry: ~/.cache/pypoetry
-mounts:
-  ~/.config/pypoetry:
-    source: ~/.config/pypoetry
-    create: true
-    read_only: false
-    optional: true
-  ~/.config/pdm:
-    source: ~/.config/pdm
-    create: true
-    read_only: false
-    optional: true
-tools:
-  python: latest
-  uv: latest
-  pipx:black: latest
-  pipx:pytest: latest
-  pipx:ruff: latest
-  pdm: latest
-  poetry: latest
-```
-
-</details>
-
-### `lang/ruby`
-
-Ruby toolchain with gem cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Ruby toolchain with gem cache
-tools:
-  ruby: latest
-caches:
-  gem: ~/.gem
-```
-
-</details>
-
-### `lang/rust`
-
-Rust toolchain with cargo cache
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Rust toolchain with cargo cache
-caches:
-  cargo: ~/.cargo
-tools:
-  rust: latest
-```
-
-</details>
-
-### `lang/scala`
-
-Scala toolchain (sbt) with sbt, ivy and coursier caches
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Scala toolchain (sbt) with sbt, ivy and coursier caches
-tools:
-  scala: latest
-  sbt: latest
-caches:
-  sbt: ~/.sbt
-  ivy: ~/.ivy2
-  coursier: ~/.cache/coursier
-```
-
-</details>
-
-### `lang/typescript`
-
-TypeScript toolchain (ts-node, tsx, typescript)
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: TypeScript toolchain (ts-node, tsx, typescript)
-extends: core/lang/javascript
-tools:
-  biome: latest
-  npm:ts-node: latest
-  npm:tsx: latest
-  npm:typescript: latest
-```
-
-</details>
-
-### `lang/zig`
-
-Zig toolchain
-
-<details><summary>Source</summary>
-
-```yaml
-version: 1
-meta:
-  description: Zig toolchain
-caches:
-  zig: ~/.cache/zig
-tools:
-  zig: latest
-```
-
-</details>
-
 ### service
 
 ### `service/podman`
@@ -1401,6 +987,420 @@ mounts:
     socket: podman
 environment:
   DOCKER_HOST: unix:///var/run/docker.sock
+```
+
+</details>
+
+### toolchain
+
+### `toolchain/android`
+
+Android SDK command-line tools (Java, Gradle, Kotlin)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Android SDK command-line tools (Java, Gradle, Kotlin)
+extends: toolchain/kotlin
+tools:
+  android-sdk: latest
+```
+
+</details>
+
+### `toolchain/bash`
+
+Bash shell config mounts and shellcheck
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Bash shell config mounts and shellcheck
+tools:
+  shellcheck: latest
+mounts:
+  ~/.bashrc:
+    source: ~/.bashrc
+    optional: true
+  ~/.bash_profile:
+    source: ~/.bash_profile
+    optional: true
+  ~/.bash_aliases:
+    source: ~/.bash_aliases
+    optional: true
+  ~/.profile:
+    source: ~/.profile
+    optional: true
+  ~/.inputrc:
+    source: ~/.inputrc
+    optional: true
+packages:
+  - bash
+```
+
+</details>
+
+### `toolchain/dotnet`
+
+.NET toolchain with NuGet cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: .NET toolchain with NuGet cache
+tools:
+  dotnet: latest
+caches:
+  nuget: ~/.nuget
+```
+
+</details>
+
+### `toolchain/elixir`
+
+Elixir and Erlang toolchain with hex and mix caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Elixir and Erlang toolchain with hex and mix caches
+tools:
+  elixir: latest
+  erlang: latest
+caches:
+  hex: ~/.hex
+  mix: ~/.mix
+```
+
+</details>
+
+### `toolchain/go`
+
+Go toolchain with GOPATH cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Go toolchain with GOPATH cache
+caches:
+  go: ~/go
+tools:
+  go: latest
+```
+
+</details>
+
+### `toolchain/haskell`
+
+Haskell toolchain (cabal, ghcup, stack)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Haskell toolchain (cabal, ghcup, stack)
+caches:
+  cabal: ~/.cabal
+  ghcup: ~/.ghcup
+  stack: ~/.stack
+tools:
+  cabal: latest
+  ghcup: latest
+  stack: latest
+```
+
+</details>
+
+### `toolchain/java`
+
+Java toolchain with Maven and Gradle caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Java toolchain with Maven and Gradle caches
+tools:
+  java: latest
+  gradle: latest
+caches:
+  gradle: ~/.gradle
+  maven: ~/.m2
+```
+
+</details>
+
+### `toolchain/javascript`
+
+JavaScript toolchain (node, bun, deno) with npm caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: JavaScript toolchain (node, bun, deno) with npm caches
+caches:
+  bun: ~/.bun/install/global
+  deno: ~/.cache/deno
+  npm: ~/.npm
+tools:
+  bun: latest
+  deno: latest
+  node: latest
+  npm:eslint: latest
+  npm:prettier: latest
+  pnpm: latest
+```
+
+</details>
+
+### `toolchain/julia`
+
+Julia toolchain
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Julia toolchain
+caches:
+  julia: ~/.julia
+tools:
+  julia: latest
+```
+
+</details>
+
+### `toolchain/kotlin`
+
+Kotlin toolchain (gradle) with gradle cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Kotlin toolchain (gradle) with gradle cache
+extends: toolchain/java
+tools:
+  kotlin: latest
+  gradle: latest
+caches:
+  gradle: ~/.gradle
+```
+
+</details>
+
+### `toolchain/ocaml`
+
+OCaml toolchain (opam)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: OCaml toolchain (opam)
+caches:
+  opam: ~/.opam
+tools:
+  opam: latest
+```
+
+</details>
+
+### `toolchain/perl`
+
+Perl toolchain with cpan caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Perl toolchain with cpan caches
+caches:
+  cpan: ~/.cpan
+  cpanm: ~/.cpanm
+tools:
+  perl: latest
+```
+
+</details>
+
+### `toolchain/php`
+
+PHP toolchain with composer cache and build deps
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: PHP toolchain with composer cache and build deps
+packages:
+  - libxml2-dev
+  - libicu-dev
+  - libonig-dev
+  - libpq-dev
+  - libxslt1-dev
+  - libzip-dev
+  - libmariadb-dev
+  - libgd-dev
+  - libpng-dev
+  - libjpeg-dev
+  - bison
+  - re2c
+tools:
+  php: latest
+caches:
+  composer: ~/.cache/composer
+```
+
+</details>
+
+### `toolchain/python`
+
+Python toolchain (uv, pipx, pdm, poetry) with pip caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Python toolchain (uv, pipx, pdm, poetry) with pip caches
+caches:
+  pip: ~/.cache/pip
+  pdm: ~/.cache/pdm
+  poetry: ~/.cache/pypoetry
+mounts:
+  ~/.config/pypoetry:
+    source: ~/.config/pypoetry
+    create: true
+    read_only: false
+    optional: true
+  ~/.config/pdm:
+    source: ~/.config/pdm
+    create: true
+    read_only: false
+    optional: true
+tools:
+  python: latest
+  uv: latest
+  pipx:black: latest
+  pipx:pytest: latest
+  pipx:ruff: latest
+  pdm: latest
+  poetry: latest
+```
+
+</details>
+
+### `toolchain/ruby`
+
+Ruby toolchain with gem cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Ruby toolchain with gem cache
+tools:
+  ruby: latest
+caches:
+  gem: ~/.gem
+```
+
+</details>
+
+### `toolchain/rust`
+
+Rust toolchain with cargo cache
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Rust toolchain with cargo cache
+caches:
+  cargo: ~/.cargo
+tools:
+  rust: latest
+```
+
+</details>
+
+### `toolchain/scala`
+
+Scala toolchain (sbt) with sbt, ivy and coursier caches
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Scala toolchain (sbt) with sbt, ivy and coursier caches
+tools:
+  scala: latest
+  sbt: latest
+caches:
+  sbt: ~/.sbt
+  ivy: ~/.ivy2
+  coursier: ~/.cache/coursier
+```
+
+</details>
+
+### `toolchain/typescript`
+
+TypeScript toolchain (ts-node, tsx, typescript)
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: TypeScript toolchain (ts-node, tsx, typescript)
+extends: core/toolchain/javascript
+tools:
+  biome: latest
+  npm:ts-node: latest
+  npm:tsx: latest
+  npm:typescript: latest
+```
+
+</details>
+
+### `toolchain/zig`
+
+Zig toolchain
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Zig toolchain
+caches:
+  zig: ~/.cache/zig
+tools:
+  zig: latest
 ```
 
 </details>

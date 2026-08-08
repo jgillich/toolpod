@@ -20,7 +20,7 @@ func TestInitNonInteractiveWritesWithoutReviewPrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:       "shell",
-		Extends:    []string{"lang/javascript"},
+		Extends:    []string{"toolchain/javascript"},
 		ProfileDir: dir,
 	}, strings.NewReader(""), &stdout, &stderr)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestExplicitArgsWritesWithoutReviewPrompt(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), Options{
 		Name:        "opencode",
-		Extends:     []string{"lang/javascript", "creds/gitconfig", "creds/ssh"},
+		Extends:     []string{"toolchain/javascript", "creds/gitconfig", "creds/ssh"},
 		Interactive: true,
 		ProfileDir:  dir,
 	}, strings.NewReader(""), &stdout, &stderr)
