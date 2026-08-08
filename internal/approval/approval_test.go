@@ -764,7 +764,7 @@ func TestFilterServiceItemMetadata(t *testing.T) {
 func TestBenignMount(t *testing.T) {
 	for _, p := range []string{
 		"~/.gitconfig", "~/.gitignore", "~/.inputrc", "~/.cache/opencode",
-		"~/.cache", "/root/.gitconfig",
+		"~/.cache", "/root/.gitconfig", "~/.config/mise", "/root/.config/mise",
 	} {
 		if !isBenignMount(p) {
 			t.Errorf("%q should be in the benign mount list", p)
@@ -777,6 +777,7 @@ func TestBenignMount(t *testing.T) {
 		"~/.bashrc", "~/.profile", "~/.bash_profile", "~/.zshrc",
 		// path-boundary lookalikes — not the benign file.
 		"~/.cachex", "~/.gitconfig-backup", "~/.gitignore-evil",
+		"~/.config/mise-env", "~/.config/mise/config.toml",
 	} {
 		if isBenignMount(p) {
 			t.Errorf("%q should not be in the benign mount list", p)

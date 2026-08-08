@@ -471,13 +471,14 @@ func renderMountBody(k string, m profile.Mount) string {
 }
 
 // benignMountPaths are host mount sources that are almost always harmless:
-// version-control dotfiles, readline config, and cache dirs. Shell profiles
-// (.bashrc, .profile, ...) are deliberately excluded — they can export
-// credentials. Anything not listed is non-benign and stays prominent, which
-// stays safe as the catalog grows remote imports.
+// version-control dotfiles, readline config, the mise toolchain config, and
+// cache dirs. Shell profiles (.bashrc, .profile, ...) are deliberately
+// excluded — they can export credentials. Anything not listed is non-benign
+// and stays prominent, which stays safe as the catalog grows remote imports.
 var benignMountPaths = []string{
 	"/.gitconfig", "/.gitignore", "/.gitattributes",
 	"/.inputrc",
+	"/.config/mise",
 	"/.cache",
 }
 
