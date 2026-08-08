@@ -31,7 +31,8 @@ CLI is wired with [cobra](https://github.com/spf13/cobra); commands live in `cmd
 - **Prune/doctor image matching:** engines qualify `RepoTags` with a registry (`docker.io/`, `localhost/`, …), so `listTpdImages`/`checkDerivedImages` normalize via `runtime.DerivedRef` (`github.com/distribution/reference`, matching the `tpd/packages` path) — never a bare string `HasPrefix`.
 - **Ownership labels & prune:** every volume, derived image, and launched container tpd creates for a launch carries `tpd.managed=true` (`runtime.OwnershipLabel`, `internal/runtime/labels.go`); derived images also carry `tpd.build=1` build provenance. Transient diagnostic/helper resources (the doctor's `tpd-diag-*` volume and container probes, cache-subpath helper, extrepo read) are unlabeled, so a failed-cleanup straggler is invisible to the label-filtered running-container protection and leak check. `prune` removes only labeled resources — unlabeled `tpd-*` volumes/images are reported to stderr as "not tpd-owned" and never auto-removed, and nothing referenced by a running container is removed.
 - **`--pull`:** `tpd run --pull <profile>` re-pulls the base image even when present, refreshing mutable tags; the derived tag hashes the local base image ID, so a new base changes the derived tag and triggers a rebuild.
-- **Templates:** `{{ }}` in `mounts`, `environment`, `command` resolve `.Env` (host env), `uid`, and `.Ports` (container→host ports). Empty resolution leaves the var unset.
+- **Templates:** `{{ }}` in `mounts`, `environment`, `command`, and `resources.memory`/`resources.cpus` resolve `.Env` (host env), `uid`, `.Ports` (container→host ports), `.MemBytes` (total host RAM), `.NumCPU`, and the `div` helper (integer division). Empty resolution leaves the var unset. Templated resource values are exempt from parse validation; a rendered value that doesn't parse degrades to no limit.
+- **`defaults` fragment:** `internal/catalog/fragments/defaults.yaml` is the shared default layer for the mise-toolchain ecosystem — the common dev packages, CLI tools, and the memory cap (`{{ div .MemBytes 2 }}`). It does not set up mise. Every built-in profile that imports `mise` lists `defaults` first in its `extends` (`TestBuiltinMiseProfilesImportDefaultsFirst` enforces this); a profile can override the cap with its own `resources`.
 - **Catalog is embedded:** built-in profiles/fragments ship in the binary; add YAML under `internal/catalog/` and re-build, never load from disk at runtime.
 - **No comments** unless the code doesn't make something apparent.
 
@@ -45,3 +46,6 @@ You are in an isolated environment. Trust user information if you cannot verify.
 
 ## Comments
 Comments should explain intent, not implementation — business rules, design rationale, edge cases, assumptions, trade-offs, and public API contracts. Skip comments that restate code, are stale, or leave commented-out code; prefer clear names and simple code. When a comment is needed, explain why the code exists or is shaped that way.
+
+## Writing plans
+Only write specs and plans for changes with a large scope. When in doubt, ask the user.

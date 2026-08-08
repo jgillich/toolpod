@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
@@ -16,10 +17,14 @@ import (
 // host environment as a map, enabling {{ or .Env.FOO "fallback" }} in mount
 // sources/targets. .UID exposes the host user ID. .Ports exposes
 // container-port → host-port mappings for rendering {{ index .Ports "8080" }}.
+// .MemBytes and .NumCPU expose the host's total RAM (bytes) and logical CPU
+// count so profiles can derive resource limits from the machine they run on.
 type tmplData struct {
-	Env   map[string]string
-	UID   string
-	Ports map[string]string
+	Env      map[string]string
+	UID      string
+	Ports    map[string]string
+	MemBytes int64
+	NumCPU   int
 }
 
 func expandEnvMap() map[string]string {
@@ -36,6 +41,42 @@ func currentUID() string {
 	return strconv.Itoa(os.Getuid())
 }
 
+// hostMemBytes returns the host's total RAM in bytes, or 0 when it cannot be
+// determined. tpd's primary target is rootless Podman on the same host, so
+// /proc/meminfo describes the machine the container runs on; for a remote
+// Docker engine it describes the client instead.
+func hostMemBytes() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			return 0
+		}
+		return kb * 1024
+	}
+	return 0
+}
+
+// div is integer division for templates. A zero divisor (host data missing,
+// misconfigured) yields 0 rather than panicking; 0 renders a memory value
+// that spec.go treats as no limit.
+func div(a, b int64) int64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
+}
+
 // renderTemplate compiles and executes s as a text/template against the host
 // environment. Strings without {{ }} delimiters pass through unchanged.
 // A small func map provides helpers useful for path expressions:
@@ -43,6 +84,7 @@ func currentUID() string {
 //	{{ or .Env.FOO "fallback" }}                   — first non-empty value
 //	{{ trimPrefix .Env.DOCKER_HOST "unix://" }}    — strip a leading prefix
 //	{{ uid }}                                      — host user ID (e.g. "1000")
+//	{{ div .MemBytes 2 }}                          — integer division
 func renderTemplate(s string, data tmplData) (string, error) {
 	if !strings.Contains(s, "{{") {
 		return s, nil
@@ -50,6 +92,7 @@ func renderTemplate(s string, data tmplData) (string, error) {
 	tmpl, err := template.New("path").Funcs(template.FuncMap{
 		"trimPrefix": strings.TrimPrefix,
 		"uid":        currentUID,
+		"div":        div,
 	}).Option("missingkey=zero").Parse(s)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
@@ -70,7 +113,7 @@ func renderTemplate(s string, data tmplData) (string, error) {
 // otherwise determines runtimeHome based on the mode.
 func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome string, ports map[string]string) (Profile, error) {
 	out := cfg
-	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports}
+	data := tmplData{Env: expandEnvMap(), UID: currentUID(), Ports: ports, MemBytes: hostMemBytes(), NumCPU: runtime.NumCPU()}
 
 	// resolveTarget resolves an in-container mount/cache/file target. In
 	// unknown mode (dry-run without a detected engine mode) a ~-prefixed target
@@ -160,6 +203,25 @@ func ResolveTildes(cfg Profile, mode workspace.Mode, hostHome, runtimeHome strin
 			return out, fmt.Errorf("command: %w", err)
 		}
 		out.Command = rendered
+	}
+
+	if out.Resources != nil {
+		res := *out.Resources
+		if res.Memory != "" {
+			rendered, err := renderTemplate(res.Memory, data)
+			if err != nil {
+				return out, fmt.Errorf("resources: memory: %w", err)
+			}
+			res.Memory = rendered
+		}
+		if res.CPUs != "" {
+			rendered, err := renderTemplate(res.CPUs, data)
+			if err != nil {
+				return out, fmt.Errorf("resources: cpus: %w", err)
+			}
+			res.CPUs = rendered
+		}
+		out.Resources = &res
 	}
 
 	if out.Services != nil {

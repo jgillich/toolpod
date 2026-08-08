@@ -133,7 +133,7 @@ The full catalog with source YAML for every built-in profile and fragment is in 
 | [`crush`](internal/catalog/profiles/crush.yaml) | Crush, the Charmbracelet terminal coding agent |
 | [`gemini`](internal/catalog/profiles/gemini.yaml) | Google Gemini CLI |
 | [`goose`](internal/catalog/profiles/goose.yaml) | Goose, an extensible AI coding agent |
-| [`mise`](internal/catalog/profiles/mise.yaml) | The mise toolchain base with common CLI tools |
+| [`mise`](internal/catalog/profiles/mise.yaml) | The mise toolchain base |
 | [`opencode`](internal/catalog/profiles/opencode.yaml) | The opencode AI agent |
 | [`opencode-desktop`](internal/catalog/profiles/opencode-desktop.yaml) | The opencode desktop app (GUI) |
 | [`pi`](internal/catalog/profiles/pi.yaml) | Pi, the minimal terminal coding agent |

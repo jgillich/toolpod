@@ -1,6 +1,7 @@
 version: 1
 meta:
-  description: The mise toolchain base with common CLI tools
+  description: The mise toolchain base
+extends: defaults
 image: debian:13-slim
 command: ["/usr/bin/mise"]
 repos:
@@ -8,24 +9,6 @@ repos:
     extrepo: mise
 packages:
   - mise
-  - autoconf
-  - bsdextrautils
-  - file
-  - curl
-  - git
-  - build-essential
-  - cmake
-  - python3
-  - libssl-dev
-  - libcurl4-openssl-dev
-  - zlib1g-dev
-  - libreadline-dev
-  - libffi-dev
-  - libsqlite3-dev
-  - gettext
-  - openssl
-  - gdb
-  - strace
 mounts:
   /etc/mise:
     source: ~/.config/mise
@@ -35,16 +18,6 @@ caches:
     - ~/.local/share/mise
     - ~/.cache/mise
     - ~/.aube
-tools:
-  bat: latest
-  fd: latest
-  fzf: latest
-  git-lfs: latest
-  jq: latest
-  just: latest
-  ripgrep: latest
-  task: latest
-  yq: latest
 files:
   /etc/profile.d/mise.sh:
     content: |

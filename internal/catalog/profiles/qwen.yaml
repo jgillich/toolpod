@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Qwen Code CLI (Alibaba)
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["qwen"]
 tools:
   qwen: latest

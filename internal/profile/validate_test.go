@@ -392,6 +392,8 @@ func TestValidateResources(t *testing.T) {
 		{"memory 512mb", Resources{Memory: "512mb"}},
 		{"cpus 2", Resources{CPUs: "2"}},
 		{"cpus 1.5", Resources{CPUs: "1.5"}},
+		{"memory template", Resources{Memory: "{{ div .MemBytes 2 }}"}},
+		{"cpus template", Resources{CPUs: "{{ .NumCPU }}"}},
 	}
 	for _, tt := range valid {
 		rc := RawProfile{Profile: base}

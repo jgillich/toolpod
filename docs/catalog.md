@@ -24,6 +24,8 @@ The built-in profiles and fragments shipped in the tpd binary. Run `make docs` t
   - [t3code](#t3code)
   - [trivy](#trivy)
 - [Fragments](#fragments)
+  - [Other](#other)
+    - [defaults](#defaults)
   - [cloud](#cloud)
     - [cloud/aws](#cloudaws)
     - [cloud/azure](#cloudazure)
@@ -82,7 +84,9 @@ Sourcegraph Amp coding agent
 version: 1
 meta:
   description: Sourcegraph Amp coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["amp"]
 tools:
   amp: latest
@@ -107,6 +111,7 @@ version: 1
 meta:
   description: Disposable bash shell with shell completion
 extends:
+  - defaults
   - mise
   - toolchain/bash
 command: ["bash", "-l"]
@@ -125,6 +130,7 @@ version: 1
 meta:
   description: Buzz, Block's desktop AI agent (GUI)
 extends:
+  - defaults
   - mise
   - gui/display
   - gui/portal
@@ -169,7 +175,9 @@ Anthropic Claude Code
 version: 1
 meta:
   description: Anthropic Claude Code
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["claude"]
 tools:
   claude-code: latest
@@ -196,7 +204,9 @@ CodeWhale, a terminal coding agent
 version: 1
 meta:
   description: CodeWhale, a terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["codewhale"]
 tools:
   github:Hmbown/CodeWhale: latest
@@ -219,7 +229,9 @@ OpenAI Codex CLI
 version: 1
 meta:
   description: OpenAI Codex CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["codex"]
 tools:
   codex: latest
@@ -242,7 +254,9 @@ GitHub Copilot CLI
 version: 1
 meta:
   description: GitHub Copilot CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["copilot"]
 tools:
   copilot: latest
@@ -266,7 +280,9 @@ Crush, the Charmbracelet terminal coding agent
 version: 1
 meta:
   description: Crush, the Charmbracelet terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["crush"]
 tools:
   crush: latest
@@ -292,7 +308,9 @@ Google Gemini CLI
 version: 1
 meta:
   description: Google Gemini CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["gemini"]
 tools:
   gemini: latest
@@ -315,7 +333,9 @@ Goose, an extensible AI coding agent
 version: 1
 meta:
   description: Goose, an extensible AI coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["goose"]
 tools:
   aqua:aaif-goose/goose: latest
@@ -342,14 +362,15 @@ mounts:
 
 ### `mise`
 
-The mise toolchain base with common CLI tools
+The mise toolchain base
 
 <details><summary>Source</summary>
 
 ```yaml
 version: 1
 meta:
-  description: The mise toolchain base with common CLI tools
+  description: The mise toolchain base
+extends: defaults
 image: debian:13-slim
 command: ["/usr/bin/mise"]
 repos:
@@ -357,24 +378,6 @@ repos:
     extrepo: mise
 packages:
   - mise
-  - autoconf
-  - bsdextrautils
-  - file
-  - curl
-  - git
-  - build-essential
-  - cmake
-  - python3
-  - libssl-dev
-  - libcurl4-openssl-dev
-  - zlib1g-dev
-  - libreadline-dev
-  - libffi-dev
-  - libsqlite3-dev
-  - gettext
-  - openssl
-  - gdb
-  - strace
 mounts:
   /etc/mise:
     source: ~/.config/mise
@@ -384,16 +387,6 @@ caches:
     - ~/.local/share/mise
     - ~/.cache/mise
     - ~/.aube
-tools:
-  bat: latest
-  fd: latest
-  fzf: latest
-  git-lfs: latest
-  jq: latest
-  just: latest
-  ripgrep: latest
-  task: latest
-  yq: latest
 files:
   /etc/profile.d/mise.sh:
     content: |
@@ -414,7 +407,9 @@ The opencode AI agent
 version: 1
 meta:
   description: The opencode AI agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["opencode"]
 tools:
   opencode: latest
@@ -445,6 +440,7 @@ version: 1
 meta:
   description: The opencode desktop app (GUI)
 extends:
+  - defaults
   - mise
   - gui/display
   - gui/portal
@@ -483,7 +479,9 @@ Pi, the minimal terminal coding agent
 version: 1
 meta:
   description: Pi, the minimal terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["pi"]
 tools:
   pi: latest
@@ -506,7 +504,9 @@ Disposable PowerShell shell
 version: 1
 meta:
   description: Disposable PowerShell shell
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["pwsh"]
 packages:
   - libicu76
@@ -537,7 +537,9 @@ Qwen Code CLI (Alibaba)
 version: 1
 meta:
   description: Qwen Code CLI (Alibaba)
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["qwen"]
 tools:
   qwen: latest
@@ -561,6 +563,7 @@ version: 1
 meta:
   description: T3 Code desktop app — agent harness control surface
 extends:
+  - defaults
   - mise
   - gui/display
   - gui/portal
@@ -593,7 +596,9 @@ Trivy vulnerability scanner
 version: 1
 meta:
   description: Trivy vulnerability scanner
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["trivy"]
 caches:
   trivy: ~/.cache/trivy
@@ -610,6 +615,49 @@ tools:
 </details>
 
 ## Fragments
+
+### Other
+
+### `defaults`
+
+Default launch policies with the common dev toolchain and a memory cap
+
+<details><summary>Source</summary>
+
+```yaml
+version: 1
+meta:
+  description: Default launch policies with the common dev toolchain and a memory cap
+packages:
+  - autoconf
+  - bsdextrautils
+  - file
+  - curl
+  - git
+  - build-essential
+  - cmake
+  - python3
+  - libssl-dev
+  - libcurl4-openssl-dev
+  - zlib1g-dev
+  - libreadline-dev
+  - libffi-dev
+  - libsqlite3-dev
+  - gettext
+  - openssl
+  - gdb
+  - strace
+tools:
+  fd: latest
+  git-lfs: latest
+  jq: latest
+  ripgrep: latest
+  yq: latest
+resources:
+  memory: "{{ div .MemBytes 2 }}"
+```
+
+</details>
 
 ### cloud
 

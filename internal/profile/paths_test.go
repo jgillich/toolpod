@@ -2,6 +2,7 @@ package profile
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -799,5 +800,40 @@ func TestResolveTildesServiceExposeRelativeAfterRenderRejected(t *testing.T) {
 	}
 	if _, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil); err == nil {
 		t.Fatal("expected error for expose path rendering a relative path, got nil")
+	}
+}
+
+func TestResolveTildesRendersResources(t *testing.T) {
+	cfg := Profile{
+		Resources: &Resources{
+			Memory: "{{ div .MemBytes 2 }}",
+			CPUs:   "{{ .NumCPU }}",
+		},
+	}
+	out, err := ResolveTildes(cfg, workspace.ModeRootless, "/home/me", "/home/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Resources == nil {
+		t.Fatal("Resources should survive resolve")
+	}
+	mem, err := ParseMemoryBytes(out.Resources.Memory)
+	if err != nil {
+		t.Fatalf("rendered memory %q unparseable: %v", out.Resources.Memory, err)
+	}
+	if want := hostMemBytes() / 2; mem != want {
+		t.Errorf("rendered memory = %d, want %d (half of host)", mem, want)
+	}
+	if want := strconv.Itoa(runtime.NumCPU()); out.Resources.CPUs != want {
+		t.Errorf("rendered cpus = %q, want %q", out.Resources.CPUs, want)
+	}
+}
+
+func TestDiv(t *testing.T) {
+	if got := div(9, 2); got != 4 {
+		t.Errorf("div(9, 2) = %d, want 4", got)
+	}
+	if got := div(10, 0); got != 0 {
+		t.Errorf("div(10, 0) = %d, want 0 (zero divisor must not panic)", got)
 	}
 }

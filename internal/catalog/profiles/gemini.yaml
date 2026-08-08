@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Google Gemini CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["gemini"]
 tools:
   gemini: latest

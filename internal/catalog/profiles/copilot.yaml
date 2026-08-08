@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: GitHub Copilot CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["copilot"]
 tools:
   copilot: latest

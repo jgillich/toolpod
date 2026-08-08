@@ -53,6 +53,42 @@ func TestBuiltinCatalogResolves(t *testing.T) {
 	}
 }
 
+// TestBuiltinMiseProfilesImportDefaultsFirst asserts the catalog rule that any
+// profile importing mise lists defaults first and therefore inherits the
+// defaults fragment's templated memory cap.
+func TestBuiltinMiseProfilesImportDefaultsFirst(t *testing.T) {
+	cat, err := LoadCatalog(catalog.Profiles, catalog.Fragments, "")
+	if err != nil {
+		t.Fatalf("LoadCatalog(embedded): %v", err)
+	}
+	for _, name := range cat.Names() {
+		if cat.IsFragment(name) {
+			continue
+		}
+		rc, ok := cat.Get(name)
+		if !ok {
+			continue
+		}
+		for _, ref := range rc.ExtendsList.Resolved {
+			if ref.Name != "mise" {
+				continue
+			}
+			if len(rc.ExtendsList.Raw) == 0 || rc.ExtendsList.Raw[0] != "defaults" {
+				t.Errorf("%s imports mise; extends must start with defaults, got %v", name, rc.ExtendsList.Raw)
+			}
+			resolved, err := ResolveProfileWithProv(cat, name)
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+				break
+			}
+			if resolved.Resources == nil || !strings.Contains(resolved.Resources.Memory, "{{") {
+				t.Errorf("%s imports mise but does not inherit the defaults memory cap", name)
+			}
+			break
+		}
+	}
+}
+
 // TestBuiltinExtendsOmitCoreNamespace asserts that built-in profiles and
 // fragments reference other built-ins by unqualified name (toolchain/go, not
 // core/toolchain/go), so user shadowing of a base fragment flows through to

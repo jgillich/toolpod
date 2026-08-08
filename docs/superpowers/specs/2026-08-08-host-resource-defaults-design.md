@@ -61,36 +61,50 @@ parse degrades to unset (0 bytes / 0 CPUs → no limit), not an error.
 
 ### 3. Degradation when host data is missing
 
-`renderTemplate` is unchanged; an empty `.MemBytes` renders the expression
-to an empty string. `spec.go` already treats an empty rendered resource
-value as unset (`if cfg.Resources.Memory != ""`), so the fragment degrades
-to "no limit" rather than a hard error on hosts where `/proc/meminfo` is
-unavailable. `div`'s contract: integer division when both operands are
-non-empty numeric values, empty string output when either operand is empty
-(missing host data).
+`.MemBytes` is always an int64; when `/proc/meminfo` is unreadable it is 0.
+`div`'s contract: integer division, with a zero divisor yielding 0 (never a
+panic). A rendered `0` memory value is rejected by `ParseMemoryBytes`
+(`b <= 0`), which `spec.go` ignores, so the fragment degrades to "no limit"
+rather than a hard error on hosts where `/proc/meminfo` is unavailable.
 
 ### 4. The `defaults` fragment
 
-`internal/catalog/fragments/defaults.yaml`:
+`internal/catalog/fragments/defaults.yaml` carries the shared default layer
+for the mise-toolchain ecosystem: the common dev packages and CLI tools plus
+the memory cap:
 
 ```yaml
 version: 1
 meta:
-  description: Cap the launch container to half the host's memory
+  description: Default launch policies with the common dev toolchain and a memory cap
+packages: [autoconf, bsdextrautils, file, curl, git, build-essential, cmake, python3, ...]
+tools:
+  bat: latest
+  ...
 resources:
   memory: "{{ div .MemBytes 2 }}"
 ```
 
-The fragment is the mise ecosystem's home for default launch policies. It
-currently carries only the memory cap; future defaults (env, tty, …) are
-deliberate, documented additions.
+It does not set up mise; the `mise` profile stays responsible for the
+mise-tool-specific fields (the `mise` apt package, the `mise` extrepo, the
+`~/.config/mise` mount, the mise cache dirs, and `/etc/profile.d/mise.sh`).
 
-### 5. mise integration
+### 5. Profile integration
 
-`mise` gains `extends: defaults`. The 15 built-in profiles extending `mise`
-inherit the cap; any of them or a user profile can override by declaring
-their own `resources` (leaf body wins in the merge). Non-mise profiles
-(buzz, t3code, opencode-desktop, …) are unaffected.
+Every built-in profile that imports `mise` lists `defaults` first in its
+`extends`, so the limit and shared toolchain are an explicit part of each
+profile's composition rather than hidden in a base:
+
+```yaml
+extends:
+  - defaults
+  - mise
+```
+
+`mise` itself does not extend `defaults` (a bare `tpd mise` is mise setup
+only). A profile can override the cap by declaring its own `resources` (leaf
+body wins in the merge). Non-mise profiles (buzz, t3code, opencode-desktop,
+…) are unaffected.
 
 ### 6. Known gaps (documented, not in scope)
 

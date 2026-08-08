@@ -1,0 +1,30 @@
+version: 1
+meta:
+  description: Default launch policies with the common dev toolchain and a memory cap
+packages:
+  - autoconf
+  - bsdextrautils
+  - file
+  - curl
+  - git
+  - build-essential
+  - cmake
+  - python3
+  - libssl-dev
+  - libcurl4-openssl-dev
+  - zlib1g-dev
+  - libreadline-dev
+  - libffi-dev
+  - libsqlite3-dev
+  - gettext
+  - openssl
+  - gdb
+  - strace
+tools:
+  fd: latest
+  git-lfs: latest
+  jq: latest
+  ripgrep: latest
+  yq: latest
+resources:
+  memory: "{{ div .MemBytes 2 }}"

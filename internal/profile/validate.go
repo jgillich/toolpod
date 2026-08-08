@@ -367,12 +367,15 @@ func validateResources(rc RawProfile) error {
 	if rc.Resources == nil {
 		return nil
 	}
-	if rc.Resources.Memory != "" {
+	// A {{ }} template is exempt from the parse checks (it cannot be evaluated
+	// here); ResolveTildes renders it and spec.go parses the result, treating
+	// an unparseable value as no limit.
+	if rc.Resources.Memory != "" && !strings.Contains(rc.Resources.Memory, "{{") {
 		if _, err := ParseMemoryBytes(rc.Resources.Memory); err != nil {
 			return ProfileError{Path: rc.Path, Message: "resources: memory: " + err.Error()}
 		}
 	}
-	if rc.Resources.CPUs != "" {
+	if rc.Resources.CPUs != "" && !strings.Contains(rc.Resources.CPUs, "{{") {
 		if _, err := ParseNanoCPUs(rc.Resources.CPUs); err != nil {
 			return ProfileError{Path: rc.Path, Message: "resources: cpus: " + err.Error()}
 		}

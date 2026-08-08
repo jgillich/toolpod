@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Crush, the Charmbracelet terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["crush"]
 tools:
   crush: latest

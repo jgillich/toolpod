@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Trivy vulnerability scanner
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["trivy"]
 caches:
   trivy: ~/.cache/trivy

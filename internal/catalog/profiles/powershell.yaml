@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Disposable PowerShell shell
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["pwsh"]
 packages:
   - libicu76

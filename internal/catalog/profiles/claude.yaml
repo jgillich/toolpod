@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Anthropic Claude Code
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["claude"]
 tools:
   claude-code: latest

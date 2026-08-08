@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: The opencode AI agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["opencode"]
 tools:
   opencode: latest

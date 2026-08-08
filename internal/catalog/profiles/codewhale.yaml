@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: CodeWhale, a terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["codewhale"]
 tools:
   github:Hmbown/CodeWhale: latest

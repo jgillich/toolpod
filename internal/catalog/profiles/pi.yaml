@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: Pi, the minimal terminal coding agent
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["pi"]
 tools:
   pi: latest

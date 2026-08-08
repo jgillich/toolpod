@@ -2,6 +2,7 @@ version: 1
 meta:
   description: Disposable bash shell with shell completion
 extends:
+  - defaults
   - mise
   - toolchain/bash
 command: ["bash", "-l"]

@@ -1,7 +1,9 @@
 version: 1
 meta:
   description: OpenAI Codex CLI
-extends: mise
+extends:
+  - defaults
+  - mise
 command: ["codex"]
 tools:
   codex: latest
