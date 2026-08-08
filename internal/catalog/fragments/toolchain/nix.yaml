@@ -1,0 +1,26 @@
+version: 1
+meta:
+  description: Nix package manager with persistent store cache
+packages:
+  - nix-bin
+caches:
+  nix:
+    - /nix
+    - ~/.local/state/nix
+mounts:
+  ~/.config/nix:
+    source: ~/.config/nix
+    create: true
+    read_only: false
+    optional: true
+files:
+  /etc/profile.d/nix.sh:
+    content: |
+      export PATH="$HOME/.nix-profile/bin:$HOME/.local/state/nix/profiles/profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+  /etc/nix/nix.conf:
+    content: |
+      extra-experimental-features = nix-command flakes
+environment:
+  # Prevents nix's chroot-store fallback (which requires NIX_STATE_DIR unset)
+  # when the empty /nix cache volume has no state dir on first run.
+  NIX_STATE_DIR: /nix/var/nix
